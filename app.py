@@ -917,6 +917,7 @@ AIRTABLE_TABLE = os.environ.get('AIRTABLE_TABLE', 'tbldYTLfQ3DoEK0WA')
 # Catálogo de productos desde Airtable (base app5zYXr1GmF2bmVF)
 CATALOGO_BASE = 'app5zYXr1GmF2bmVF'
 CATALOGO_TABLE = 'tbl8hyvwwfSnrspAt'
+CATALOGO_VIEW = 'viwxcPxcde6c3JhbE'  # "Matriz Sis Inventarios (No tocar)"
 _catalogo_cache = {'datos': [], 'ts': 0}
 
 def _cargar_catalogo_airtable():
@@ -925,7 +926,7 @@ def _cargar_catalogo_airtable():
     all_records = []
     offset = None
     while True:
-        url = f'https://api.airtable.com/v0/{CATALOGO_BASE}/{CATALOGO_TABLE}?pageSize=100'
+        url = f'https://api.airtable.com/v0/{CATALOGO_BASE}/{CATALOGO_TABLE}?view={CATALOGO_VIEW}&pageSize=100'
         if offset:
             url += f'&offset={offset}'
         req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
