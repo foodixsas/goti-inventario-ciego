@@ -3151,3 +3151,200 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     .tabla-cruce { font-size: 11px; }
     .tabla-cruce th, .tabla-cruce td { padding: 6px 4px; }
 }
+
+/* ==================== MERMA OPERATIVA ==================== */
+
+.merma-form-card,
+.merma-lista-card {
+    background: var(--bg-card);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-card);
+}
+
+.merma-form-card h3,
+.merma-lista-card h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.merma-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+}
+
+.input-merma {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    font-family: inherit;
+    box-sizing: border-box;
+    transition: border-color 0.2s;
+}
+
+.input-merma:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.input-merma[readonly] {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: default;
+}
+
+.input-merma.merma-costo-display {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--accent-primary);
+    background: rgba(99, 102, 241, 0.07);
+    border-color: var(--accent-primary);
+    text-align: right;
+}
+
+.merma-autocomplete-wrapper {
+    position: relative;
+}
+
+.merma-autocomplete-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    z-index: 200;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.merma-autocomplete-item {
+    padding: 10px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+}
+
+.merma-autocomplete-item:last-child { border-bottom: none; }
+
+.merma-autocomplete-item:hover { background: var(--bg-secondary); }
+
+.merma-ac-unidad {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.merma-form-actions {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.filtros-merma {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+.filtros-merma .form-group {
+    flex: 1;
+    min-width: 140px;
+}
+
+.tabla-merma-wrapper {
+    overflow-x: auto;
+}
+
+.tabla-merma {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.tabla-merma th {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.tabla-merma td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+    vertical-align: middle;
+}
+
+.tabla-merma tbody tr:hover {
+    background: var(--bg-secondary);
+}
+
+.merma-costo-cell {
+    font-weight: 600;
+    color: #EF4444;
+    text-align: right;
+}
+
+.merma-total-row td {
+    background: var(--bg-secondary);
+    font-weight: 700;
+    color: var(--text-primary);
+    border-top: 2px solid var(--border-color);
+    padding: 12px;
+}
+
+.merma-total-row td:last-of-type {
+    color: #EF4444;
+    font-size: 15px;
+}
+
+.btn-eliminar-merma {
+    background: none;
+    border: 1px solid #EF4444;
+    color: #EF4444;
+    border-radius: 6px;
+    padding: 5px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.btn-eliminar-merma:hover {
+    background: #EF4444;
+    color: white;
+}
+
+@media (max-width: 768px) {
+    .merma-form-grid { grid-template-columns: 1fr; }
+    .filtros-merma { flex-direction: column; }
+    .tabla-merma { font-size: 11px; }
+    .tabla-merma th, .tabla-merma td { padding: 7px 6px; }
+}

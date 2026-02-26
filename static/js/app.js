@@ -512,6 +512,17 @@ function cambiarVista(viewName) {
         renderObservaciones();
     }
 
+    // Auto-cargar merma al entrar
+    if (viewName === 'merma') {
+        cargarMermas();
+    }
+
+    // Auto-cargar bajas al entrar
+    if (viewName === 'bajas') {
+        cargarBajas();
+        poblarPersonasBaja();
+    }
+
     // Auto-cargar dashboard al entrar
     if (viewName === 'dashboard') {
         const dashDesde = document.getElementById('dash-fecha-desde');
@@ -2596,4 +2607,447 @@ function cruceExportarExcel() {
 function cerrarCruceDetalle() {
     document.getElementById('cruce-detalle-panel').classList.add('hidden');
     state.cruceDetalleId = null;
+}
+
+// ==================== MERMA OPERATIVA ====================
+
+let _mermaProductos = [];
+let _mermaAutocompletResultados = [];
+
+const BODEGAS_NOMBRES_MERMA = {
+    'real_audiencia': 'Real Audiencia',
+    'floreana': 'Floreana',
+    'portugal': 'Portugal',
+    'santo_cachon_real': 'S.Cachon Real',
+    'santo_cachon_portugal': 'S.Cachon Portugal',
+    'simon_bolon': 'Simon Bolon'
+};
+
+function cargarMermas() {
+    const desde = document.getElementById('merma-fecha-desde')?.value || '';
+    const hasta = document.getElementById('merma-fecha-hasta')?.value || '';
+    const local = document.getElementById('merma-filtro-bodega')?.value || '';
+
+    let url = `${CONFIG.API_URL}/api/merma?`;
+    if (desde) url += `fecha_desde=${desde}&`;
+    if (hasta) url += `fecha_hasta=${hasta}&`;
+    if (local) url += `local=${local}`;
+
+    fetch(url)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            renderTablaMermas(data);
+        })
+        .catch(() => showToast('Error al cargar mermas', 'error'));
+}
+
+function renderTablaMermas(mermas) {
+    const container = document.getElementById('merma-tabla-container');
+    if (!mermas.length) {
+        container.innerHTML = '<div class="empty-state"><i class="fas fa-check-circle"></i><p>No hay mermas registradas en el periodo seleccionado</p></div>';
+        return;
+    }
+
+    const totalCosto = mermas.reduce((sum, m) => sum + m.costo_total, 0);
+
+    let html = `
+        <div class="tabla-merma-wrapper">
+        <table class="tabla-merma">
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Bodega</th>
+                    <th>Código</th>
+                    <th>Producto</th>
+                    <th>Cantidad</th>
+                    <th>Unidad</th>
+                    <th>Motivo</th>
+                    <th>Costo Total</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    for (const m of mermas) {
+        html += `
+            <tr>
+                <td>${m.fecha}</td>
+                <td>${BODEGAS_NOMBRES_MERMA[m.local] || m.local}</td>
+                <td><code>${m.codigo}</code></td>
+                <td>${m.nombre}</td>
+                <td>${m.cantidad}</td>
+                <td>${m.unidad}</td>
+                <td>${m.motivo || '-'}</td>
+                <td class="merma-costo-cell">$${m.costo_total.toFixed(2)}</td>
+                <td><button class="btn-eliminar-merma" onclick="eliminarMerma(${m.id})" title="Eliminar"><i class="fas fa-trash"></i></button></td>
+            </tr>
+        `;
+    }
+
+    html += `
+            </tbody>
+            <tfoot>
+                <tr class="merma-total-row">
+                    <td colspan="7"><strong>TOTAL MERMA</strong></td>
+                    <td><strong>$${totalCosto.toFixed(2)}</strong></td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+function registrarMerma() {
+    const fecha = document.getElementById('merma-fecha').value;
+    const local = document.getElementById('merma-bodega').value;
+    const codigo = document.getElementById('merma-codigo').value.trim();
+    const nombre = document.getElementById('merma-nombre').value.trim();
+    const unidad = document.getElementById('merma-unidad').value.trim();
+    const cantidad = parseFloat(document.getElementById('merma-cantidad').value) || 0;
+    const motivo = document.getElementById('merma-motivo').value.trim();
+    const costo_unitario = parseFloat(document.getElementById('merma-costo-unitario').value) || 0;
+
+    if (!fecha || !local || !codigo || !nombre || cantidad <= 0) {
+        showToast('Completa: fecha, bodega, producto y cantidad mayor a 0', 'error');
+        return;
+    }
+
+    fetch(`${CONFIG.API_URL}/api/merma/registrar`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({fecha, local, codigo, nombre, unidad, cantidad, motivo, costo_unitario})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) { showToast(data.error, 'error'); return; }
+        showToast('Merma registrada correctamente', 'success');
+        limpiarFormularioMerma();
+        cargarMermas();
+    })
+    .catch(() => showToast('Error al registrar merma', 'error'));
+}
+
+function eliminarMerma(id) {
+    if (!confirm('¿Eliminar esta merma? Esta acción no se puede deshacer.')) return;
+    fetch(`${CONFIG.API_URL}/api/merma/${id}`, {method: 'DELETE'})
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            showToast('Merma eliminada', 'success');
+            cargarMermas();
+        })
+        .catch(() => showToast('Error al eliminar', 'error'));
+}
+
+function limpiarFormularioMerma() {
+    document.getElementById('merma-codigo').value = '';
+    document.getElementById('merma-nombre').value = '';
+    document.getElementById('merma-unidad').value = '';
+    document.getElementById('merma-cantidad').value = '';
+    document.getElementById('merma-motivo').value = '';
+    document.getElementById('merma-costo-unitario').value = '';
+    document.getElementById('merma-costo-total').value = '$0.00';
+    document.getElementById('merma-autocomplete').classList.add('hidden');
+    _mermaAutocompletResultados = [];
+}
+
+function calcularCostoMerma() {
+    const cantidad = parseFloat(document.getElementById('merma-cantidad').value) || 0;
+    const costoUnit = parseFloat(document.getElementById('merma-costo-unitario').value) || 0;
+    const total = cantidad * costoUnit;
+    document.getElementById('merma-costo-total').value = `$${total.toFixed(2)}`;
+}
+
+async function cargarProductosMerma() {
+    const fecha = document.getElementById('merma-fecha').value;
+    const local = document.getElementById('merma-bodega').value;
+    if (!fecha || !local) return;
+    _mermaProductos = [];
+    try {
+        const resp = await fetch(`${CONFIG.API_URL}/api/inventario/consultar?fecha=${fecha}&local=${local}`);
+        const data = await resp.json();
+        if (data.productos) {
+            _mermaProductos = data.productos;
+        }
+    } catch(e) {
+        // No crítico - el autocomplete funcionará vacío
+    }
+}
+
+function buscarProductoMerma(term) {
+    const lista = document.getElementById('merma-autocomplete');
+    if (!lista) return;
+    if (!term || term.length < 2) {
+        lista.classList.add('hidden');
+        return;
+    }
+    const termLower = term.toLowerCase();
+    _mermaAutocompletResultados = _mermaProductos
+        .filter(p => p.codigo.toLowerCase().includes(termLower) || p.nombre.toLowerCase().includes(termLower))
+        .slice(0, 8);
+
+    if (!_mermaAutocompletResultados.length) {
+        lista.classList.add('hidden');
+        return;
+    }
+
+    lista.innerHTML = _mermaAutocompletResultados.map((p, i) => `
+        <div class="merma-autocomplete-item" onclick="seleccionarProductoMerma(${i})">
+            <strong>${p.codigo}</strong> &mdash; ${p.nombre}
+            <span class="merma-ac-unidad">${p.unidad || ''}</span>
+        </div>
+    `).join('');
+    lista.classList.remove('hidden');
+}
+
+function seleccionarProductoMerma(idx) {
+    const p = _mermaAutocompletResultados[idx];
+    if (!p) return;
+    document.getElementById('merma-codigo').value = p.codigo;
+    document.getElementById('merma-nombre').value = p.nombre;
+    document.getElementById('merma-unidad').value = p.unidad || '';
+    document.getElementById('merma-costo-unitario').value = p.costo_unitario || 0;
+    document.getElementById('merma-autocomplete').classList.add('hidden');
+    calcularCostoMerma();
+    document.getElementById('merma-cantidad').focus();
+}
+
+// ==================== BAJAS DIRECTAS ====================
+
+let _bajaProductos = [];
+let _bajaAutocompletResultados = [];
+
+function poblarPersonasBaja() {
+    const sel = document.getElementById('baja-persona');
+    if (!sel) return;
+    // Guardar valor actual
+    const valorActual = sel.value;
+    // Obtener personas del state o localStorage
+    let personas = state.personas || [];
+    if (!personas.length) {
+        try {
+            const cache = localStorage.getItem('personas_cache');
+            if (cache) personas = JSON.parse(cache);
+        } catch(e) {}
+    }
+    // Repoblar
+    sel.innerHTML = '<option value="">Seleccionar persona...</option>';
+    personas.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        sel.appendChild(opt);
+    });
+    if (valorActual) sel.value = valorActual;
+}
+
+function cargarBajas() {
+    const desde = document.getElementById('baja-fecha-desde')?.value || '';
+    const hasta = document.getElementById('baja-fecha-hasta')?.value || '';
+    const local = document.getElementById('baja-filtro-bodega')?.value || '';
+
+    let url = `${CONFIG.API_URL}/api/bajas?`;
+    if (desde) url += `fecha_desde=${desde}&`;
+    if (hasta) url += `fecha_hasta=${hasta}&`;
+    if (local) url += `local=${local}`;
+
+    fetch(url)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            renderTablaBajas(data);
+        })
+        .catch(() => showToast('Error al cargar bajas', 'error'));
+}
+
+function renderTablaBajas(bajas) {
+    const container = document.getElementById('baja-tabla-container');
+    if (!bajas.length) {
+        container.innerHTML = '<div class="empty-state"><i class="fas fa-check-circle"></i><p>No hay bajas registradas en el periodo seleccionado</p></div>';
+        return;
+    }
+
+    const totalCosto = bajas.reduce((sum, b) => sum + b.costo_total, 0);
+    const BODEGAS = {
+        'real_audiencia': 'Real Audiencia', 'floreana': 'Floreana',
+        'portugal': 'Portugal', 'santo_cachon_real': 'S.Cachon Real',
+        'santo_cachon_portugal': 'S.Cachon Portugal', 'simon_bolon': 'Simon Bolon'
+    };
+
+    let html = `
+        <div class="tabla-merma-wrapper">
+        <table class="tabla-merma">
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Bodega</th>
+                    <th>Código</th>
+                    <th>Producto</th>
+                    <th>Cantidad</th>
+                    <th>Unidad</th>
+                    <th>Persona</th>
+                    <th>Motivo</th>
+                    <th>Costo Total</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    for (const b of bajas) {
+        html += `
+            <tr>
+                <td>${b.fecha}</td>
+                <td>${BODEGAS[b.local] || b.local}</td>
+                <td><code>${b.codigo}</code></td>
+                <td>${b.nombre}</td>
+                <td>${b.cantidad}</td>
+                <td>${b.unidad}</td>
+                <td><strong>${b.persona}</strong></td>
+                <td>${b.motivo || '-'}</td>
+                <td class="merma-costo-cell">$${b.costo_total.toFixed(2)}</td>
+                <td><button class="btn-eliminar-merma" onclick="eliminarBaja(${b.id})" title="Eliminar"><i class="fas fa-trash"></i></button></td>
+            </tr>
+        `;
+    }
+
+    html += `
+            </tbody>
+            <tfoot>
+                <tr class="merma-total-row">
+                    <td colspan="8"><strong>TOTAL BAJAS</strong></td>
+                    <td><strong>$${totalCosto.toFixed(2)}</strong></td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+function registrarBaja() {
+    const fecha = document.getElementById('baja-fecha').value;
+    const local = document.getElementById('baja-bodega').value;
+    const codigo = document.getElementById('baja-codigo').value.trim();
+    const nombre = document.getElementById('baja-nombre').value.trim();
+    const unidad = document.getElementById('baja-unidad').value.trim();
+    const cantidad = parseFloat(document.getElementById('baja-cantidad').value) || 0;
+    const persona = document.getElementById('baja-persona').value;
+    const motivo = document.getElementById('baja-motivo').value.trim();
+    const costo_unitario = parseFloat(document.getElementById('baja-costo-unitario').value) || 0;
+
+    if (!fecha || !local || !codigo || !nombre || cantidad <= 0) {
+        showToast('Completa: fecha, bodega, producto y cantidad mayor a 0', 'error');
+        return;
+    }
+    if (!persona) {
+        showToast('Selecciona una persona responsable', 'error');
+        return;
+    }
+
+    fetch(`${CONFIG.API_URL}/api/bajas/registrar`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({fecha, local, codigo, nombre, unidad, cantidad, persona, motivo, costo_unitario})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) { showToast(data.error, 'error'); return; }
+        showToast('Baja registrada correctamente', 'success');
+        limpiarFormularioBaja();
+        cargarBajas();
+    })
+    .catch(() => showToast('Error al registrar baja', 'error'));
+}
+
+function eliminarBaja(id) {
+    if (!confirm('¿Eliminar esta baja? Esta acción no se puede deshacer.')) return;
+    fetch(`${CONFIG.API_URL}/api/bajas/${id}`, {method: 'DELETE'})
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            showToast('Baja eliminada', 'success');
+            cargarBajas();
+        })
+        .catch(() => showToast('Error al eliminar', 'error'));
+}
+
+function limpiarFormularioBaja() {
+    document.getElementById('baja-codigo').value = '';
+    document.getElementById('baja-nombre').value = '';
+    document.getElementById('baja-unidad').value = '';
+    document.getElementById('baja-cantidad').value = '';
+    document.getElementById('baja-motivo').value = '';
+    document.getElementById('baja-costo-unitario').value = '';
+    document.getElementById('baja-costo-total').value = '$0.00';
+    document.getElementById('baja-autocomplete').classList.add('hidden');
+    _bajaAutocompletResultados = [];
+}
+
+function calcularCostoBaja() {
+    const cantidad = parseFloat(document.getElementById('baja-cantidad').value) || 0;
+    const costoUnit = parseFloat(document.getElementById('baja-costo-unitario').value) || 0;
+    const total = cantidad * costoUnit;
+    document.getElementById('baja-costo-total').value = `$${total.toFixed(2)}`;
+}
+
+async function cargarProductosBaja() {
+    const fecha = document.getElementById('baja-fecha').value;
+    const local = document.getElementById('baja-bodega').value;
+    if (!fecha || !local) return;
+    _bajaProductos = [];
+    try {
+        const resp = await fetch(`${CONFIG.API_URL}/api/inventario/consultar?fecha=${fecha}&local=${local}`);
+        const data = await resp.json();
+        if (data.productos) {
+            _bajaProductos = data.productos;
+        }
+    } catch(e) {
+        // No crítico - el autocomplete funcionará vacío
+    }
+}
+
+function buscarProductoBaja(term) {
+    const lista = document.getElementById('baja-autocomplete');
+    if (!lista) return;
+    if (!term || term.length < 2) {
+        lista.classList.add('hidden');
+        return;
+    }
+    const termLower = term.toLowerCase();
+    _bajaAutocompletResultados = _bajaProductos
+        .filter(p => p.codigo.toLowerCase().includes(termLower) || p.nombre.toLowerCase().includes(termLower))
+        .slice(0, 8);
+
+    if (!_bajaAutocompletResultados.length) {
+        lista.classList.add('hidden');
+        return;
+    }
+
+    lista.innerHTML = _bajaAutocompletResultados.map((p, i) => `
+        <div class="merma-autocomplete-item" onclick="seleccionarProductoBaja(${i})">
+            <strong>${p.codigo}</strong> &mdash; ${p.nombre}
+            <span class="merma-ac-unidad">${p.unidad || ''}</span>
+        </div>
+    `).join('');
+    lista.classList.remove('hidden');
+}
+
+function seleccionarProductoBaja(idx) {
+    const p = _bajaAutocompletResultados[idx];
+    if (!p) return;
+    document.getElementById('baja-codigo').value = p.codigo;
+    document.getElementById('baja-nombre').value = p.nombre;
+    document.getElementById('baja-unidad').value = p.unidad || '';
+    document.getElementById('baja-costo-unitario').value = p.costo_unitario || 0;
+    document.getElementById('baja-autocomplete').classList.add('hidden');
+    calcularCostoBaja();
+    document.getElementById('baja-cantidad').focus();
 }

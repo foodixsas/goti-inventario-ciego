@@ -89,6 +89,60 @@ def release_db(conn):
             pass
 
 
+def init_db():
+    """Crea tabla merma_operativa y migra asignacion_diferencias al startup"""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventario_diario.merma_operativa (
+                id SERIAL PRIMARY KEY,
+                fecha DATE NOT NULL,
+                local VARCHAR(50) NOT NULL,
+                codigo VARCHAR(50) NOT NULL,
+                nombre VARCHAR(150) NOT NULL,
+                unidad VARCHAR(20) NOT NULL,
+                cantidad NUMERIC(12,4) NOT NULL,
+                motivo TEXT,
+                costo_unitario NUMERIC(12,4) DEFAULT 0,
+                costo_total NUMERIC(12,4) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            ALTER TABLE inventario_diario.asignacion_diferencias
+                ADD COLUMN IF NOT EXISTS codigo VARCHAR(50),
+                ADD COLUMN IF NOT EXISTS nombre VARCHAR(150),
+                ADD COLUMN IF NOT EXISTS unidad VARCHAR(20),
+                ADD COLUMN IF NOT EXISTS local VARCHAR(50),
+                ADD COLUMN IF NOT EXISTS fecha DATE
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventario_diario.bajas_directas (
+                id SERIAL PRIMARY KEY,
+                fecha DATE NOT NULL,
+                local VARCHAR(50) NOT NULL,
+                codigo VARCHAR(50) NOT NULL,
+                nombre VARCHAR(150) NOT NULL,
+                unidad VARCHAR(20) NOT NULL,
+                cantidad NUMERIC(12,4) NOT NULL,
+                persona VARCHAR(100) NOT NULL,
+                motivo TEXT,
+                costo_unitario NUMERIC(12,4) DEFAULT 0,
+                costo_total NUMERIC(12,4) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        print('init_db: tablas OK')
+    except Exception as e:
+        print(f'init_db error: {e}')
+    finally:
+        if conn:
+            release_db(conn)
+
+
 # Helper: mapeo de IDs de bodega a nombres legibles
 BODEGAS_NOMBRES = {
     'real_audiencia': 'Real Audiencia',
@@ -1335,6 +1389,7 @@ def guardar_asignaciones():
     asignaciones = data.get('asignaciones', [])
     if not conteo_id:
         return jsonify({'error': 'conteo_id es requerido'}), 400
+    conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -1342,17 +1397,35 @@ def guardar_asignaciones():
             DELETE FROM inventario_diario.asignacion_diferencias
             WHERE conteo_id = %s
         """, (conteo_id,))
+        # Obtener info del producto para guardar datos auto-contenidos
+        cur.execute("""
+            SELECT codigo, nombre, unidad, local, fecha
+            FROM inventario_diario.inventario_ciego_conteos
+            WHERE id = %s
+        """, (conteo_id,))
+        conteo_info = cur.fetchone()
         for a in asignaciones:
             if a.get('persona') and a.get('cantidad') and float(a['cantidad']) > 0:
-                cur.execute("""
-                    INSERT INTO inventario_diario.asignacion_diferencias (conteo_id, persona, cantidad)
-                    VALUES (%s, %s, %s)
-                """, (conteo_id, a['persona'].strip(), float(a['cantidad'])))
+                if conteo_info:
+                    cur.execute("""
+                        INSERT INTO inventario_diario.asignacion_diferencias
+                            (conteo_id, persona, cantidad, codigo, nombre, unidad, local, fecha)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (conteo_id, a['persona'].strip(), float(a['cantidad']),
+                          conteo_info['codigo'], conteo_info['nombre'], conteo_info['unidad'],
+                          conteo_info['local'], conteo_info['fecha']))
+                else:
+                    cur.execute("""
+                        INSERT INTO inventario_diario.asignacion_diferencias (conteo_id, persona, cantidad)
+                        VALUES (%s, %s, %s)
+                    """, (conteo_id, a['persona'].strip(), float(a['cantidad'])))
         conn.commit()
-        release_db(conn)
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
 
 
 @app.route('/api/health', methods=['GET'])
@@ -1413,6 +1486,214 @@ def debug_personas():
         'primeras_3': _personas_cache['datos'][:3] if _personas_cache['datos'] else []
     })
 
+# ==================== MERMA OPERATIVA ====================
+
+@app.route('/api/merma', methods=['GET'])
+def listar_mermas():
+    fecha_desde = request.args.get('fecha_desde')
+    fecha_hasta = request.args.get('fecha_hasta')
+    local = request.args.get('local')
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        filtros = []
+        params = []
+        if fecha_desde:
+            filtros.append("fecha >= %s")
+            params.append(fecha_desde)
+        if fecha_hasta:
+            filtros.append("fecha <= %s")
+            params.append(fecha_hasta)
+        if local:
+            filtros.append("local = %s")
+            params.append(local)
+        where = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+        cur.execute(f"""
+            SELECT id, fecha, local, codigo, nombre, unidad, cantidad, motivo,
+                   costo_unitario, costo_total, created_at
+            FROM inventario_diario.merma_operativa
+            {where}
+            ORDER BY fecha DESC, created_at DESC
+        """, params)
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                'id': r['id'],
+                'fecha': str(r['fecha']),
+                'local': r['local'],
+                'codigo': r['codigo'],
+                'nombre': r['nombre'],
+                'unidad': r['unidad'],
+                'cantidad': float(r['cantidad']),
+                'motivo': r['motivo'] or '',
+                'costo_unitario': float(r['costo_unitario'] or 0),
+                'costo_total': float(r['costo_total'] or 0),
+                'created_at': str(r['created_at'])
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/merma/registrar', methods=['POST'])
+def registrar_merma():
+    data = request.json
+    fecha = data.get('fecha')
+    local = data.get('local')
+    codigo = data.get('codigo', '').strip()
+    nombre = data.get('nombre', '').strip()
+    unidad = data.get('unidad', '').strip()
+    cantidad = data.get('cantidad')
+    motivo = data.get('motivo', '').strip()
+    costo_unitario = float(data.get('costo_unitario') or 0)
+    if not all([fecha, local, codigo, nombre, cantidad]):
+        return jsonify({'error': 'Faltan campos requeridos: fecha, local, codigo, nombre, cantidad'}), 400
+    costo_total = float(cantidad) * costo_unitario
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO inventario_diario.merma_operativa
+                (fecha, local, codigo, nombre, unidad, cantidad, motivo, costo_unitario, costo_total)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (fecha, local, codigo, nombre, unidad, float(cantidad), motivo, costo_unitario, costo_total))
+        nuevo_id = cur.fetchone()['id']
+        conn.commit()
+        return jsonify({'success': True, 'id': nuevo_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/merma/<int:merma_id>', methods=['DELETE'])
+def eliminar_merma(merma_id):
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM inventario_diario.merma_operativa WHERE id = %s", (merma_id,))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/bajas', methods=['GET'])
+def listar_bajas():
+    fecha_desde = request.args.get('fecha_desde')
+    fecha_hasta = request.args.get('fecha_hasta')
+    local = request.args.get('local')
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        filtros = []
+        params = []
+        if fecha_desde:
+            filtros.append("fecha >= %s")
+            params.append(fecha_desde)
+        if fecha_hasta:
+            filtros.append("fecha <= %s")
+            params.append(fecha_hasta)
+        if local:
+            filtros.append("local = %s")
+            params.append(local)
+        where = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+        cur.execute(f"""
+            SELECT id, fecha, local, codigo, nombre, unidad, cantidad, persona, motivo,
+                   costo_unitario, costo_total, created_at
+            FROM inventario_diario.bajas_directas
+            {where}
+            ORDER BY fecha DESC, created_at DESC
+        """, params)
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                'id': r['id'],
+                'fecha': str(r['fecha']),
+                'local': r['local'],
+                'codigo': r['codigo'],
+                'nombre': r['nombre'],
+                'unidad': r['unidad'],
+                'cantidad': float(r['cantidad']),
+                'persona': r['persona'],
+                'motivo': r['motivo'] or '',
+                'costo_unitario': float(r['costo_unitario'] or 0),
+                'costo_total': float(r['costo_total'] or 0),
+                'created_at': str(r['created_at'])
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/bajas/registrar', methods=['POST'])
+def registrar_baja():
+    data = request.json
+    fecha = data.get('fecha')
+    local = data.get('local')
+    codigo = data.get('codigo', '').strip()
+    nombre = data.get('nombre', '').strip()
+    unidad = data.get('unidad', '').strip()
+    cantidad = data.get('cantidad')
+    persona = data.get('persona', '').strip()
+    motivo = data.get('motivo', '').strip()
+    costo_unitario = float(data.get('costo_unitario') or 0)
+    if not all([fecha, local, codigo, nombre, cantidad, persona]):
+        return jsonify({'error': 'Faltan campos requeridos: fecha, local, codigo, nombre, cantidad, persona'}), 400
+    costo_total = float(cantidad) * costo_unitario
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO inventario_diario.bajas_directas
+                (fecha, local, codigo, nombre, unidad, cantidad, persona, motivo, costo_unitario, costo_total)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (fecha, local, codigo, nombre, unidad, float(cantidad), persona, motivo, costo_unitario, costo_total))
+        nuevo_id = cur.fetchone()['id']
+        conn.commit()
+        return jsonify({'success': True, 'id': nuevo_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/bajas/<int:baja_id>', methods=['DELETE'])
+def eliminar_baja(baja_id):
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM inventario_diario.bajas_directas WHERE id = %s", (baja_id,))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 import threading
 def _precargar_personas():
     for intento in range(6):
@@ -1430,6 +1711,12 @@ def _precargar_personas():
             _time.sleep(5)
     print('Pre-carga personas FALLO despues de 6 intentos')
 threading.Thread(target=_precargar_personas, daemon=True).start()
+
+# Inicializar tablas al arrancar
+try:
+    init_db()
+except Exception as _e:
+    print(f'Startup init_db error: {_e}')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
