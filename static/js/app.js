@@ -2817,24 +2817,12 @@ function seleccionarProductoMerma(idx) {
 
 let _bajaProductos = [];
 
-// ---- estado lista de items de la baja en curso ----
+// ---- estado lista de items y asignaciones de la baja en curso ----
 let _bajaItems = []; // [{codigo, nombre, unidad, cantidad, costo_unitario}]
+let _bajaAsignaciones = []; // [{persona, monto}]
 
 function poblarPersonasBaja() {
-    const sel = document.getElementById('baja-persona');
-    if (!sel) return;
-    const valorActual = sel.value;
-    let personas = state.personas || [];
-    if (!personas.length) {
-        try { const c = localStorage.getItem('personas_cache'); if (c) personas = JSON.parse(c); } catch(e) {}
-    }
-    sel.innerHTML = '<option value="">Seleccionar persona...</option>';
-    personas.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p; opt.textContent = p;
-        sel.appendChild(opt);
-    });
-    if (valorActual) sel.value = valorActual;
+    // No hay select fijo de persona — se usan botones en el panel de asignaciones
 }
 
 function cargarBajas() {
@@ -2851,32 +2839,46 @@ function cargarBajas() {
         .catch(() => showToast('Error al cargar bajas', 'error'));
 }
 
-function renderTablaBajas(bajas) {
+function renderTablaBajas(grupos) {
     const container = document.getElementById('baja-tabla-container');
-    if (!bajas.length) {
+    if (!grupos.length) {
         container.innerHTML = '<div class="empty-state"><i class="fas fa-check-circle"></i><p>No hay bajas registradas en el periodo seleccionado</p></div>';
         return;
     }
-    const totalCosto = bajas.reduce((sum, b) => sum + b.costo_total, 0);
     const BODEGAS = {'real_audiencia':'Real Audiencia','floreana':'Floreana','portugal':'Portugal',
         'santo_cachon_real':'S.Cachon Real','santo_cachon_portugal':'S.Cachon Portugal','simon_bolon':'Simon Bolon'};
-    let html = `<div class="tabla-merma-wrapper"><table class="tabla-merma">
-        <thead><tr><th>Fecha</th><th>Bodega</th><th>Código</th><th>Producto</th>
-        <th>Cant.</th><th>Und.</th><th>Persona</th><th>Motivo</th><th>Costo</th><th></th></tr></thead><tbody>`;
-    for (const b of bajas) {
-        html += `<tr>
-            <td>${b.fecha}</td><td>${BODEGAS[b.local]||b.local}</td>
-            <td><code>${b.codigo}</code></td><td>${b.nombre}</td>
-            <td>${b.cantidad}</td><td>${b.unidad}</td>
-            <td><strong>${b.persona}</strong></td><td>${b.motivo||'-'}</td>
-            <td class="merma-costo-cell">$${b.costo_total.toFixed(2)}</td>
-            <td><button class="btn-eliminar-merma" onclick="eliminarBaja(${b.id})" title="Eliminar"><i class="fas fa-trash"></i></button></td>
-        </tr>`;
+    const totalGeneral = grupos.reduce((s, g) => s + g.total_costo, 0);
+
+    let html = '<div class="tabla-merma-wrapper">';
+    for (const g of grupos) {
+        const asigTexto = g.asignaciones.length
+            ? g.asignaciones.map(a => `<span style="display:inline-block;margin-right:6px;"><strong>${a.persona}</strong>: $${a.monto.toFixed(2)}</span>`).join('')
+            : '<em style="color:#94a3b8">Sin asignar</em>';
+        html += `
+        <div style="border:1px solid var(--border-color);border-radius:8px;margin-bottom:12px;overflow:hidden;">
+            <div style="padding:9px 14px;background:var(--bg-secondary);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <div>
+                    <strong>${g.fecha}</strong> &nbsp;·&nbsp; ${BODEGAS[g.local]||g.local}
+                    ${g.motivo ? `&nbsp;·&nbsp; <em>${g.motivo}</em>` : ''}
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <strong style="color:var(--primary-color);">$${g.total_costo.toFixed(2)}</strong>
+                    <button class="btn-eliminar-merma" onclick="eliminarBajaGrupo(${g.baja_grupo})" title="Eliminar baja completa"><i class="fas fa-trash"></i></button>
+                </div>
+            </div>
+            <div style="padding:8px 14px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px;">
+                ${g.items.map(i => `<span style="background:var(--bg-secondary);border-radius:4px;padding:2px 7px;">
+                    <code>${i.codigo}</code> ${i.nombre} · ${i.cantidad} ${i.unidad} · $${i.costo_total.toFixed(2)}
+                </span>`).join('')}
+            </div>
+            <div style="padding:6px 14px 10px;font-size:12px;border-top:1px solid var(--border-color);">
+                <i class="fas fa-users" style="color:#94a3b8;margin-right:5px;"></i>${asigTexto}
+            </div>
+        </div>`;
     }
-    html += `</tbody><tfoot><tr class="merma-total-row">
-        <td colspan="8"><strong>TOTAL BAJAS</strong></td>
-        <td><strong>$${totalCosto.toFixed(2)}</strong></td><td></td>
-    </tr></tfoot></table></div>`;
+    html += `<div style="text-align:right;padding:8px 4px;font-size:14px;font-weight:600;">
+        TOTAL: <span style="color:var(--primary-color);font-size:16px;">$${totalGeneral.toFixed(2)}</span>
+    </div></div>`;
     container.innerHTML = html;
 }
 
@@ -2952,36 +2954,32 @@ function _eliminarItemBaja(idx) {
 function registrarBaja() {
     const fecha = document.getElementById('baja-fecha').value;
     const local = document.getElementById('baja-bodega').value;
-    const persona = document.getElementById('baja-persona').value;
     const motivo = document.getElementById('baja-motivo').value.trim();
 
     if (!fecha || !local) { showToast('Selecciona fecha y bodega', 'error'); return; }
-    if (!persona) { showToast('Selecciona una persona responsable', 'error'); return; }
     if (_bajaItems.length === 0) { showToast('Agrega al menos un producto', 'error'); return; }
-
-    const itemsInvalidos = _bajaItems.filter(i => !i.cantidad || i.cantidad <= 0);
-    if (itemsInvalidos.length > 0) {
+    if (_bajaItems.some(i => !i.cantidad || i.cantidad <= 0)) {
         showToast('Todos los productos deben tener cantidad mayor a 0', 'error'); return;
     }
 
     fetch(`${CONFIG.API_URL}/api/bajas/registrar`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({fecha, local, persona, motivo, items: _bajaItems})
+        body: JSON.stringify({fecha, local, motivo, items: _bajaItems, asignaciones: _bajaAsignaciones})
     })
     .then(r => r.json())
     .then(data => {
         if (data.error) { showToast(data.error, 'error'); return; }
-        showToast(`${_bajaItems.length} producto(s) registrados correctamente`, 'success');
+        showToast(`Baja registrada: ${_bajaItems.length} producto(s), ${_bajaAsignaciones.length} persona(s)`, 'success');
         limpiarFormularioBaja();
         cargarBajas();
     })
     .catch(() => showToast('Error al registrar baja', 'error'));
 }
 
-function eliminarBaja(id) {
-    if (!confirm('¿Eliminar esta baja? Esta acción no se puede deshacer.')) return;
-    fetch(`${CONFIG.API_URL}/api/bajas/${id}`, {method: 'DELETE'})
+function eliminarBajaGrupo(baja_grupo) {
+    if (!confirm('¿Eliminar esta baja completa? Se eliminarán los productos y las asignaciones.')) return;
+    fetch(`${CONFIG.API_URL}/api/bajas/grupo/${baja_grupo}`, {method: 'DELETE'})
         .then(r => r.json())
         .then(data => {
             if (data.error) { showToast(data.error, 'error'); return; }
@@ -2994,7 +2992,9 @@ function eliminarBaja(id) {
 function limpiarFormularioBaja() {
     document.getElementById('baja-motivo').value = '';
     _bajaItems = [];
+    _bajaAsignaciones = [];
     _renderBajaItems();
+    _renderAsignacionesBaja();
 }
 
 async function cargarProductosBaja() {
@@ -3078,4 +3078,144 @@ function _seleccionarProdBaja(idx) {
 function cerrarSelectorProductoBaja() {
     const modal = document.getElementById('modal-producto-baja');
     if (modal) modal.remove();
+}
+
+// ---- Panel Personas de la Baja ----
+
+function agregarPersonaAsigBaja() {
+    let modal = document.getElementById('modal-persona-baja');
+    if (modal) modal.remove();
+
+    const personas = (state.personas || []);
+    modal = document.createElement('div');
+    modal.id = 'modal-persona-baja';
+    modal.className = 'modal-persona-overlay';
+    modal.innerHTML = `
+        <div class="modal-persona-content">
+            <div class="modal-persona-header">
+                <input type="text" id="baja-pers-buscar" class="persona-buscar-input"
+                       placeholder="Buscar persona..." oninput="_filtrarPersonasBaja(this.value)">
+                <button class="btn-close-persona" onclick="_cerrarPersonaBaja()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-persona-list" id="baja-pers-lista"></div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) _cerrarPersonaBaja(); });
+
+    _filtrarPersonasBaja('');
+    setTimeout(() => { const b = document.getElementById('baja-pers-buscar'); if (b) b.focus(); }, 100);
+}
+
+function _filtrarPersonasBaja(q) {
+    const lista = document.getElementById('baja-pers-lista');
+    if (!lista) return;
+    const personas = (state.personas || []);
+    const filtradas = q ? personas.filter(p => p.toLowerCase().includes(q.toLowerCase())) : personas;
+    if (!filtradas.length) {
+        lista.innerHTML = '<div style="padding:20px;text-align:center;color:#64748b;">Sin resultados</div>';
+        return;
+    }
+    lista.innerHTML = filtradas.map(p => `
+        <div class="persona-opcion" onclick="_seleccionarPersonaBaja(${JSON.stringify(escapeHtml(p))})">
+            <i class="fas fa-user" style="margin-right:8px;color:#94a3b8;"></i>${escapeHtml(p)}
+        </div>
+    `).join('');
+}
+
+function _seleccionarPersonaBaja(nombre) {
+    // Evitar duplicados
+    if (_bajaAsignaciones.find(a => a.persona === nombre)) {
+        showToast(`${nombre} ya está asignado`, 'info');
+        _cerrarPersonaBaja();
+        return;
+    }
+    _bajaAsignaciones.push({persona: nombre, monto: 0});
+    _cerrarPersonaBaja();
+    _renderAsignacionesBaja();
+}
+
+function _cerrarPersonaBaja() {
+    const modal = document.getElementById('modal-persona-baja');
+    if (modal) modal.remove();
+}
+
+function _renderAsignacionesBaja() {
+    const container = document.getElementById('baja-asig-container');
+    const footer = document.getElementById('baja-asig-footer');
+    if (!container) return;
+
+    if (_bajaAsignaciones.length === 0) {
+        container.innerHTML = `<div class="baja-items-empty">
+            <i class="fas fa-users"></i><p>Agrega personas a asignar</p></div>`;
+        footer?.classList.add('hidden');
+        return;
+    }
+
+    const totalProductos = _bajaItems.reduce((s, i) => s + (i.cantidad||0)*(i.costo_unitario||0), 0);
+    const totalAsig = _bajaAsignaciones.reduce((s, a) => s + (parseFloat(a.monto)||0), 0);
+
+    container.innerHTML = _bajaAsignaciones.map((a, idx) => `
+        <div class="baja-asig-row">
+            <span class="baja-asig-nombre">${escapeHtml(a.persona)}</span>
+            <input type="number" class="baja-asig-input" min="0" step="0.01"
+                   value="${a.monto || ''}" placeholder="$0.00"
+                   onchange="_actualizarMontoAsig(${idx}, this.value)"
+                   oninput="_actualizarMontoAsig(${idx}, this.value)">
+            <button class="baja-item-del" onclick="_eliminarAsigBaja(${idx})" title="Eliminar">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    `).join('');
+
+    if (footer) {
+        footer.classList.remove('hidden');
+        const asigTotalEl = document.getElementById('baja-asig-total');
+        const diffEl = document.getElementById('baja-asig-diff');
+        if (asigTotalEl) asigTotalEl.textContent = `$${totalAsig.toFixed(2)}`;
+        if (diffEl) {
+            const diff = totalProductos - totalAsig;
+            if (Math.abs(diff) < 0.01) {
+                diffEl.textContent = '✓ Cuadra';
+                diffEl.className = 'baja-asig-diff ok';
+            } else if (diff > 0) {
+                diffEl.textContent = `Falta $${diff.toFixed(2)}`;
+                diffEl.className = 'baja-asig-diff warn';
+            } else {
+                diffEl.textContent = `Excede $${Math.abs(diff).toFixed(2)}`;
+                diffEl.className = 'baja-asig-diff warn';
+            }
+        }
+    }
+}
+
+function _actualizarMontoAsig(idx, valor) {
+    if (!_bajaAsignaciones[idx]) return;
+    _bajaAsignaciones[idx].monto = parseFloat(valor) || 0;
+    // Actualizar solo footer sin re-renderizar filas
+    const totalProductos = _bajaItems.reduce((s, i) => s + (i.cantidad||0)*(i.costo_unitario||0), 0);
+    const totalAsig = _bajaAsignaciones.reduce((s, a) => s + (parseFloat(a.monto)||0), 0);
+    const asigTotalEl = document.getElementById('baja-asig-total');
+    const diffEl = document.getElementById('baja-asig-diff');
+    if (asigTotalEl) asigTotalEl.textContent = `$${totalAsig.toFixed(2)}`;
+    if (diffEl) {
+        const diff = totalProductos - totalAsig;
+        if (Math.abs(diff) < 0.01) {
+            diffEl.textContent = '✓ Cuadra';
+            diffEl.className = 'baja-asig-diff ok';
+        } else if (diff > 0) {
+            diffEl.textContent = `Falta $${diff.toFixed(2)}`;
+            diffEl.className = 'baja-asig-diff warn';
+        } else {
+            diffEl.textContent = `Excede $${Math.abs(diff).toFixed(2)}`;
+            diffEl.className = 'baja-asig-diff warn';
+        }
+    }
+}
+
+function _eliminarAsigBaja(idx) {
+    _bajaAsignaciones.splice(idx, 1);
+    _renderAsignacionesBaja();
 }

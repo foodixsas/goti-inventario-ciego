@@ -121,16 +121,33 @@ def init_db():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS inventario_diario.bajas_directas (
                 id SERIAL PRIMARY KEY,
+                baja_grupo BIGINT,
                 fecha DATE NOT NULL,
                 local VARCHAR(50) NOT NULL,
                 codigo VARCHAR(50) NOT NULL,
                 nombre VARCHAR(150) NOT NULL,
                 unidad VARCHAR(20) NOT NULL,
                 cantidad NUMERIC(12,4) NOT NULL,
-                persona VARCHAR(100) NOT NULL,
+                persona VARCHAR(100),
                 motivo TEXT,
                 costo_unitario NUMERIC(12,4) DEFAULT 0,
                 costo_total NUMERIC(12,4) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            ALTER TABLE inventario_diario.bajas_directas
+                ADD COLUMN IF NOT EXISTS baja_grupo BIGINT
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventario_diario.bajas_asignaciones (
+                id SERIAL PRIMARY KEY,
+                baja_grupo BIGINT NOT NULL,
+                persona VARCHAR(100) NOT NULL,
+                monto NUMERIC(12,2) NOT NULL,
+                fecha DATE,
+                local VARCHAR(50),
+                motivo TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -1649,38 +1666,54 @@ def listar_bajas():
         filtros = []
         params = []
         if fecha_desde:
-            filtros.append("fecha >= %s")
-            params.append(fecha_desde)
+            filtros.append("b.fecha >= %s"); params.append(fecha_desde)
         if fecha_hasta:
-            filtros.append("fecha <= %s")
-            params.append(fecha_hasta)
+            filtros.append("b.fecha <= %s"); params.append(fecha_hasta)
         if local:
-            filtros.append("local = %s")
-            params.append(local)
+            filtros.append("b.local = %s"); params.append(local)
         where = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+        # Traer grupos con sus productos y asignaciones
         cur.execute(f"""
-            SELECT id, fecha, local, codigo, nombre, unidad, cantidad, persona, motivo,
-                   costo_unitario, costo_total, created_at
-            FROM inventario_diario.bajas_directas
+            SELECT b.baja_grupo,
+                   MIN(b.fecha) AS fecha,
+                   MIN(b.local) AS local,
+                   MIN(b.motivo) AS motivo,
+                   SUM(b.costo_total) AS total_costo,
+                   MIN(b.created_at) AS created_at
+            FROM inventario_diario.bajas_directas b
             {where}
-            ORDER BY fecha DESC, created_at DESC
+            GROUP BY b.baja_grupo
+            ORDER BY MIN(b.created_at) DESC
         """, params)
-        rows = cur.fetchall()
+        grupos = cur.fetchall()
         result = []
-        for r in rows:
+        for g in grupos:
+            grp = g['baja_grupo']
+            # Productos del grupo
+            cur.execute("""
+                SELECT id, codigo, nombre, unidad, cantidad, costo_unitario, costo_total
+                FROM inventario_diario.bajas_directas
+                WHERE baja_grupo = %s ORDER BY id
+            """, (grp,))
+            items = [{'id': r['id'], 'codigo': r['codigo'], 'nombre': r['nombre'],
+                      'unidad': r['unidad'], 'cantidad': float(r['cantidad']),
+                      'costo_unitario': float(r['costo_unitario'] or 0),
+                      'costo_total': float(r['costo_total'] or 0)} for r in cur.fetchall()]
+            # Asignaciones del grupo
+            cur.execute("""
+                SELECT id, persona, monto FROM inventario_diario.bajas_asignaciones
+                WHERE baja_grupo = %s ORDER BY id
+            """, (grp,))
+            asigs = [{'id': r['id'], 'persona': r['persona'], 'monto': float(r['monto'])} for r in cur.fetchall()]
             result.append({
-                'id': r['id'],
-                'fecha': str(r['fecha']),
-                'local': r['local'],
-                'codigo': r['codigo'],
-                'nombre': r['nombre'],
-                'unidad': r['unidad'],
-                'cantidad': float(r['cantidad']),
-                'persona': r['persona'],
-                'motivo': r['motivo'] or '',
-                'costo_unitario': float(r['costo_unitario'] or 0),
-                'costo_total': float(r['costo_total'] or 0),
-                'created_at': str(r['created_at'])
+                'baja_grupo': grp,
+                'fecha': str(g['fecha']),
+                'local': g['local'],
+                'motivo': g['motivo'] or '',
+                'total_costo': float(g['total_costo'] or 0),
+                'created_at': str(g['created_at']),
+                'items': items,
+                'asignaciones': asigs
             })
         return jsonify(result)
     except Exception as e:
@@ -1692,21 +1725,22 @@ def listar_bajas():
 
 @app.route('/api/bajas/registrar', methods=['POST'])
 def registrar_baja():
+    import time as _time_mod
     data = request.json
     fecha = data.get('fecha')
     local = data.get('local')
-    persona = data.get('persona', '').strip()
     motivo = data.get('motivo', '').strip()
     items = data.get('items', [])
-    if not all([fecha, local, persona]):
-        return jsonify({'error': 'Faltan campos requeridos: fecha, local, persona'}), 400
+    asignaciones = data.get('asignaciones', [])
+    if not all([fecha, local]):
+        return jsonify({'error': 'Faltan campos requeridos: fecha, local'}), 400
     if not items:
         return jsonify({'error': 'Debes incluir al menos un producto'}), 400
+    baja_grupo = int(_time_mod.time() * 1000)
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
-        ids = []
         for item in items:
             codigo = item.get('codigo', '').strip()
             nombre = item.get('nombre', '').strip()
@@ -1716,13 +1750,20 @@ def registrar_baja():
             costo_total = cantidad * costo_unitario
             cur.execute("""
                 INSERT INTO inventario_diario.bajas_directas
-                    (fecha, local, codigo, nombre, unidad, cantidad, persona, motivo, costo_unitario, costo_total)
+                    (baja_grupo, fecha, local, codigo, nombre, unidad, cantidad, motivo, costo_unitario, costo_total)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-            """, (fecha, local, codigo, nombre, unidad, cantidad, persona, motivo, costo_unitario, costo_total))
-            ids.append(cur.fetchone()['id'])
+            """, (baja_grupo, fecha, local, codigo, nombre, unidad, cantidad, motivo, costo_unitario, costo_total))
+        for asig in asignaciones:
+            persona = asig.get('persona', '').strip()
+            monto = float(asig.get('monto') or 0)
+            if persona and monto > 0:
+                cur.execute("""
+                    INSERT INTO inventario_diario.bajas_asignaciones
+                        (baja_grupo, persona, monto, fecha, local, motivo)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (baja_grupo, persona, monto, fecha, local, motivo))
         conn.commit()
-        return jsonify({'success': True, 'ids': ids, 'count': len(ids)})
+        return jsonify({'success': True, 'baja_grupo': baja_grupo})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -1730,13 +1771,14 @@ def registrar_baja():
             release_db(conn)
 
 
-@app.route('/api/bajas/<int:baja_id>', methods=['DELETE'])
-def eliminar_baja(baja_id):
+@app.route('/api/bajas/grupo/<int:baja_grupo>', methods=['DELETE'])
+def eliminar_baja_grupo(baja_grupo):
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("DELETE FROM inventario_diario.bajas_directas WHERE id = %s", (baja_id,))
+        cur.execute("DELETE FROM inventario_diario.bajas_directas WHERE baja_grupo = %s", (baja_grupo,))
+        cur.execute("DELETE FROM inventario_diario.bajas_asignaciones WHERE baja_grupo = %s", (baja_grupo,))
         conn.commit()
         return jsonify({'success': True})
     except Exception as e:

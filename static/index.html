@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inventario Ciego - FOODIX</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260226f">
+    <link rel="stylesheet" href="css/styles.css?v=20260226g">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -317,6 +317,7 @@
 
                     <!-- Formulario de registro -->
                     <div class="merma-form-card">
+                        <!-- Cabecera: fecha, bodega, motivo -->
                         <div class="merma-form-grid">
                             <div class="form-group">
                                 <label>Fecha *</label>
@@ -335,35 +336,54 @@
                                 </select>
                             </div>
                             <div class="form-group" style="grid-column:1/-1;">
-                                <label>Persona Responsable *</label>
-                                <select id="baja-persona" class="input-merma">
-                                    <option value="">Seleccionar persona...</option>
-                                </select>
-                            </div>
-                            <div class="form-group" style="grid-column:1/-1;">
                                 <label>Motivo / Observación</label>
                                 <textarea id="baja-motivo" class="input-merma" rows="2"
                                           placeholder="Ej: Grabación marketing, evento, degustación..."></textarea>
                             </div>
                         </div>
 
-                        <!-- Lista dinámica de productos -->
-                        <div class="baja-productos-section">
-                            <div class="baja-productos-header">
-                                <span><i class="fas fa-box-open"></i> Productos</span>
-                                <button class="btn-secondary btn-sm" onclick="abrirSelectorProductoBaja()">
-                                    <i class="fas fa-plus"></i> Agregar Producto
-                                </button>
-                            </div>
-                            <div id="baja-items-container">
-                                <div class="baja-items-empty" id="baja-items-empty">
-                                    <i class="fas fa-box-open"></i>
-                                    <p>Agrega productos a la baja</p>
+                        <!-- Dos paneles: Productos | Personas -->
+                        <div class="baja-dos-paneles">
+
+                            <!-- Panel Productos -->
+                            <div class="baja-panel">
+                                <div class="baja-panel-header">
+                                    <span><i class="fas fa-box-open"></i> Productos</span>
+                                    <button class="btn-secondary btn-sm" onclick="abrirSelectorProductoBaja()">
+                                        <i class="fas fa-plus"></i> Agregar
+                                    </button>
+                                </div>
+                                <div id="baja-items-container">
+                                    <div class="baja-items-empty">
+                                        <i class="fas fa-box-open"></i>
+                                        <p>Agrega productos</p>
+                                    </div>
+                                </div>
+                                <div id="baja-total-bar" class="baja-panel-footer hidden">
+                                    Total: <strong id="baja-total-valor">$0.00</strong>
                                 </div>
                             </div>
-                            <div id="baja-total-bar" class="baja-total-bar hidden">
-                                Total: <strong id="baja-total-valor">$0.00</strong>
+
+                            <!-- Panel Personas -->
+                            <div class="baja-panel">
+                                <div class="baja-panel-header">
+                                    <span><i class="fas fa-users"></i> Personas</span>
+                                    <button class="btn-secondary btn-sm" onclick="agregarPersonaAsigBaja()">
+                                        <i class="fas fa-plus"></i> Agregar
+                                    </button>
+                                </div>
+                                <div id="baja-asig-container">
+                                    <div class="baja-items-empty">
+                                        <i class="fas fa-users"></i>
+                                        <p>Asigna responsables</p>
+                                    </div>
+                                </div>
+                                <div id="baja-asig-footer" class="baja-panel-footer hidden">
+                                    Asignado: <strong id="baja-asig-total">$0.00</strong>
+                                    <span id="baja-asig-diff" class="baja-asig-diff"></span>
+                                </div>
                             </div>
+
                         </div>
 
                         <div class="merma-form-actions">
@@ -503,7 +523,7 @@
     <!-- Toast notifications -->
     <div id="toast-container"></div>
 
-    <script src="js/config.js?v=20260226f"></script>
-    <script src="js/app.js?v=20260226f"></script>
+    <script src="js/config.js?v=20260226g"></script>
+    <script src="js/app.js?v=20260226g"></script>
 </body>
 </html>
