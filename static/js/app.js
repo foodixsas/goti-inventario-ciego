@@ -2816,7 +2816,6 @@ function seleccionarProductoMerma(idx) {
 // ==================== BAJAS DIRECTAS ====================
 
 let _bajaProductos = [];
-let _bajaAutocompletResultados = [];
 
 function poblarPersonasBaja() {
     const sel = document.getElementById('baja-persona');
@@ -2983,8 +2982,7 @@ function limpiarFormularioBaja() {
     document.getElementById('baja-motivo').value = '';
     document.getElementById('baja-costo-unitario').value = '';
     document.getElementById('baja-costo-total').value = '$0.00';
-    document.getElementById('baja-autocomplete').classList.add('hidden');
-    _bajaAutocompletResultados = [];
+    cerrarSelectorProductoBaja();
 }
 
 function calcularCostoBaja() {
@@ -3007,44 +3005,80 @@ async function cargarProductosBaja() {
     }
 }
 
-function buscarProductoBaja(term) {
-    const lista = document.getElementById('baja-autocomplete');
-    if (!lista) return;
-    if (!term || term.length < 2) {
-        lista.classList.add('hidden');
-        return;
-    }
+async function abrirSelectorProductoBaja() {
+    // Precargar catálogo si no está listo
     if (_bajaProductos.length === 0) {
-        cargarProductosBaja();
-        return;
-    }
-    const termLower = term.toLowerCase();
-    _bajaAutocompletResultados = _bajaProductos
-        .filter(p => p.codigo.toLowerCase().includes(termLower) || p.nombre.toLowerCase().includes(termLower))
-        .slice(0, 8);
-
-    if (!_bajaAutocompletResultados.length) {
-        lista.classList.add('hidden');
-        return;
+        await cargarProductosBaja();
     }
 
-    lista.innerHTML = _bajaAutocompletResultados.map((p, i) => `
-        <div class="merma-autocomplete-item" onclick="seleccionarProductoBaja(${i})">
-            <strong>${p.codigo}</strong> &mdash; ${p.nombre}
-            <span class="merma-ac-unidad">${p.unidad || ''}</span>
+    let modal = document.getElementById('modal-producto-baja');
+    if (modal) modal.remove();
+
+    modal = document.createElement('div');
+    modal.id = 'modal-producto-baja';
+    modal.className = 'modal-persona-overlay';
+    modal.innerHTML = `
+        <div class="modal-persona-content">
+            <div class="modal-persona-header">
+                <input type="text" id="baja-prod-buscar" class="persona-buscar-input"
+                       placeholder="Buscar por código o nombre...">
+                <button class="btn-close-persona" onclick="cerrarSelectorProductoBaja()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-persona-list" id="baja-prod-lista"></div>
         </div>
-    `).join('');
-    lista.classList.remove('hidden');
+    `;
+    document.body.appendChild(modal);
+
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) cerrarSelectorProductoBaja();
+    });
+
+    _renderListaProductosBaja(_bajaProductos);
+
+    const buscarInput = document.getElementById('baja-prod-buscar');
+    if (buscarInput) {
+        buscarInput.focus();
+        buscarInput.addEventListener('input', function() {
+            const term = this.value.toLowerCase();
+            const filtrados = term.length < 1
+                ? _bajaProductos
+                : _bajaProductos.filter(p =>
+                    p.codigo.toLowerCase().includes(term) ||
+                    p.nombre.toLowerCase().includes(term));
+            _renderListaProductosBaja(filtrados);
+        });
+    }
 }
 
-function seleccionarProductoBaja(idx) {
-    const p = _bajaAutocompletResultados[idx];
+function _renderListaProductosBaja(lista) {
+    const container = document.getElementById('baja-prod-lista');
+    if (!container) return;
+    if (!lista.length) {
+        container.innerHTML = '<div style="padding:20px;text-align:center;color:#64748b;">Sin resultados</div>';
+        return;
+    }
+    container.innerHTML = lista.map((p, i) => `
+        <div class="persona-opcion" onclick="_seleccionarProdBaja(${_bajaProductos.indexOf(p)})">
+            <span style="font-weight:600;color:#1E3A5F;">${escapeHtml(p.codigo)}</span>
+            &nbsp;—&nbsp;${escapeHtml(p.nombre)}
+            <span style="font-size:11px;color:#94a3b8;margin-left:6px;">${p.unidad || ''}</span>
+        </div>
+    `).join('');
+}
+
+function _seleccionarProdBaja(idx) {
+    const p = _bajaProductos[idx];
     if (!p) return;
     document.getElementById('baja-codigo').value = p.codigo;
     document.getElementById('baja-nombre').value = p.nombre;
     document.getElementById('baja-unidad').value = p.unidad || '';
-    document.getElementById('baja-costo-unitario').value = p.costo_unitario || 0;
-    document.getElementById('baja-autocomplete').classList.add('hidden');
-    calcularCostoBaja();
+    cerrarSelectorProductoBaja();
     document.getElementById('baja-cantidad').focus();
+}
+
+function cerrarSelectorProductoBaja() {
+    const modal = document.getElementById('modal-producto-baja');
+    if (modal) modal.remove();
 }

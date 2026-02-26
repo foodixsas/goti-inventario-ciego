@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inventario Ciego - FOODIX</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260226c">
+    <link rel="stylesheet" href="css/styles.css?v=20260226d">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -335,16 +335,17 @@
                                     <option value="simon_bolon">Simon Bolon</option>
                                 </select>
                             </div>
-                            <div class="form-group merma-autocomplete-wrapper">
-                                <label>Código o Producto *</label>
-                                <input type="text" id="baja-codigo" class="input-merma"
-                                       placeholder="Buscar por código o nombre..."
-                                       oninput="buscarProductoBaja(this.value)" autocomplete="off">
-                                <div id="baja-autocomplete" class="merma-autocomplete-list hidden"></div>
+                            <div class="form-group" style="grid-column:1/-1;">
+                                <label>Producto *</label>
+                                <div class="persona-dropdown" onclick="abrirSelectorProductoBaja()">
+                                    <input type="text" id="baja-nombre" class="input-merma" readonly
+                                           placeholder="Toca para seleccionar producto...">
+                                    <i class="fas fa-chevron-down persona-dd-arrow"></i>
+                                </div>
                             </div>
                             <div class="form-group">
-                                <label>Nombre Producto</label>
-                                <input type="text" id="baja-nombre" class="input-merma" readonly placeholder="(autocompletado)">
+                                <label>Código</label>
+                                <input type="text" id="baja-codigo" class="input-merma" readonly placeholder="(autocompletado)">
                             </div>
                             <div class="form-group">
                                 <label>Unidad</label>
@@ -515,7 +516,7 @@
     <!-- Toast notifications -->
     <div id="toast-container"></div>
 
-    <script src="js/config.js?v=20260226c"></script>
-    <script src="js/app.js?v=20260226c"></script>
+    <script src="js/config.js?v=20260226d"></script>
+    <script src="js/app.js?v=20260226d"></script>
 </body>
 </html>
