@@ -3152,15 +3152,29 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     .tabla-cruce th, .tabla-cruce td { padding: 6px 4px; }
 }
 
+/* ==================== MERMA / BAJAS - Variables locales ==================== */
+/* Aliases para compatibilidad con variables no definidas en :root */
+.merma-form-card, .merma-lista-card,
+#view-bajas {
+    --bg-card: #ffffff;
+    --bg-primary: #ffffff;
+    --bg-secondary: #F8FAFC;
+    --border-color: #E2E8F0;
+    --text-primary: #0F172A;
+    --text-secondary: #64748B;
+    --primary-color: #1E3A5F;
+}
+
 /* ==================== MERMA OPERATIVA ==================== */
 
 .merma-form-card,
 .merma-lista-card {
-    background: var(--bg-card);
+    background: var(--bg-white);
     border-radius: 16px;
     padding: 24px;
     margin-bottom: 20px;
-    box-shadow: var(--shadow-card);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
+    border: 1px solid var(--border);
 }
 
 .merma-form-card h3,
@@ -3357,42 +3371,55 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     margin-top: 20px;
 }
 .baja-panel {
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: 12px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.04);
 }
 .baja-panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 11px 14px;
-    background: var(--bg-secondary);
+    background: linear-gradient(135deg, #1E3A5F 0%, #2D5A87 100%);
     font-weight: 600;
     font-size: 13px;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border-color);
+    color: #ffffff;
+    border-bottom: none;
+}
+.baja-panel-header i { color: rgba(255,255,255,0.8); }
+.baja-panel-header .btn-secondary {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.3);
+    color: #ffffff;
+    font-size: 12px;
+    padding: 4px 10px;
+}
+.baja-panel-header .btn-secondary:hover {
+    background: rgba(255,255,255,0.25);
 }
 .baja-panel-footer {
     padding: 10px 14px;
     text-align: right;
-    font-size: 14px;
-    background: var(--bg-secondary);
-    border-top: 1px solid var(--border-color);
-    color: var(--text-primary);
+    font-size: 13px;
+    background: #F8FAFC;
+    border-top: 1px solid var(--border);
+    color: var(--text-dark);
     margin-top: auto;
 }
 .baja-panel-footer strong {
-    color: var(--primary-color);
-    font-size: 16px;
+    color: var(--primary);
+    font-size: 15px;
 }
 .baja-items-empty {
-    padding: 24px 16px;
+    padding: 28px 16px;
     text-align: center;
     color: #94a3b8;
 }
-.baja-items-empty i { font-size: 24px; display: block; margin-bottom: 6px; }
+.baja-items-empty i { font-size: 26px; display: block; margin-bottom: 6px; }
 .baja-items-empty p { font-size: 12px; margin: 0; }
 
 /* Filas de producto */
@@ -3401,27 +3428,30 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     align-items: flex-start;
     gap: 8px;
     padding: 9px 12px;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-white);
+    transition: background 0.15s;
 }
+.baja-item-row:hover { background: #F8FAFC; }
 .baja-item-row:last-child { border-bottom: none; }
 .baja-item-info { flex: 1; min-width: 0; }
-.baja-item-codigo { font-size: 10px; font-weight: 700; color: var(--primary-color); display: block; }
-.baja-item-nombre { font-size: 12px; font-weight: 500; color: var(--text-primary); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.baja-item-unidad { font-size: 10px; color: #94a3b8; }
+.baja-item-codigo { font-size: 10px; font-weight: 700; color: var(--primary); display: block; }
+.baja-item-nombre { font-size: 12px; font-weight: 500; color: var(--text-dark); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.baja-item-unidad { font-size: 10px; color: var(--text-light); }
 .baja-item-inputs { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
 .baja-item-input {
     width: 70px;
     padding: 5px 6px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 12px;
     font-family: inherit;
-    background: var(--bg-primary);
-    color: var(--text-primary);
+    background: #fff;
+    color: var(--text-dark);
     text-align: right;
 }
-.baja-item-input:focus { outline: none; border-color: var(--primary-color); }
-.baja-item-subtotal { font-size: 12px; font-weight: 600; color: var(--primary-color); min-width: 52px; text-align: right; }
+.baja-item-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(30,58,95,0.1); }
+.baja-item-subtotal { font-size: 12px; font-weight: 600; color: var(--primary); min-width: 52px; text-align: right; }
 .baja-item-del {
     background: none; border: none; color: #94a3b8;
     cursor: pointer; padding: 3px 5px; border-radius: 4px;
@@ -3435,23 +3465,26 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     align-items: center;
     gap: 8px;
     padding: 9px 12px;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-white);
+    transition: background 0.15s;
 }
+.baja-asig-row:hover { background: #F8FAFC; }
 .baja-asig-row:last-child { border-bottom: none; }
-.baja-asig-nombre { flex: 1; font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.baja-asig-nombre { flex: 1; font-size: 13px; font-weight: 500; color: var(--text-dark); }
 .baja-asig-input {
     width: 80px;
     padding: 5px 6px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 13px;
     font-family: inherit;
-    background: var(--bg-primary);
-    color: var(--text-primary);
+    background: #fff;
+    color: var(--text-dark);
     text-align: right;
 }
-.baja-asig-input:focus { outline: none; border-color: var(--primary-color); }
-.baja-asig-diff { font-size: 11px; margin-left: 8px; }
+.baja-asig-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(30,58,95,0.1); }
+.baja-asig-diff { font-size: 11px; margin-left: 8px; font-weight: 600; }
 .baja-asig-diff.ok { color: #059669; }
 .baja-asig-diff.warn { color: #D97706; }
 
