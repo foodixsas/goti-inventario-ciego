@@ -512,11 +512,6 @@ function cambiarVista(viewName) {
         renderObservaciones();
     }
 
-    // Auto-cargar merma al entrar
-    if (viewName === 'merma') {
-        cargarMermas();
-    }
-
     // Auto-cargar bajas al entrar
     if (viewName === 'bajas') {
         cargarBajas();

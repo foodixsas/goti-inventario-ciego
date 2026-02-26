@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inventario Ciego - FOODIX</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260226a">
+    <link rel="stylesheet" href="css/styles.css?v=20260226b">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -75,10 +75,6 @@
                 <button class="nav-btn nav-admin-only" data-view="cruce" style="display:none;">
                     <i class="fas fa-exchange-alt"></i>
                     <span>Cruce Op.</span>
-                </button>
-                <button class="nav-btn nav-admin-only" data-view="merma" style="display:none;">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <span>Merma</span>
                 </button>
                 <button class="nav-btn nav-admin-only" data-view="bajas" style="display:none;">
                     <i class="fas fa-arrow-down"></i>
@@ -313,111 +309,6 @@
                     </div>
                 </div>
 
-                <!-- Vista Merma Operativa (solo admin) -->
-                <div id="view-merma" class="view">
-                    <div class="view-header">
-                        <h2><i class="fas fa-exclamation-triangle"></i> Merma Operativa</h2>
-                    </div>
-
-                    <!-- Formulario de registro -->
-                    <div class="merma-form-card">
-                        <h3><i class="fas fa-plus-circle"></i> Registrar Nueva Merma</h3>
-                        <div class="merma-form-grid">
-                            <div class="form-group">
-                                <label>Fecha *</label>
-                                <input type="date" id="merma-fecha" class="input-merma" onchange="cargarProductosMerma()">
-                            </div>
-                            <div class="form-group">
-                                <label>Bodega *</label>
-                                <select id="merma-bodega" class="input-merma" onchange="cargarProductosMerma()">
-                                    <option value="">Seleccionar...</option>
-                                    <option value="real_audiencia">Real Audiencia</option>
-                                    <option value="floreana">Floreana</option>
-                                    <option value="portugal">Portugal</option>
-                                    <option value="santo_cachon_real">Santo Cachon Real</option>
-                                    <option value="santo_cachon_portugal">Santo Cachon Portugal</option>
-                                    <option value="simon_bolon">Simon Bolon</option>
-                                </select>
-                            </div>
-                            <div class="form-group merma-autocomplete-wrapper">
-                                <label>Código o Producto *</label>
-                                <input type="text" id="merma-codigo" class="input-merma"
-                                       placeholder="Buscar por código o nombre..."
-                                       oninput="buscarProductoMerma(this.value)" autocomplete="off">
-                                <div id="merma-autocomplete" class="merma-autocomplete-list hidden"></div>
-                            </div>
-                            <div class="form-group">
-                                <label>Nombre Producto</label>
-                                <input type="text" id="merma-nombre" class="input-merma" readonly placeholder="(autocompletado)">
-                            </div>
-                            <div class="form-group">
-                                <label>Unidad</label>
-                                <input type="text" id="merma-unidad" class="input-merma" readonly placeholder="(autocompletado)">
-                            </div>
-                            <div class="form-group">
-                                <label>Cantidad *</label>
-                                <input type="number" id="merma-cantidad" class="input-merma"
-                                       min="0" step="0.01" placeholder="0"
-                                       oninput="calcularCostoMerma()">
-                            </div>
-                            <div class="form-group">
-                                <label>Costo Unitario ($)</label>
-                                <input type="number" id="merma-costo-unitario" class="input-merma" readonly placeholder="(autocompletado)">
-                            </div>
-                            <div class="form-group">
-                                <label>Costo Total</label>
-                                <input type="text" id="merma-costo-total" class="input-merma merma-costo-display" readonly value="$0.00">
-                            </div>
-                        </div>
-                        <div class="form-group" style="margin-top:12px;">
-                            <label>Motivo / Observación</label>
-                            <textarea id="merma-motivo" class="input-merma" rows="2"
-                                      placeholder="Describe el motivo de la merma..."></textarea>
-                        </div>
-                        <div class="merma-form-actions">
-                            <button class="btn-primary" onclick="registrarMerma()">
-                                <i class="fas fa-save"></i> Registrar Merma
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Lista de mermas -->
-                    <div class="merma-lista-card">
-                        <h3><i class="fas fa-list"></i> Mermas Registradas</h3>
-                        <div class="filtros-merma">
-                            <div class="form-group">
-                                <label>Desde</label>
-                                <input type="date" id="merma-fecha-desde" class="input-merma">
-                            </div>
-                            <div class="form-group">
-                                <label>Hasta</label>
-                                <input type="date" id="merma-fecha-hasta" class="input-merma">
-                            </div>
-                            <div class="form-group">
-                                <label>Bodega</label>
-                                <select id="merma-filtro-bodega" class="input-merma">
-                                    <option value="">Todas</option>
-                                    <option value="real_audiencia">Real Audiencia</option>
-                                    <option value="floreana">Floreana</option>
-                                    <option value="portugal">Portugal</option>
-                                    <option value="santo_cachon_real">Santo Cachon Real</option>
-                                    <option value="santo_cachon_portugal">Santo Cachon Portugal</option>
-                                    <option value="simon_bolon">Simon Bolon</option>
-                                </select>
-                            </div>
-                            <button class="btn-secondary" onclick="cargarMermas()">
-                                <i class="fas fa-search"></i> Filtrar
-                            </button>
-                        </div>
-                        <div id="merma-tabla-container">
-                            <div class="empty-state">
-                                <i class="fas fa-exclamation-triangle"></i>
-                                <p>No hay mermas registradas en el periodo seleccionado</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Vista Bajas Directas (solo admin) -->
                 <div id="view-bajas" class="view">
                     <div class="view-header">
@@ -622,7 +513,7 @@
     <!-- Toast notifications -->
     <div id="toast-container"></div>
 
-    <script src="js/config.js?v=20260226a"></script>
-    <script src="js/app.js?v=20260226a"></script>
+    <script src="js/config.js?v=20260226b"></script>
+    <script src="js/app.js?v=20260226b"></script>
 </body>
 </html>
