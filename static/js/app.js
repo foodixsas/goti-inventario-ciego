@@ -2047,11 +2047,18 @@ document.addEventListener('keydown', (e) => {
 
 // ==================== HISTORICO ====================
 
+let _histPivotModo = 'cantidad'; // 'cantidad' | 'valor'
+let _histPivotCache = null;
+
+function _setHistModo(modo) {
+    _histPivotModo = modo;
+    if (_histPivotCache) _renderHistPivot(_histPivotCache);
+}
+
 async function buscarHistorico() {
     const fechaDesde = document.getElementById('fecha-desde').value;
     const fechaHasta = document.getElementById('fecha-hasta').value;
     const bodega = document.getElementById('filtro-bodega').value;
-
     const container = document.getElementById('historico-list');
 
     if (!fechaDesde || !fechaHasta) {
@@ -2059,77 +2066,172 @@ async function buscarHistorico() {
         return;
     }
 
+    container.innerHTML = `<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div>`;
+
     try {
-        let url = `${CONFIG.API_URL}/api/historico?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}`;
-        if (bodega) url += `&bodega=${bodega}`;
-
-        const response = await fetch(url);
-        if (response.ok) {
-            const datos = await response.json();
-
-            if (datos.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <i class="fas fa-search"></i>
-                        <p>No se encontraron registros para el rango seleccionado</p>
-                    </div>
-                `;
+        if (bodega) {
+            // ---- Vista PIVOTE por bodega ----
+            const url = `${CONFIG.API_URL}/api/historico/pivot?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}&bodega=${bodega}`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (data.error) { showToast(data.error, 'error'); return; }
+            _histPivotCache = data;
+            _renderHistPivot(data);
+        } else {
+            // ---- Vista RESUMEN (todas las bodegas) ----
+            _histPivotCache = null;
+            const url = `${CONFIG.API_URL}/api/historico?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}`;
+            const resp = await fetch(url);
+            const datos = await resp.json();
+            if (!datos.length) {
+                container.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>No se encontraron registros</p></div>`;
                 return;
             }
-
-            // Buscar nombre de bodega
-            const getNombreBodega = (id) => {
-                const b = CONFIG.BODEGAS.find(b => b.id === id);
-                return b ? b.nombre : id;
-            };
-
+            const getNombreBodega = id => { const b = CONFIG.BODEGAS.find(b => b.id === id); return b ? b.nombre : id; };
             container.innerHTML = datos.map(item => {
-                const badgeClass = item.estado === 'completo' ? 'badge-completo' :
-                                   item.estado === 'en_proceso' ? 'badge-proceso' : 'badge-pendiente';
-                const badgeText = item.estado === 'completo' ? 'Completo' :
-                                  item.estado === 'en_proceso' ? 'En Proceso' : 'Pendiente';
-                const badgeIcon = item.estado === 'completo' ? 'check-circle' :
-                                  item.estado === 'en_proceso' ? 'clock' : 'hourglass-start';
-
-                return `
-                    <div class="historico-card">
-                        <div class="historico-card-header">
-                            <div class="historico-card-info">
-                                <div class="historico-bodega-nombre">${getNombreBodega(item.local)}</div>
-                                <div class="historico-card-fecha">${formatearFecha(item.fecha)}</div>
-                            </div>
-                            <span class="badge ${badgeClass}">
-                                <i class="fas fa-${badgeIcon}"></i> ${badgeText}
-                            </span>
+                const badgeClass = item.estado === 'completo' ? 'badge-completo' : item.estado === 'en_proceso' ? 'badge-proceso' : 'badge-pendiente';
+                const badgeText  = item.estado === 'completo' ? 'Completo' : item.estado === 'en_proceso' ? 'En Proceso' : 'Pendiente';
+                const badgeIcon  = item.estado === 'completo' ? 'check-circle' : item.estado === 'en_proceso' ? 'clock' : 'hourglass-start';
+                return `<div class="historico-card">
+                    <div class="historico-card-header">
+                        <div class="historico-card-info">
+                            <div class="historico-bodega-nombre">${getNombreBodega(item.local)}</div>
+                            <div class="historico-card-fecha">${formatearFecha(item.fecha)}</div>
                         </div>
-                        <div class="historico-card-stats">
-                            <div class="historico-stat">
-                                <span class="stat-valor">${item.total_productos}</span>
-                                <span class="stat-label">Productos</span>
-                            </div>
-                            <div class="historico-stat">
-                                <span class="stat-valor">${item.total_contados}</span>
-                                <span class="stat-label">Contados</span>
-                            </div>
-                            <div class="historico-stat stat-diferencias">
-                                <span class="stat-valor">${item.total_con_diferencia}</span>
-                                <span class="stat-label">Con Dif.</span>
-                            </div>
-                        </div>
-                        <div class="historico-progress">
-                            <div class="progress-bar">
-                                <div class="progress-fill ${badgeClass}" style="width: ${item.porcentaje}%"></div>
-                            </div>
-                            <span class="progress-text">${item.porcentaje}%</span>
-                        </div>
+                        <span class="badge ${badgeClass}"><i class="fas fa-${badgeIcon}"></i> ${badgeText}</span>
                     </div>
-                `;
+                    <div class="historico-card-stats">
+                        <div class="historico-stat"><span class="stat-valor">${item.total_productos}</span><span class="stat-label">Productos</span></div>
+                        <div class="historico-stat"><span class="stat-valor">${item.total_contados}</span><span class="stat-label">Contados</span></div>
+                        <div class="historico-stat stat-diferencias"><span class="stat-valor">${item.total_con_diferencia}</span><span class="stat-label">Con Dif.</span></div>
+                    </div>
+                    <div class="historico-progress">
+                        <div class="progress-bar"><div class="progress-fill ${badgeClass}" style="width:${item.porcentaje}%"></div></div>
+                        <span class="progress-text">${item.porcentaje}%</span>
+                    </div>
+                </div>`;
             }).join('');
         }
     } catch (error) {
         console.error('Error buscando historico:', error);
         showToast('Error al buscar historico', 'error');
     }
+}
+
+function _renderHistPivot(data) {
+    const container = document.getElementById('historico-list');
+    const { fechas, productos } = data;
+
+    if (!productos.length) {
+        container.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>No se encontraron registros</p></div>`;
+        return;
+    }
+
+    const esValor = _histPivotModo === 'valor';
+    const fmtF = f => { const p = f.split('-'); return `${p[2]}/${p[1]}`; };
+    const fmtDif = (d, cu) => {
+        if (d === null || d === undefined) return null;
+        if (esValor) return d * (cu || 0);
+        return d;
+    };
+
+    // Ordenar: primero productos con al menos una diferencia
+    const prods = [...productos].sort((a, b) => {
+        const aDif = Object.values(a.porFecha).some(v => v.diferencia !== null && v.diferencia !== 0);
+        const bDif = Object.values(b.porFecha).some(v => v.diferencia !== null && v.diferencia !== 0);
+        if (aDif && !bDif) return -1;
+        if (!aDif && bDif) return 1;
+        return a.codigo.localeCompare(b.codigo);
+    });
+
+    // Totales por fecha
+    const totPorFecha = {};
+    fechas.forEach(f => { totPorFecha[f] = 0; });
+    let totGeneral = 0;
+
+    let rows = '';
+    for (const prod of prods) {
+        let totProd = 0;
+        let tieneDif = false;
+        let celdas = '';
+        for (const f of fechas) {
+            const v = prod.porFecha[f];
+            if (!v || v.contado === null) {
+                celdas += `<td class="hpiv-empty">—</td>`;
+            } else {
+                const val = fmtDif(v.diferencia, v.costo_unitario);
+                const abs = Math.abs(val);
+                totPorFecha[f] += val;
+                totProd += val;
+                totGeneral += val;
+                if (val !== 0) tieneDif = true;
+                const cls = val < 0 ? 'hpiv-neg' : val > 0 ? 'hpiv-pos' : 'hpiv-cero';
+                const txt = esValor
+                    ? (val === 0 ? '✓' : `$${val.toFixed(2)}`)
+                    : (val === 0 ? '✓' : val.toFixed(2));
+                celdas += `<td class="hpiv-val ${cls}">${txt}</td>`;
+            }
+        }
+        const rowCls = tieneDif ? 'hpiv-row-dif' : '';
+        const totTxt = esValor ? (totProd === 0 ? '✓' : `$${totProd.toFixed(2)}`) : (totProd === 0 ? '✓' : totProd.toFixed(2));
+        const totCls = totProd < 0 ? 'hpiv-neg' : totProd > 0 ? 'hpiv-pos' : 'hpiv-cero';
+        rows += `<tr class="${rowCls}">
+            <td><code class="hpiv-codigo">${escapeHtml(prod.codigo)}</code></td>
+            <td class="hpiv-nombre">${escapeHtml(prod.nombre)}</td>
+            <td class="hpiv-unid">${escapeHtml(prod.unidad)}</td>
+            ${celdas}
+            <td class="hpiv-rowtot ${totCls}">${totTxt}</td>
+        </tr>`;
+    }
+
+    // Fila total
+    const totFechasCells = fechas.map(f => {
+        const v = totPorFecha[f];
+        const cls = v < 0 ? 'hpiv-neg' : v > 0 ? 'hpiv-pos' : '';
+        const txt = esValor ? (v === 0 ? '' : `$${v.toFixed(2)}`) : (v === 0 ? '' : v.toFixed(2));
+        return `<td class="${cls}" style="font-weight:700;">${txt}</td>`;
+    }).join('');
+    const totGenTxt = esValor ? `$${totGeneral.toFixed(2)}` : totGeneral.toFixed(2);
+
+    const conDif = prods.filter(p => Object.values(p.porFecha).some(v => v.diferencia !== null && v.diferencia !== 0)).length;
+
+    container.innerHTML = `
+    <div class="baja-pivot-toolbar">
+        <span class="baja-pivot-info">${prods.length} productos · ${fechas.length} fecha(s) · <span style="color:#D97706;font-weight:600;">${conDif} con diferencia</span></span>
+        <div class="baja-pivot-toggle">
+            <button class="baja-toggle-btn ${!esValor ? 'active' : ''}" onclick="_setHistModo('cantidad')">
+                <i class="fas fa-cubes"></i> Cantidad
+            </button>
+            <button class="baja-toggle-btn ${esValor ? 'active' : ''}" onclick="_setHistModo('valor')">
+                <i class="fas fa-dollar-sign"></i> Valor
+            </button>
+        </div>
+    </div>
+    <div style="overflow-x:auto;">
+    <table class="tabla-bajas-pivot tabla-hist-pivot">
+        <thead>
+            <tr>
+                <th class="bpiv-cod">Código</th>
+                <th class="bpiv-nom">Producto</th>
+                <th class="bpiv-uni">Unid.</th>
+                ${fechas.map(f => `<th class="bpiv-fecha">${fmtF(f)}</th>`).join('')}
+                <th class="bpiv-tot">Total</th>
+            </tr>
+        </thead>
+        <tbody>${rows}
+            <tr class="bpiv-row-total">
+                <td colspan="3">TOTAL DIFERENCIA</td>
+                ${totFechasCells}
+                <td>${totGenTxt}</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+    <div style="margin-top:10px;font-size:11px;display:flex;gap:16px;color:#64748b;">
+        <span><span style="background:#FEE2E2;padding:1px 8px;border-radius:3px;">rojo</span> = falta producto (negativo)</span>
+        <span><span style="background:#FEF3C7;padding:1px 8px;border-radius:3px;">naranja</span> = sobra producto (positivo)</span>
+        <span><span style="color:#059669;">✓</span> = sin diferencia</span>
+    </div>`;
 }
 
 function formatearFecha(fechaStr) {

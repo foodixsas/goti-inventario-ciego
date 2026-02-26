@@ -551,6 +551,61 @@ def historico():
             release_db(conn)
 
 
+@app.route('/api/historico/pivot', methods=['GET'])
+def historico_pivot():
+    fecha_desde = request.args.get('fecha_desde')
+    fecha_hasta = request.args.get('fecha_hasta')
+    local = request.args.get('bodega')
+    if not fecha_desde or not fecha_hasta or not local:
+        return jsonify({'error': 'fecha_desde, fecha_hasta y bodega son requeridos'}), 400
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                codigo, nombre, unidad,
+                fecha,
+                cantidad AS stock,
+                COALESCE(cantidad_contada_2, cantidad_contada) AS contado,
+                COALESCE(cantidad_contada_2, cantidad_contada) - cantidad AS diferencia,
+                costo_unitario
+            FROM inventario_diario.inventario_ciego_conteos
+            WHERE fecha >= %s AND fecha <= %s AND local = %s
+            ORDER BY codigo, fecha
+        """, (fecha_desde, fecha_hasta, local))
+        rows = cur.fetchall()
+        release_db(conn)
+        productos = {}
+        fechas = set()
+        for r in rows:
+            codigo = r['codigo']
+            fecha = str(r['fecha'])
+            fechas.add(fecha)
+            if codigo not in productos:
+                productos[codigo] = {
+                    'codigo': codigo,
+                    'nombre': r['nombre'],
+                    'unidad': r['unidad'],
+                    'porFecha': {}
+                }
+            productos[codigo]['porFecha'][fecha] = {
+                'stock': float(r['stock'] or 0),
+                'contado': float(r['contado']) if r['contado'] is not None else None,
+                'diferencia': float(r['diferencia']) if r['diferencia'] is not None else None,
+                'costo_unitario': float(r['costo_unitario'] or 0)
+            }
+        return jsonify({
+            'fechas': sorted(fechas),
+            'productos': list(productos.values())
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 @app.route('/api/reportes/diferencias', methods=['GET'])
 def reporte_diferencias():
     fecha = request.args.get('fecha')
