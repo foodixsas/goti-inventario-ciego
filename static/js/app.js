@@ -3082,6 +3082,8 @@ function cerrarSelectorProductoBaja() {
 
 // ---- Panel Personas de la Baja ----
 
+let _personasBajaLista = []; // guarda lista filtrada para referenciar por índice en onclick
+
 function agregarPersonaAsigBaja() {
     let modal = document.getElementById('modal-persona-baja');
     if (modal) modal.remove();
@@ -3113,13 +3115,13 @@ function _filtrarPersonasBaja(q) {
     const lista = document.getElementById('baja-pers-lista');
     if (!lista) return;
     const personas = (state.personas || []);
-    const filtradas = q ? personas.filter(p => p.toLowerCase().includes(q.toLowerCase())) : personas;
-    if (!filtradas.length) {
+    _personasBajaLista = q ? personas.filter(p => p.toLowerCase().includes(q.toLowerCase())) : personas.slice();
+    if (!_personasBajaLista.length) {
         lista.innerHTML = '<div style="padding:20px;text-align:center;color:#64748b;">Sin resultados</div>';
         return;
     }
-    lista.innerHTML = filtradas.map(p => `
-        <div class="persona-opcion" onclick="_seleccionarPersonaBaja(${JSON.stringify(escapeHtml(p))})">
+    lista.innerHTML = _personasBajaLista.map((p, i) => `
+        <div class="persona-opcion" onclick="_seleccionarPersonaBaja(_personasBajaLista[${i}])">
             <i class="fas fa-user" style="margin-right:8px;color:#94a3b8;"></i>${escapeHtml(p)}
         </div>
     `).join('');
