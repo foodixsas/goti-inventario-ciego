@@ -1642,47 +1642,49 @@ def listar_secciones_conteo():
 
 @app.route('/api/conteo/secciones/guardar', methods=['POST'])
 def guardar_seccion_conteo():
+    """Divide productos equitativamente entre personas y guarda en asignacion_diferencias"""
     data = request.json
-    fecha = data.get('fecha')
-    local = data.get('local')
-    nombre = data.get('nombre', '').strip()
     productos = data.get('productos', [])
-    personas = data.get('personas', [])
-    seccion_id = data.get('seccion_id')
-    total_valor = sum(float(p.get('valor', 0)) for p in productos)
+    personas = data.get('personas', [])  # lista de strings (nombres)
+    if not productos:
+        return jsonify({'error': 'Sin productos'}), 400
+    if not personas:
+        return jsonify({'error': 'Sin personas'}), 400
+    n_personas = len(personas)
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
-        if seccion_id:
-            cur.execute("""
-                UPDATE inventario_diario.asignacion_seccion
-                SET nombre=%s, total_valor=%s WHERE id=%s
-            """, (nombre, total_valor, seccion_id))
-            cur.execute("DELETE FROM inventario_diario.asig_seccion_productos WHERE seccion_id=%s", (seccion_id,))
-            cur.execute("DELETE FROM inventario_diario.asig_seccion_personas WHERE seccion_id=%s", (seccion_id,))
-        else:
-            cur.execute("""
-                INSERT INTO inventario_diario.asignacion_seccion (fecha, local, nombre, total_valor)
-                VALUES (%s, %s, %s, %s) RETURNING id
-            """, (fecha, local, nombre, total_valor))
-            seccion_id = cur.fetchone()['id']
         for p in productos:
+            conteo_id = p['conteo_id']
+            cantidad_por_persona = float(p.get('cantidad_asignada', 0)) / n_personas
+            # Borrar asignaciones previas para este conteo
             cur.execute("""
-                INSERT INTO inventario_diario.asig_seccion_productos
-                    (seccion_id, conteo_id, codigo, nombre, diferencia, costo_unitario, cantidad_asignada, valor)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (seccion_id, p['conteo_id'], p.get('codigo',''), p.get('nombre',''),
-                  float(p.get('diferencia', 0)), float(p.get('costo_unitario', 0)),
-                  float(p.get('cantidad_asignada', 0)), float(p.get('valor', 0))))
-        for p in personas:
-            if p.get('persona'):
-                cur.execute("""
-                    INSERT INTO inventario_diario.asig_seccion_personas (seccion_id, persona, monto)
-                    VALUES (%s, %s, %s)
-                """, (seccion_id, p['persona'], float(p.get('monto', 0))))
+                DELETE FROM inventario_diario.asignacion_diferencias
+                WHERE conteo_id = %s
+            """, (conteo_id,))
+            # Obtener info del producto para guardar datos auto-contenidos
+            cur.execute("""
+                SELECT codigo, nombre, unidad, local, fecha
+                FROM inventario_diario.inventario_ciego_conteos WHERE id = %s
+            """, (conteo_id,))
+            info = cur.fetchone()
+            for nombre_persona in personas:
+                if info:
+                    cur.execute("""
+                        INSERT INTO inventario_diario.asignacion_diferencias
+                            (conteo_id, persona, cantidad, codigo, nombre, unidad, local, fecha)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (conteo_id, nombre_persona.strip(), cantidad_por_persona,
+                          info['codigo'], info['nombre'], info['unidad'],
+                          info['local'], info['fecha']))
+                else:
+                    cur.execute("""
+                        INSERT INTO inventario_diario.asignacion_diferencias (conteo_id, persona, cantidad)
+                        VALUES (%s, %s, %s)
+                    """, (conteo_id, nombre_persona.strip(), cantidad_por_persona))
         conn.commit()
-        return jsonify({'success': True, 'seccion_id': seccion_id})
+        return jsonify({'success': True, 'productos': len(productos), 'personas': n_personas})
     except Exception as e:
         if conn:
             try: conn.rollback()

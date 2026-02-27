@@ -3457,26 +3457,9 @@ let _seccionesLocal = [];      // [{seccion_id, nombre, productos:[...], persona
 let _prodConDifCache = [];     // cache de productos con diferencia del conteo actual
 let _secPersonasLista = [];    // lista filtrada para onclick por índice
 
+// Las secciones son estado local temporal — se guardan en asignacion_diferencias al confirmar
 async function cargarSecciones(fecha, local) {
-    try {
-        const r = await fetch(`${CONFIG.API_URL}/api/conteo/secciones?fecha=${fecha}&local=${local}`);
-        const data = await r.json();
-        if (Array.isArray(data)) {
-            _seccionesLocal = data.map(s => ({
-                seccion_id: s.id,
-                nombre: s.nombre || '',
-                productos: s.productos.map(p => ({
-                    ...p,
-                    cantidad_asignada: p.cantidad_asignada ?? Math.abs(p.diferencia ?? 0)
-                })),
-                personas: s.personas.slice()
-            }));
-        } else {
-            _seccionesLocal = [];
-        }
-    } catch(e) {
-        _seccionesLocal = [];
-    }
+    _seccionesLocal = [];
 }
 
 function renderPanelSecciones(container, productosConDif) {
@@ -3605,34 +3588,27 @@ function _htmlSeccion(sec, sIdx) {
             </label>`;
         }).join('');
 
-    // ---- HTML personas ----
+    // ---- HTML personas (solo chips, sin monto — la división es automática al guardar) ----
     const personasHtml = sec.personas.length === 0
         ? `<div class="sec-empty-inner"><i class="fas fa-user-plus"></i> Agrega personas</div>`
-        : sec.personas.map((p, pIdx) => `
-            <div class="sec-persona-row">
-                <span class="sec-persona-nombre"><i class="fas fa-user"></i> ${escapeHtml(p.persona)}</span>
-                <div class="sec-monto-wrap">
-                    <span class="sec-monto-prefix">$</span>
-                    <input type="number" class="sec-monto-input" min="0" step="0.01"
-                           value="${parseFloat(p.monto || 0).toFixed(2)}"
-                           oninput="_actualizarMontoSec(${sIdx}, ${pIdx}, this.value)"
-                           onchange="_actualizarMontoSec(${sIdx}, ${pIdx}, this.value)">
-                </div>
+        : sec.personas.map((nombre, pIdx) => `
+            <div class="sec-persona-chip">
+                <i class="fas fa-user"></i>
+                <span>${escapeHtml(nombre)}</span>
                 <button class="baja-item-del" onclick="_quitarPersonaSec(${sIdx}, ${pIdx})" title="Quitar">
                     <i class="fas fa-times"></i>
                 </button>
             </div>`).join('');
 
-    // ---- Footer cuadre ----
-    let diffHtml = '';
-    if (sec.personas.length > 0 && totalValor > 0) {
-        if (cuadra) diffHtml = `<span class="baja-asig-diff ok">✓ Cuadra</span>`;
-        else if (diff > 0) diffHtml = `<span class="baja-asig-diff warn">Falta $${diff.toFixed(2)}</span>`;
-        else diffHtml = `<span class="baja-asig-diff warn">Excede $${Math.abs(diff).toFixed(2)}</span>`;
-    }
+    // ---- Info de división ----
+    const divisionInfo = sec.personas.length > 0 && sec.productos.length > 0 ? `
+        <div class="sec-division-info">
+            <i class="fas fa-divide"></i>
+            ${sec.productos.length} producto(s) ÷ ${sec.personas.length} persona(s)
+            ${totalValor > 0 ? `· <strong>$${(totalValor / sec.personas.length).toFixed(2)}</strong> c/u` : ''}
+        </div>` : '';
 
-    const savedBadge = sec.seccion_id
-        ? `<span class="sec-saved-badge"><i class="fas fa-check-circle"></i> Guardado</span>` : '';
+    const savedBadge = '';
 
     return `
     <div class="sec-card" id="sec-card-${sIdx}">
@@ -3666,17 +3642,8 @@ function _htmlSeccion(sec, sIdx) {
                         <i class="fas fa-plus"></i> Agregar
                     </button>
                 </div>
-                <div class="sec-personas-lista">${personasHtml}</div>
-                ${sec.personas.length > 0 && totalValor > 0 ? `
-                <div class="sec-personas-footer">
-                    <div class="sec-divide-row">
-                        <span>Asignado: <strong>$${totalAsig.toFixed(2)}</strong> / $${totalValor.toFixed(2)}</span>
-                        ${diffHtml}
-                    </div>
-                    <button class="btn-dividir" onclick="_dividirSec(${sIdx})">
-                        <i class="fas fa-divide"></i> Dividir equitativamente
-                    </button>
-                </div>` : ''}
+                <div class="sec-personas-lista chips">${personasHtml}</div>
+                ${divisionInfo}
             </div>
         </div>
 
@@ -3754,13 +3721,6 @@ function _dividirSec(sIdx) {
     _reRenderSecciones();
 }
 
-// Actualiza el monto de una persona sin re-renderizar (evita pérdida de foco)
-function _actualizarMontoSec(sIdx, pIdx, valor) {
-    if (!_seccionesLocal[sIdx] || !_seccionesLocal[sIdx].personas[pIdx]) return;
-    _seccionesLocal[sIdx].personas[pIdx].monto = parseFloat(valor) || 0;
-    _actualizarFooterSec(sIdx);
-}
-
 // Actualiza cantidad asignada a un producto y recalcula valor (sin re-renderizar)
 function _actualizarCantidadSec(sIdx, conteoId, cantStr, maxCant) {
     const sec = _seccionesLocal[sIdx];
@@ -3784,35 +3744,19 @@ function _actualizarCantidadSec(sIdx, conteoId, cantStr, maxCant) {
     _actualizarFooterSec(sIdx);
 }
 
-// Actualiza chip de total + indicador de cuadre sin re-renderizar la sección completa
+// Actualiza chip de total e info de división sin re-renderizar toda la sección
 function _actualizarFooterSec(sIdx) {
     const sec = _seccionesLocal[sIdx];
     if (!sec) return;
     const totalValor = sec.productos.reduce((s, p) => s + (parseFloat(p.valor) || 0), 0);
-    const totalAsig  = sec.personas.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0);
-    const diff = totalValor - totalAsig;
-    const cuadra = Math.abs(diff) < 0.01;
-
     const card = document.getElementById(`sec-card-${sIdx}`);
     if (!card) return;
-
-    // Chip total productos
     const chip = card.querySelector('.sec-total-chip');
     if (chip) chip.textContent = `$${totalValor.toFixed(2)}`;
-
-    // Footer: "Asignado X / Y"
-    const footerSpan = card.querySelector('.sec-divide-row > span');
-    if (footerSpan) footerSpan.innerHTML = `Asignado: <strong>$${totalAsig.toFixed(2)}</strong> / $${totalValor.toFixed(2)}`;
-
-    // Badge cuadre
-    const diffEl = card.querySelector('.baja-asig-diff');
-    if (diffEl) {
-        if (cuadra)       { diffEl.className = 'baja-asig-diff ok';   diffEl.textContent = '✓ Cuadra'; }
-        else if (diff > 0){ diffEl.className = 'baja-asig-diff warn'; diffEl.textContent = `Falta $${diff.toFixed(2)}`; }
-        else              { diffEl.className = 'baja-asig-diff warn'; diffEl.textContent = `Excede $${Math.abs(diff).toFixed(2)}`; }
-    } else if (sec.personas.length > 0 && totalValor > 0) {
-        // Footer aún no existe (primera persona agregada), re-render completo necesario
-        _reRenderSecciones();
+    const infoEl = card.querySelector('.sec-division-info');
+    if (infoEl && sec.personas.length > 0) {
+        const porPersona = sec.personas.length > 0 ? totalValor / sec.personas.length : 0;
+        infoEl.innerHTML = `<i class="fas fa-divide"></i> ${sec.productos.length} producto(s) ÷ ${sec.personas.length} persona(s)${totalValor > 0 ? ` · <strong>$${porPersona.toFixed(2)}</strong> c/u` : ''}`;
     }
 }
 
@@ -3823,13 +3767,6 @@ function _quitarPersonaSec(sIdx, pIdx) {
 }
 
 function _eliminarSec(sIdx) {
-    const sec = _seccionesLocal[sIdx];
-    if (!sec) return;
-    if (sec.seccion_id) {
-        if (!confirm('¿Eliminar esta sección y sus asignaciones guardadas?')) return;
-        fetch(`${CONFIG.API_URL}/api/conteo/secciones/${sec.seccion_id}`, {method: 'DELETE'})
-            .then(r => r.json()).catch(() => {});
-    }
     _seccionesLocal.splice(sIdx, 1);
     _reRenderSecciones();
 }
@@ -3877,12 +3814,12 @@ function _filtrarPersonasSec(q, sIdx) {
 function _selPersonaSec(pIdx, sIdx) {
     const nombre = _secPersonasLista[pIdx];
     if (!nombre || !_seccionesLocal[sIdx]) return;
-    if (_seccionesLocal[sIdx].personas.find(p => p.persona === nombre)) {
+    if (_seccionesLocal[sIdx].personas.includes(nombre)) {
         showToast(`${nombre} ya está en la sección`, 'info');
         _cerrarPersonaSec();
         return;
     }
-    _seccionesLocal[sIdx].personas.push({persona: nombre, monto: 0});
+    _seccionesLocal[sIdx].personas.push(nombre);
     _cerrarPersonaSec();
     _reRenderSecciones();
 }
@@ -3902,24 +3839,24 @@ async function _guardarSec(sIdx) {
     const fecha = document.getElementById('fecha-conteo')?.value;
     const local = document.getElementById('bodega-select')?.value;
     if (!fecha || !local) { showToast('No hay fecha/bodega activa', 'error'); return; }
-    const payload = {
-        fecha, local,
-        seccion_id: sec.seccion_id || null,
-        nombre: sec.nombre,
-        productos: sec.productos,
-        personas: sec.personas
-    };
     try {
         const r = await fetch(`${CONFIG.API_URL}/api/conteo/secciones/guardar`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
+            body: JSON.stringify({productos: sec.productos, personas: sec.personas})
         });
         const data = await r.json();
         if (data.error) { showToast(data.error, 'error'); return; }
-        _seccionesLocal[sIdx].seccion_id = data.seccion_id;
-        showToast('Sección guardada', 'success');
+        // Eliminar sección del panel (ya está guardada en asignacion_diferencias)
+        _seccionesLocal.splice(sIdx, 1);
+        showToast(`Asignado: ${data.productos} producto(s) ÷ ${data.personas} persona(s)`, 'success');
         _reRenderSecciones();
+        // Recargar asignaciones para reflejar los cambios en el panel de arriba
+        await cargarAsignaciones(fecha, local);
+        const asigContainer = document.getElementById('asignaciones-container');
+        if (asigContainer && _prodConDifCache.length > 0) {
+            renderAsignacionesDiferencias(asigContainer, _prodConDifCache);
+        }
     } catch(e) {
         showToast('Error al guardar', 'error');
     }
