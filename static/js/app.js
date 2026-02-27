@@ -3653,13 +3653,15 @@ function _htmlSeccion(sec, sIdx) {
 
 // ---- Helpers ----
 
-// Suma lo que asignan todas las secciones EXCEPTO sIdx para un producto dado
+// Suma lo ya asignado: en BD (state.asignaciones) + otras secciones activas (excepto sIdx)
 function _calcAsignadoOtras(conteoId, sIdx) {
-    return _seccionesLocal.reduce((total, s, i) => {
+    const enBD = (state.asignaciones[String(conteoId)] || []).reduce((s, a) => s + (parseFloat(a.cantidad) || 0), 0);
+    const enSecciones = _seccionesLocal.reduce((total, s, i) => {
         if (i === sIdx) return total;
         const p = s.productos.find(p => p.conteo_id === conteoId);
         return total + (p ? (parseFloat(p.cantidad_asignada) || 0) : 0);
     }, 0);
+    return enBD + enSecciones;
 }
 
 // ---- Acciones de productos ----
