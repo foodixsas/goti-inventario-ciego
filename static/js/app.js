@@ -3030,6 +3030,50 @@ function renderTablaBajas(grupos) {
     const fmtVal = v => esCosto ? `$${v.toFixed(2)}` : (Number.isInteger(v) || v % 1 === 0 ? v.toFixed(0) : v.toFixed(2));
 
     // ---- HTML tabla ----
+    // ---- Vista por Persona ----
+    if (_bajaPivotModo === 'persona') {
+        const personaMap = {};
+        for (const g of grupos) {
+            for (const asig of g.asignaciones) {
+                if (!personaMap[asig.persona]) personaMap[asig.persona] = {monto: 0, registros: 0};
+                personaMap[asig.persona].monto += parseFloat(asig.monto) || 0;
+                personaMap[asig.persona].registros += 1;
+            }
+        }
+        const personas = Object.entries(personaMap).sort((a, b) => b[1].monto - a[1].monto);
+        const totalMonto = personas.reduce((s, [, v]) => s + v.monto, 0);
+        let html = `
+        <div class="baja-pivot-toolbar">
+            <span class="baja-pivot-info">${personas.length} persona(s)</span>
+            <div class="baja-pivot-toggle">
+                <button class="baja-toggle-btn" onclick="_setBajaModo('cantidad')"><i class="fas fa-cubes"></i> Cantidad</button>
+                <button class="baja-toggle-btn" onclick="_setBajaModo('costo')"><i class="fas fa-dollar-sign"></i> Valor</button>
+                <button class="baja-toggle-btn active" onclick="_setBajaModo('persona')"><i class="fas fa-users"></i> Por Persona</button>
+            </div>
+        </div>
+        <div style="overflow-x:auto;">
+        <table class="tabla-bajas-pivot">
+            <thead><tr>
+                <th style="text-align:left;padding:10px 12px;">Persona</th>
+                <th style="text-align:center;">Registros</th>
+                <th style="text-align:right;padding:10px 12px;">Monto Total</th>
+            </tr></thead>
+            <tbody>`;
+        for (const [nombre, datos] of personas) {
+            html += `<tr>
+                <td style="padding:10px 12px;font-weight:600;color:#123450;"><i class="fas fa-user" style="color:#94a3b8;margin-right:6px;"></i>${escapeHtml(nombre)}</td>
+                <td style="text-align:center;color:#64748B;">${datos.registros}</td>
+                <td style="text-align:right;padding:10px 12px;font-weight:700;color:#F43F5E;">$${datos.monto.toFixed(2)}</td>
+            </tr>`;
+        }
+        html += `<tr style="background:#123450;color:white;font-weight:700;">
+            <td style="padding:10px 12px;" colspan="2">TOTAL</td>
+            <td style="text-align:right;padding:10px 12px;">$${totalMonto.toFixed(2)}</td>
+        </tr></tbody></table></div>`;
+        container.innerHTML = html;
+        return;
+    }
+
     let html = `
     <div class="baja-pivot-toolbar">
         <span class="baja-pivot-info">${productos.length} producto(s) · ${fechas.length} fecha(s)</span>
@@ -3039,6 +3083,9 @@ function renderTablaBajas(grupos) {
             </button>
             <button class="baja-toggle-btn ${esCosto ? 'active' : ''}" onclick="_setBajaModo('costo')">
                 <i class="fas fa-dollar-sign"></i> Valor
+            </button>
+            <button class="baja-toggle-btn" onclick="_setBajaModo('persona')">
+                <i class="fas fa-users"></i> Por Persona
             </button>
         </div>
     </div>
@@ -3091,7 +3138,7 @@ function renderTablaBajas(grupos) {
         <button class="btn-secondary btn-sm" onclick="_toggleDetalleBajas(this)">
             <i class="fas fa-list"></i> Ver registros individuales
         </button>
-        <div id="baja-detalle-lista" style="display:none;margin-top:10px;">`;
+        <div id="baja-detalle-lista" style="display:block;margin-top:10px;">`;
 
     for (const g of grupos) {
         const asigTexto = g.asignaciones.length
