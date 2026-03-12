@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inventario Ciego - FOODIX</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260227i">
+    <link rel="stylesheet" href="css/styles.css?v=20260312a">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -79,6 +79,10 @@
                 <button class="nav-btn nav-admin-only" data-view="bajas" style="display:none;">
                     <i class="fas fa-arrow-down"></i>
                     <span>Bajas</span>
+                </button>
+                <button class="nav-btn nav-admin-only" data-view="correccion" style="display:none;">
+                    <i class="fas fa-edit"></i>
+                    <span>Corregir</span>
                 </button>
             </nav>
 
@@ -442,6 +446,42 @@
                     </div>
                 </div>
 
+                <!-- Vista Corrección de Conteos (solo admin) -->
+                <div id="view-correccion" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-edit"></i> Corrección de Conteos</h2>
+                    </div>
+
+                    <div class="filtros-historico" style="gap:10px;flex-wrap:wrap;">
+                        <div class="form-group">
+                            <label><i class="fas fa-calendar"></i> Fecha</label>
+                            <input type="date" id="corr-fecha">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-warehouse"></i> Bodega</label>
+                            <select id="corr-bodega">
+                                <option value="">-- Seleccionar --</option>
+                                <option value="real_audiencia">Real Audiencia</option>
+                                <option value="floreana">Floreana</option>
+                                <option value="portugal">Portugal</option>
+                                <option value="santo_cachon_real">Santo Cachon Real</option>
+                                <option value="santo_cachon_portugal">Santo Cachon Portugal</option>
+                                <option value="simon_bolon">Simon Bolon</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" onclick="cargarCorreccion()" style="align-self:flex-end;">
+                            <i class="fas fa-search"></i> Cargar
+                        </button>
+                    </div>
+
+                    <div id="corr-tabla-container" style="margin-top:16px;">
+                        <div class="empty-state">
+                            <i class="fas fa-edit"></i>
+                            <p>Selecciona fecha y bodega para ver los conteos</p>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Vista Cruce Operativo (solo admin) -->
                 <div id="view-cruce" class="view">
                     <div class="view-header">
@@ -535,7 +575,7 @@
     <!-- Toast notifications -->
     <div id="toast-container"></div>
 
-    <script src="js/config.js?v=20260227i"></script>
-    <script src="js/app.js?v=20260227i"></script>
+    <script src="js/config.js?v=20260312a"></script>
+    <script src="js/app.js?v=20260312a"></script>
 </body>
 </html>

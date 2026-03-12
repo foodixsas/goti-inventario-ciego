@@ -476,6 +476,36 @@ def guardar_observacion():
         if conn:
             release_db(conn)
 
+@app.route('/api/admin/corregir-conteo', methods=['PUT'])
+def corregir_conteo():
+    """Permite al admin corregir conteo1 y/o conteo2 de un producto"""
+    data = request.json
+    id_producto = data.get('id')
+    cantidad_contada = data.get('cantidad_contada')
+    cantidad_contada_2 = data.get('cantidad_contada_2')
+
+    if id_producto is None:
+        return jsonify({'error': 'id es requerido'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE inventario_diario.inventario_ciego_conteos
+            SET cantidad_contada = %s, cantidad_contada_2 = %s
+            WHERE id = %s
+        """, (cantidad_contada, cantidad_contada_2, id_producto))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Error en /api/admin/corregir-conteo: {e}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 @app.route('/api/inventario/cargar', methods=['POST'])
 def cargar_inventario():
     """Endpoint para cargar datos desde el script de Selenium"""

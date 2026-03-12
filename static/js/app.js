@@ -512,6 +512,14 @@ function cambiarVista(viewName) {
         renderObservaciones();
     }
 
+    // Auto-inicializar corrección al entrar
+    if (viewName === 'correccion') {
+        const corrFecha = document.getElementById('corr-fecha');
+        if (!corrFecha.value) {
+            corrFecha.value = new Date().toISOString().split('T')[0];
+        }
+    }
+
     // Auto-cargar bajas al entrar
     if (viewName === 'bajas') {
         cargarBajas();
@@ -3859,4 +3867,132 @@ async function _guardarSec(sIdx) {
     } catch(e) {
         showToast('Error al guardar', 'error');
     }
+}
+
+// ==================== CORRECCIÓN DE CONTEOS (ADMIN) ====================
+
+async function cargarCorreccion() {
+    const fecha = document.getElementById('corr-fecha').value;
+    const local = document.getElementById('corr-bodega').value;
+    const container = document.getElementById('corr-tabla-container');
+
+    if (!fecha || !local) {
+        showToast('Selecciona fecha y bodega', 'error');
+        return;
+    }
+
+    container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>';
+
+    try {
+        const res = await fetch(`/api/inventario/consultar?fecha=${fecha}&local=${local}`);
+        const data = await res.json();
+        if (data.error) { showToast(data.error, 'error'); return; }
+        renderTablaCorreccion(data.productos || []);
+    } catch(e) {
+        showToast('Error al cargar conteos', 'error');
+    }
+}
+
+function renderTablaCorreccion(productos) {
+    const container = document.getElementById('corr-tabla-container');
+    if (!productos.length) {
+        container.innerHTML = '<div class="empty-state"><i class="fas fa-box-open"></i><p>No hay productos para esta fecha y bodega</p></div>';
+        return;
+    }
+
+    const rows = productos.map(p => `
+        <tr id="corr-row-${p.id}">
+            <td><span class="producto-codigo">${p.codigo}</span></td>
+            <td>${p.nombre}</td>
+            <td style="text-align:center;">${p.cantidad ?? '-'}</td>
+            <td style="text-align:center;">
+                <input type="number" class="corr-input" id="corr-c1-${p.id}"
+                    value="${p.cantidad_contada ?? ''}" min="0" step="0.01"
+                    style="width:80px;text-align:center;">
+            </td>
+            <td style="text-align:center;">
+                <input type="number" class="corr-input" id="corr-c2-${p.id}"
+                    value="${p.cantidad_contada_2 ?? ''}" min="0" step="0.01"
+                    style="width:80px;text-align:center;">
+            </td>
+            <td style="text-align:center;">
+                <button class="btn-primary btn-sm" onclick="guardarCorreccionFila(${p.id})">
+                    <i class="fas fa-save"></i>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+
+    container.innerHTML = `
+        <div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:var(--text-secondary);font-size:14px;">${productos.length} productos</span>
+            <button class="btn-secondary btn-sm" onclick="guardarTodasCorrecciones()">
+                <i class="fas fa-save"></i> Guardar Todos
+            </button>
+        </div>
+        <div class="table-container">
+            <table class="historico-table">
+                <thead>
+                    <tr>
+                        <th>Código</th>
+                        <th>Nombre</th>
+                        <th>Stock Sistema</th>
+                        <th>Conteo 1</th>
+                        <th>Conteo 2</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+async function guardarCorreccionFila(id) {
+    const c1Input = document.getElementById(`corr-c1-${id}`);
+    const c2Input = document.getElementById(`corr-c2-${id}`);
+    const c1 = c1Input.value !== '' ? parseFloat(c1Input.value) : null;
+    const c2 = c2Input.value !== '' ? parseFloat(c2Input.value) : null;
+
+    try {
+        const res = await fetch('/api/admin/corregir-conteo', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, cantidad_contada: c1, cantidad_contada_2: c2 })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast('Conteo corregido', 'success');
+            const row = document.getElementById(`corr-row-${id}`);
+            if (row) row.style.background = 'rgba(46,204,113,0.1)';
+            setTimeout(() => { if (row) row.style.background = ''; }, 1500);
+        } else {
+            showToast(data.error || 'Error al guardar', 'error');
+        }
+    } catch(e) {
+        showToast('Error al guardar', 'error');
+    }
+}
+
+async function guardarTodasCorrecciones() {
+    const inputs = document.querySelectorAll('#corr-tabla-container tbody tr');
+    let guardados = 0;
+    for (const row of inputs) {
+        const id = row.id.replace('corr-row-', '');
+        if (!id) continue;
+        const c1Input = document.getElementById(`corr-c1-${id}`);
+        const c2Input = document.getElementById(`corr-c2-${id}`);
+        if (!c1Input) continue;
+        const c1 = c1Input.value !== '' ? parseFloat(c1Input.value) : null;
+        const c2 = c2Input.value !== '' ? parseFloat(c2Input.value) : null;
+        try {
+            await fetch('/api/admin/corregir-conteo', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: parseInt(id), cantidad_contada: c1, cantidad_contada_2: c2 })
+            });
+            guardados++;
+        } catch(e) {}
+    }
+    showToast(`${guardados} productos guardados`, 'success');
 }
