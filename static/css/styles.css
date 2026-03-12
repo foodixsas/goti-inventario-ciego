@@ -1,26 +1,29 @@
-/* Variables - Colores FOODIX Corporativos */
+/* Variables - FOODIX Design System v1.0 */
 :root {
-    --primary: #1E3A5F;          /* Azul corporativo oscuro */
-    --primary-light: #2D5A87;    /* Azul corporativo claro */
-    --primary-dark: #152A45;     /* Azul muy oscuro */
-    --accent: #B91C1C;           /* Rojo corporativo */
-    --accent-light: #DC2626;     /* Rojo para hover */
-    --accent-dark: #991B1B;      /* Rojo oscuro */
-    --success: #059669;          /* Verde empresarial */
-    --warning: #D97706;          /* Amarillo/naranja */
-    --danger: #B91C1C;           /* Rojo error */
-    --bg-light: #F8FAFC;         /* Fondo claro */
+    --primary: #123450;
+    --primary-light: #1a4a6e;
+    --primary-dark: #0d2438;
+    --accent: #F43F5E;
+    --accent-light: #FB7185;
+    --accent-dark: #E11D48;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #F43F5E;
+    --bg-light: #F8FAFC;
+    --bg-alt: #EFF1F5;
     --bg-white: #FFFFFF;
-    --text-dark: #0F172A;        /* Texto oscuro */
-    --text-gray: #64748B;        /* Texto gris */
-    --text-light: #94A3B8;       /* Texto claro */
-    --border: #E2E8F0;
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
-    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
-    --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.1);
-    --radius: 8px;
-    --radius-sm: 6px;
-    --radius-lg: 12px;
+    --text-dark: #123450;
+    --text-gray: #64748B;
+    --text-light: #94A3B8;
+    --border: #CBD5E1;
+    --border-light: #E2E8F0;
+    --shadow: 0 2px 8px rgba(15,23,42,0.04);
+    --shadow-md: 0 4px 16px rgba(15,23,42,0.08);
+    --shadow-lg: 0 8px 24px rgba(15,23,42,0.10);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
 }
 
 /* Reset */
@@ -31,11 +34,15 @@
 }
 
 body {
-    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'JetBrains Mono', monospace;
     background: var(--bg-light);
     color: var(--text-dark);
     min-height: 100vh;
     font-size: 14px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', sans-serif;
 }
 
 /* App Container */
@@ -147,9 +154,9 @@ body {
 
 .input-group input:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: #F43F5E;
     background: var(--bg-white);
-    box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.1);
+    box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.1);
 }
 
 .error-msg {
@@ -171,10 +178,10 @@ body {
 .btn-primary {
     width: 100%;
     padding: 14px;
-    background: var(--accent);
+    background: linear-gradient(180deg, #FB7185 0%, #F43F5E 100%);
     color: white;
     border: none;
-    border-radius: var(--radius);
+    border-radius: 13px;
     font-size: 14px;
     font-weight: 600;
     font-family: inherit;
@@ -184,12 +191,13 @@ body {
     align-items: center;
     justify-content: center;
     gap: 8px;
+    box-shadow: 0 4px 16px rgba(244,63,94,0.25);
+    letter-spacing: 0.3px;
 }
 
 .btn-primary:hover {
-    background: var(--accent-light);
+    box-shadow: 0 6px 20px rgba(244,63,94,0.35);
     transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
 }
 
 .btn-primary:active {
@@ -197,7 +205,7 @@ body {
 }
 
 .btn-primary:disabled {
-    background: var(--text-light);
+    opacity: 0.5;
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
@@ -208,9 +216,9 @@ body {
     background: var(--primary);
     color: white;
     border: none;
-    border-radius: var(--radius);
+    border-radius: 13px;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     font-family: inherit;
     cursor: pointer;
     transition: all 0.2s;
@@ -425,8 +433,8 @@ main {
 .form-group input:focus,
 .form-group select:focus {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.1);
+    border-color: #F43F5E;
+    box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.1);
 }
 
 /* Search Box */
@@ -735,8 +743,8 @@ main {
 
 .tabla-inventario .input-contado:focus {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.15);
+    border-color: #F43F5E;
+    box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.15);
 }
 
 .tabla-inventario .input-contado.guardado {
@@ -1141,8 +1149,8 @@ main {
 
 .input-persona:focus {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(30, 58, 95, 0.15);
+    border-color: #F43F5E;
+    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.15);
 }
 
 .input-persona::placeholder {
@@ -1226,8 +1234,8 @@ main {
 }
 
 .persona-buscar-input:focus {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(30, 58, 95, 0.15);
+    border-color: #F43F5E;
+    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.15);
 }
 
 .btn-close-persona {
@@ -1309,8 +1317,8 @@ main {
 
 .input-asignacion:focus {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(30, 58, 95, 0.15);
+    border-color: #F43F5E;
+    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.15);
 }
 
 .fila-descuento {
@@ -2233,8 +2241,8 @@ main {
 
 .cantidad-input input:focus {
     outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.1);
+    border-color: #F43F5E;
+    box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.1);
 }
 
 .modal-footer {
@@ -2465,12 +2473,21 @@ main {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--border);
+    background: #94A3B8;
     border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-light);
+    background: #64748B;
+}
+
+/* FOODIX Global Focus — todos los inputs/selects/textareas */
+input:focus,
+select:focus,
+textarea:focus {
+    outline: none;
+    border-color: #F43F5E;
+    box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.1);
 }
 
 /* Responsive */
@@ -3481,7 +3498,7 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     color: var(--text-dark);
     text-align: right;
 }
-.baja-item-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(30,58,95,0.1); }
+.baja-item-input:focus { outline: none; border-color: #F43F5E; box-shadow: 0 0 0 2px rgba(244,63,94,0.15); }
 .baja-item-subtotal { font-size: 12px; font-weight: 600; color: var(--primary); min-width: 52px; text-align: right; }
 .baja-item-del {
     background: none; border: none; color: #94a3b8;
@@ -3514,7 +3531,7 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     color: var(--text-dark);
     text-align: right;
 }
-.baja-asig-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(30,58,95,0.1); }
+.baja-asig-input:focus { outline: none; border-color: #F43F5E; box-shadow: 0 0 0 2px rgba(244,63,94,0.15); }
 .baja-asig-diff { font-size: 11px; margin-left: 8px; font-weight: 600; }
 .baja-asig-diff.ok { color: #059669; }
 .baja-asig-diff.warn { color: #D97706; }
