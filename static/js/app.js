@@ -3871,6 +3871,8 @@ async function _guardarSec(sIdx) {
 
 // ==================== CORRECCIÓN DE CONTEOS (ADMIN) ====================
 
+let _corrProductosOriginales = [];
+
 async function cargarCorreccion() {
     const fecha = document.getElementById('corr-fecha').value;
     const local = document.getElementById('corr-bodega').value;
@@ -3887,11 +3889,14 @@ async function cargarCorreccion() {
         const res = await fetch(`/api/inventario/consultar?fecha=${fecha}&local=${local}`);
         const data = await res.json();
         if (data.error) { showToast(data.error, 'error'); return; }
-        renderTablaCorreccion(data.productos || []);
+        _corrProductosOriginales = data.productos || [];
+        renderTablaCorreccion(_corrProductosOriginales);
     } catch(e) {
         showToast('Error al cargar conteos', 'error');
     }
 }
+
+function corrValor(v) { return v !== null && v !== undefined ? v : ''; }
 
 function renderTablaCorreccion(productos) {
     const container = document.getElementById('corr-tabla-container');
@@ -3900,49 +3905,59 @@ function renderTablaCorreccion(productos) {
         return;
     }
 
-    const rows = productos.map(p => `
-        <tr id="corr-row-${p.id}">
-            <td><span class="producto-codigo">${p.codigo}</span></td>
-            <td>${p.nombre}</td>
-            <td style="text-align:center;">
-                <input type="number" class="corr-input" id="corr-sis-${p.id}"
-                    value="${p.cantidad ?? ''}" min="0" step="0.01"
-                    style="width:80px;text-align:center;">
+    const rows = productos.map((p, i) => `
+        <tr id="corr-row-${p.id}" class="corr-tr${i % 2 === 1 ? ' corr-tr-alt' : ''}">
+            <td class="corr-td-codigo"><span class="producto-codigo">${p.codigo}</span></td>
+            <td class="corr-td-nombre">${p.nombre}</td>
+            <td class="corr-td-num">
+                <input type="number" class="corr-inp" id="corr-sis-${p.id}"
+                    value="${corrValor(p.cantidad)}" min="0" step="0.01"
+                    oninput="corrMarcarCambio(${p.id})">
             </td>
-            <td style="text-align:center;">
-                <input type="number" class="corr-input" id="corr-c1-${p.id}"
-                    value="${p.cantidad_contada ?? ''}" min="0" step="0.01"
-                    style="width:80px;text-align:center;">
+            <td class="corr-td-num">
+                <input type="number" class="corr-inp corr-inp-c1" id="corr-c1-${p.id}"
+                    value="${corrValor(p.cantidad_contada)}" min="0" step="0.01"
+                    oninput="corrMarcarCambio(${p.id})">
             </td>
-            <td style="text-align:center;">
-                <input type="number" class="corr-input" id="corr-c2-${p.id}"
-                    value="${p.cantidad_contada_2 ?? ''}" min="0" step="0.01"
-                    style="width:80px;text-align:center;">
+            <td class="corr-td-num">
+                <input type="number" class="corr-inp corr-inp-c2" id="corr-c2-${p.id}"
+                    value="${corrValor(p.cantidad_contada_2)}" min="0" step="0.01"
+                    oninput="corrMarcarCambio(${p.id})">
             </td>
-            <td style="text-align:center;">
-                <button class="btn-primary btn-sm" onclick="guardarCorreccionFila(${p.id})">
+            <td class="corr-td-btn">
+                <button class="corr-btn-save" id="corr-savebtn-${p.id}" onclick="guardarCorreccionFila(${p.id})" title="Guardar esta fila">
                     <i class="fas fa-save"></i>
                 </button>
             </td>
         </tr>
     `).join('');
 
+    const bodegaNombre = document.getElementById('corr-bodega').selectedOptions[0]?.text || '';
+    const fecha = document.getElementById('corr-fecha').value;
+
     container.innerHTML = `
-        <div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
-            <span style="color:var(--text-secondary);font-size:14px;">${productos.length} productos</span>
-            <button class="btn-secondary btn-sm" onclick="guardarTodasCorrecciones()">
+        <div class="corr-toolbar">
+            <div class="corr-info">
+                <i class="fas fa-boxes"></i>
+                <strong>${productos.length} productos</strong>
+                <span class="corr-info-sep">·</span>
+                <span>${bodegaNombre}</span>
+                <span class="corr-info-sep">·</span>
+                <span>${fecha}</span>
+            </div>
+            <button class="corr-btn-guardar-todos" onclick="guardarTodasCorrecciones()">
                 <i class="fas fa-save"></i> Guardar Todos
             </button>
         </div>
-        <div class="table-container">
-            <table class="historico-table">
+        <div class="corr-table-wrap">
+            <table class="corr-table">
                 <thead>
                     <tr>
                         <th>Código</th>
                         <th>Nombre</th>
-                        <th>Stock Sistema</th>
-                        <th>Conteo 1</th>
-                        <th>Conteo 2</th>
+                        <th class="corr-th-num">Stock Sistema</th>
+                        <th class="corr-th-num">Conteo 1</th>
+                        <th class="corr-th-num">Conteo 2</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -3952,13 +3967,25 @@ function renderTablaCorreccion(productos) {
     `;
 }
 
+function corrMarcarCambio(id) {
+    const row = document.getElementById(`corr-row-${id}`);
+    if (row) row.classList.add('corr-tr-modified');
+    const btn = document.getElementById(`corr-savebtn-${id}`);
+    if (btn) btn.classList.add('corr-btn-save-active');
+}
+
 async function guardarCorreccionFila(id) {
     const sisInput = document.getElementById(`corr-sis-${id}`);
-    const c1Input = document.getElementById(`corr-c1-${id}`);
-    const c2Input = document.getElementById(`corr-c2-${id}`);
+    const c1Input  = document.getElementById(`corr-c1-${id}`);
+    const c2Input  = document.getElementById(`corr-c2-${id}`);
+    const btn      = document.getElementById(`corr-savebtn-${id}`);
+    const row      = document.getElementById(`corr-row-${id}`);
+
     const sis = sisInput.value !== '' ? parseFloat(sisInput.value) : null;
-    const c1 = c1Input.value !== '' ? parseFloat(c1Input.value) : null;
-    const c2 = c2Input.value !== '' ? parseFloat(c2Input.value) : null;
+    const c1  = c1Input.value  !== '' ? parseFloat(c1Input.value)  : null;
+    const c2  = c2Input.value  !== '' ? parseFloat(c2Input.value)  : null;
+
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
 
     try {
         const res = await fetch('/api/admin/corregir-conteo', {
@@ -3968,39 +3995,58 @@ async function guardarCorreccionFila(id) {
         });
         const data = await res.json();
         if (data.success) {
-            showToast('Conteo corregido', 'success');
-            const row = document.getElementById(`corr-row-${id}`);
-            if (row) row.style.background = 'rgba(46,204,113,0.1)';
-            setTimeout(() => { if (row) row.style.background = ''; }, 1500);
+            if (row) { row.classList.remove('corr-tr-modified'); row.classList.add('corr-tr-saved'); }
+            if (btn) { btn.innerHTML = '<i class="fas fa-check"></i>'; btn.classList.remove('corr-btn-save-active'); }
+            setTimeout(() => {
+                if (row) row.classList.remove('corr-tr-saved');
+                if (btn) { btn.innerHTML = '<i class="fas fa-save"></i>'; btn.disabled = false; }
+            }, 2000);
         } else {
             showToast(data.error || 'Error al guardar', 'error');
+            if (btn) { btn.innerHTML = '<i class="fas fa-save"></i>'; btn.disabled = false; }
         }
     } catch(e) {
-        showToast('Error al guardar', 'error');
+        showToast('Error de conexión', 'error');
+        if (btn) { btn.innerHTML = '<i class="fas fa-save"></i>'; btn.disabled = false; }
     }
 }
 
 async function guardarTodasCorrecciones() {
-    const inputs = document.querySelectorAll('#corr-tabla-container tbody tr');
-    let guardados = 0;
-    for (const row of inputs) {
-        const id = row.id.replace('corr-row-', '');
+    const rows = document.querySelectorAll('#corr-tabla-container tbody tr');
+    const btnTodos = document.querySelector('.corr-btn-guardar-todos');
+    if (btnTodos) { btnTodos.disabled = true; btnTodos.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Guardando...'; }
+
+    let ok = 0, errores = 0;
+    for (const row of rows) {
+        const id = parseInt(row.id.replace('corr-row-', ''));
         if (!id) continue;
-        const c1Input = document.getElementById(`corr-c1-${id}`);
-        const c2Input = document.getElementById(`corr-c2-${id}`);
+        const sisInput = document.getElementById(`corr-sis-${id}`);
+        const c1Input  = document.getElementById(`corr-c1-${id}`);
+        const c2Input  = document.getElementById(`corr-c2-${id}`);
         if (!c1Input) continue;
-        const sisInput2 = document.getElementById(`corr-sis-${id}`);
-        const c1 = c1Input.value !== '' ? parseFloat(c1Input.value) : null;
-        const c2 = c2Input.value !== '' ? parseFloat(c2Input.value) : null;
-        const sis2 = sisInput2 && sisInput2.value !== '' ? parseFloat(sisInput2.value) : null;
+        const sis = sisInput && sisInput.value !== '' ? parseFloat(sisInput.value) : null;
+        const c1  = c1Input.value  !== '' ? parseFloat(c1Input.value)  : null;
+        const c2  = c2Input && c2Input.value !== '' ? parseFloat(c2Input.value) : null;
         try {
-            await fetch('/api/admin/corregir-conteo', {
+            const res = await fetch('/api/admin/corregir-conteo', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: parseInt(id), cantidad: sis2, cantidad_contada: c1, cantidad_contada_2: c2 })
+                body: JSON.stringify({ id, cantidad: sis, cantidad_contada: c1, cantidad_contada_2: c2 })
             });
-            guardados++;
-        } catch(e) {}
+            const data = await res.json();
+            if (data.success) {
+                ok++;
+                row.classList.remove('corr-tr-modified');
+                row.classList.add('corr-tr-saved');
+                setTimeout(() => row.classList.remove('corr-tr-saved'), 2000);
+            } else { errores++; }
+        } catch(e) { errores++; }
     }
-    showToast(`${guardados} productos guardados`, 'success');
+
+    if (btnTodos) { btnTodos.disabled = false; btnTodos.innerHTML = '<i class="fas fa-save"></i> Guardar Todos'; }
+    if (errores === 0) {
+        showToast(`✓ ${ok} productos guardados correctamente`, 'success');
+    } else {
+        showToast(`${ok} guardados, ${errores} con error`, 'error');
+    }
 }
