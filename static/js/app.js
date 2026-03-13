@@ -2237,12 +2237,25 @@ function _renderHistPivot(data) {
         const rowCls = tieneDif ? 'hpiv-row-dif' : '';
         const totTxt = esValor ? (totProd === 0 ? '✓' : `$${totProd.toFixed(2)}`) : (totProd === 0 ? '✓' : totProd.toFixed(2));
         const totCls = totProd < 0 ? 'hpiv-neg' : totProd > 0 ? 'hpiv-pos' : 'hpiv-cero';
+
+        // Columna descuento de la persona seleccionada
+        let descCell = '';
+        if (_histFiltroPersona) {
+            const dp = prod.descuentosPorPersona && prod.descuentosPorPersona[_histFiltroPersona];
+            if (dp) {
+                descCell = `<td style="text-align:right;padding:8px 10px;font-weight:700;color:#F43F5E;white-space:nowrap;">-$${dp.descuento.toFixed(2)}<br><span style="font-size:10px;font-weight:400;color:#94A3B8;">${dp.cantidad} ${escapeHtml(prod.unidad)}</span></td>`;
+            } else {
+                descCell = `<td style="text-align:center;color:#CBD5E1;">—</td>`;
+            }
+        }
+
         rows += `<tr class="${rowCls}">
             <td><code class="hpiv-codigo">${escapeHtml(prod.codigo)}</code></td>
             <td class="hpiv-nombre">${escapeHtml(prod.nombre)}</td>
             <td class="hpiv-unid">${escapeHtml(prod.unidad)}</td>
             ${celdas}
             <td class="hpiv-rowtot ${totCls}">${totTxt}</td>
+            ${descCell}
         </tr>`;
     }
 
@@ -2303,7 +2316,8 @@ function _renderHistPivot(data) {
                 <th class="bpiv-nom">Producto</th>
                 <th class="bpiv-uni">Unid.</th>
                 ${fechas.map(f => `<th class="bpiv-fecha">${fmtF(f)}</th>`).join('')}
-                <th class="bpiv-tot">Total</th>
+                <th class="bpiv-tot">Total Dif.</th>
+                ${_histFiltroPersona ? `<th style="background:#F43F5E;color:white;text-align:right;padding:10px 12px;white-space:nowrap;font-size:11px;">Descuento<br>${escapeHtml(_histFiltroPersona)}</th>` : ''}
             </tr>
         </thead>
         <tbody>${rows}
@@ -2311,6 +2325,7 @@ function _renderHistPivot(data) {
                 <td colspan="3">TOTAL DIFERENCIA</td>
                 ${totFechasCells}
                 <td>${totGenTxt}</td>
+                ${_histFiltroPersona ? `<td style="text-align:right;padding:8px 10px;font-weight:700;color:#F43F5E;">-$${prods.reduce((s,p)=>{ const dp=p.descuentosPorPersona&&p.descuentosPorPersona[_histFiltroPersona]; return s+(dp?dp.descuento:0);},0).toFixed(2)}</td>` : ''}
             </tr>
         </tbody>
     </table>
