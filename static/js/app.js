@@ -2087,6 +2087,7 @@ document.addEventListener('keydown', (e) => {
 let _histPivotModo = 'cantidad'; // 'cantidad' | 'valor'
 let _histPivotCache = null;
 let _histFiltroProducto = '';
+let _histFiltroProductoRaw = ''; // valor sin lowercase para mostrar en input
 let _histFiltroPersona = '';
 let _histModoDescuento = 'neto'; // 'neto' | 'ajustado'
 
@@ -2096,8 +2097,14 @@ function _setHistModo(modo) {
 }
 
 function _setHistFiltro(q) {
+    _histFiltroProductoRaw = q;
     _histFiltroProducto = q.toLowerCase().trim();
-    if (_histPivotCache) _renderHistPivot(_histPivotCache);
+    if (_histPivotCache) {
+        _renderHistPivot(_histPivotCache);
+        // Restaurar foco y cursor después de re-renderizar
+        const inp = document.getElementById('hist-buscar-producto');
+        if (inp) { inp.focus(); inp.value = _histFiltroProductoRaw; }
+    }
 }
 
 function _setHistFiltroPersona(p) {
@@ -2125,6 +2132,7 @@ async function buscarHistorico() {
 
     try {
         _histFiltroProducto = '';
+        _histFiltroProductoRaw = '';
         _histFiltroPersona = '';
         if (bodega) {
             // ---- Vista PIVOTE por bodega ----
@@ -2294,7 +2302,7 @@ function _renderHistPivot(data) {
                 <i class="fas fa-search" style="position:absolute;left:10px;color:#94A3B8;font-size:12px;pointer-events:none;"></i>
                 <input type="text" id="hist-buscar-producto"
                     placeholder="Buscar producto..."
-                    value="${escapeHtml(_histFiltroProducto)}"
+                    value="${escapeHtml(_histFiltroProductoRaw)}"
                     oninput="_setHistFiltro(this.value)"
                     style="height:32px;padding:0 10px 0 30px;border:1px solid rgba(203,213,225,0.7);border-radius:8px;font-size:13px;font-family:inherit;background:#F8FAFC;color:#123450;outline:none;width:170px;">
             </div>
