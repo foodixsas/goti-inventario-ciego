@@ -2086,9 +2086,15 @@ document.addEventListener('keydown', (e) => {
 
 let _histPivotModo = 'cantidad'; // 'cantidad' | 'valor'
 let _histPivotCache = null;
+let _histFiltroProducto = '';
 
 function _setHistModo(modo) {
     _histPivotModo = modo;
+    if (_histPivotCache) _renderHistPivot(_histPivotCache);
+}
+
+function _setHistFiltro(q) {
+    _histFiltroProducto = q.toLowerCase().trim();
     if (_histPivotCache) _renderHistPivot(_histPivotCache);
 }
 
@@ -2106,6 +2112,7 @@ async function buscarHistorico() {
     container.innerHTML = `<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div>`;
 
     try {
+        _histFiltroProducto = '';
         if (bodega) {
             // ---- Vista PIVOTE por bodega ----
             const url = `${CONFIG.API_URL}/api/historico/pivot?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}&bodega=${bodega}`;
@@ -2172,8 +2179,15 @@ function _renderHistPivot(data) {
         return d;
     };
 
+    // Filtrar por producto si hay búsqueda
+    const productosFiltrados = _histFiltroProducto
+        ? productos.filter(p =>
+            p.codigo.toLowerCase().includes(_histFiltroProducto) ||
+            p.nombre.toLowerCase().includes(_histFiltroProducto))
+        : productos;
+
     // Ordenar: primero productos con al menos una diferencia
-    const prods = [...productos].sort((a, b) => {
+    const prods = [...productosFiltrados].sort((a, b) => {
         const aDif = Object.values(a.porFecha).some(v => v.diferencia !== null && v.diferencia !== 0);
         const bDif = Object.values(b.porFecha).some(v => v.diferencia !== null && v.diferencia !== 0);
         if (aDif && !bDif) return -1;
@@ -2234,15 +2248,25 @@ function _renderHistPivot(data) {
 
     container.innerHTML = `
     <div style="grid-column:1/-1;">
-    <div class="baja-pivot-toolbar">
-        <span class="baja-pivot-info">${prods.length} productos · ${fechas.length} fecha(s) · <span style="color:#D97706;font-weight:600;">${conDif} con diferencia</span></span>
-        <div class="baja-pivot-toggle">
-            <button class="baja-toggle-btn ${!esValor ? 'active' : ''}" onclick="_setHistModo('cantidad')">
-                <i class="fas fa-cubes"></i> Cantidad
-            </button>
-            <button class="baja-toggle-btn ${esValor ? 'active' : ''}" onclick="_setHistModo('valor')">
-                <i class="fas fa-dollar-sign"></i> Valor
-            </button>
+    <div class="baja-pivot-toolbar" style="flex-wrap:wrap;gap:10px;">
+        <span class="baja-pivot-info">${prods.length}${_histFiltroProducto ? ' (filtrado)' : ''} de ${productos.length} productos · ${fechas.length} fecha(s) · <span style="color:#D97706;font-weight:600;">${conDif} con diferencia</span></span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div style="position:relative;display:flex;align-items:center;">
+                <i class="fas fa-search" style="position:absolute;left:10px;color:#94A3B8;font-size:12px;pointer-events:none;"></i>
+                <input type="text" id="hist-buscar-producto"
+                    placeholder="Buscar producto o código..."
+                    value="${escapeHtml(_histFiltroProducto)}"
+                    oninput="_setHistFiltro(this.value)"
+                    style="height:32px;padding:0 10px 0 30px;border:1px solid rgba(203,213,225,0.7);border-radius:8px;font-size:13px;font-family:inherit;background:#F8FAFC;color:#123450;outline:none;width:200px;">
+            </div>
+            <div class="baja-pivot-toggle">
+                <button class="baja-toggle-btn ${!esValor ? 'active' : ''}" onclick="_setHistModo('cantidad')">
+                    <i class="fas fa-cubes"></i> Cantidad
+                </button>
+                <button class="baja-toggle-btn ${esValor ? 'active' : ''}" onclick="_setHistModo('valor')">
+                    <i class="fas fa-dollar-sign"></i> Valor
+                </button>
+            </div>
         </div>
     </div>
     <div style="overflow-x:auto;">
