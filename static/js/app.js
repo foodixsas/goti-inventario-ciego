@@ -2087,9 +2087,10 @@ document.addEventListener('keydown', (e) => {
 let _histPivotModo = 'cantidad'; // 'cantidad' | 'valor'
 let _histPivotCache = null;
 let _histFiltroProducto = '';
-let _histFiltroProductoRaw = ''; // valor sin lowercase para mostrar en input
+let _histFiltroProductoRaw = '';
 let _histFiltroPersona = '';
 let _histModoDescuento = 'neto'; // 'neto' | 'ajustado'
+let _histFiltroTimer = null;
 
 function _setHistModo(modo) {
     _histPivotModo = modo;
@@ -2099,12 +2100,10 @@ function _setHistModo(modo) {
 function _setHistFiltro(q) {
     _histFiltroProductoRaw = q;
     _histFiltroProducto = q.toLowerCase().trim();
-    if (_histPivotCache) {
-        _renderHistPivot(_histPivotCache);
-        // Restaurar foco y cursor después de re-renderizar
-        const inp = document.getElementById('hist-buscar-producto');
-        if (inp) { inp.focus(); inp.value = _histFiltroProductoRaw; }
-    }
+    clearTimeout(_histFiltroTimer);
+    _histFiltroTimer = setTimeout(() => {
+        if (_histPivotCache) _renderHistPivot(_histPivotCache);
+    }, 350);
 }
 
 function _setHistFiltroPersona(p) {
