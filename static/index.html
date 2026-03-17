@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inventario Ciego - FOODIX</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260313j">
+    <link rel="stylesheet" href="css/styles.css?v=20260317a">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -83,6 +83,10 @@
                 <button class="nav-btn nav-admin-only" data-view="correccion" style="display:none;">
                     <i class="fas fa-edit"></i>
                     <span>Corregir</span>
+                </button>
+                <button class="nav-btn nav-admin-only" data-view="panel" style="display:none;">
+                    <i class="fas fa-sliders-h"></i>
+                    <span>Panel</span>
                 </button>
             </nav>
 
@@ -538,6 +542,169 @@
                         <div id="cruce-detalle-contenido" class="cruce-detalle-contenido"></div>
                     </div>
                 </div>
+
+                <!-- Vista Panel de Control (solo admin) -->
+                <div id="view-panel" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-sliders-h"></i> Panel de Control</h2>
+                    </div>
+
+                    <!-- Selector de fecha -->
+                    <div class="panel-fecha-bar">
+                        <div class="panel-fecha-group">
+                            <label><i class="fas fa-calendar-alt"></i> Fecha</label>
+                            <input type="date" id="panel-fecha">
+                        </div>
+                        <div class="panel-fecha-rapida">
+                            <button class="btn-sm btn-secondary panel-fecha-btn" data-delta="0">Hoy</button>
+                            <button class="btn-sm btn-secondary panel-fecha-btn" data-delta="-1">Ayer</button>
+                            <button class="btn-sm btn-secondary panel-fecha-btn" data-delta="-2">-2d</button>
+                            <button class="btn-sm btn-secondary panel-fecha-btn" data-delta="-3">-3d</button>
+                            <button class="btn-sm btn-secondary panel-fecha-btn" data-delta="-7">-7d</button>
+                        </div>
+                    </div>
+
+                    <!-- Acciones: Carga BD -->
+                    <div class="panel-section">
+                        <div class="panel-section-header">
+                            <span class="panel-section-icon panel-icon-green"><i class="fas fa-database"></i></span>
+                            <div>
+                                <h3>Carga a BD</h3>
+                                <p>Descarga stock de Contifico y carga en base de datos</p>
+                            </div>
+                        </div>
+                        <div class="panel-actions">
+                            <button class="panel-btn panel-btn-green" onclick="panelEjecutar('carga','GENERAL')">
+                                <i class="fas fa-play"></i> General <small>(5 bodegas)</small>
+                            </button>
+                            <button class="panel-btn panel-btn-green" onclick="panelEjecutar('carga','SIMON_BOLON')">
+                                <i class="fas fa-play"></i> Simon Bolon
+                            </button>
+                            <button class="panel-btn panel-btn-green" onclick="panelEjecutar('carga','TODAS')">
+                                <i class="fas fa-play"></i> Todas <small>(6 bodegas)</small>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Acciones: Toma Fisica -->
+                    <div class="panel-section">
+                        <div class="panel-section-header">
+                            <span class="panel-section-icon panel-icon-blue"><i class="fas fa-clipboard-check"></i></span>
+                            <div>
+                                <h3>Toma Fisica</h3>
+                                <p>Registra conteos de BD en Contifico para la fecha seleccionada</p>
+                            </div>
+                        </div>
+                        <div class="panel-actions">
+                            <button class="panel-btn panel-btn-blue" onclick="panelEjecutar('toma','GENERAL')">
+                                <i class="fas fa-play"></i> General <small>(5 bodegas)</small>
+                            </button>
+                            <button class="panel-btn panel-btn-blue" onclick="panelEjecutar('toma','SIMON_BOLON')">
+                                <i class="fas fa-play"></i> Simon Bolon
+                            </button>
+                            <button class="panel-btn panel-btn-blue" onclick="panelEjecutar('toma','TODAS')">
+                                <i class="fas fa-play"></i> Todas <small>(6 bodegas)</small>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Acciones: Plataformas -->
+                    <div class="panel-section">
+                        <div class="panel-section-header">
+                            <span class="panel-section-icon panel-icon-orange"><i class="fas fa-utensils"></i></span>
+                            <div>
+                                <h3>Consulta Plataformas</h3>
+                                <p>Hamburguesas por plataforma &rarr; Airtable + Telegram</p>
+                            </div>
+                        </div>
+                        <div class="panel-actions">
+                            <button class="panel-btn panel-btn-orange" onclick="panelEjecutar('plataformas',null)">
+                                <i class="fas fa-play"></i> Ejecutar Consulta
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Consulta de Datos -->
+                    <div class="panel-section">
+                        <div class="panel-section-header">
+                            <span class="panel-section-icon panel-icon-purple"><i class="fas fa-search"></i></span>
+                            <div>
+                                <h3>Consulta de Inventario</h3>
+                                <p>Ver datos cargados en BD para la fecha seleccionada</p>
+                            </div>
+                        </div>
+                        <div class="panel-consulta-filtros">
+                            <div class="form-group">
+                                <label>Bodega</label>
+                                <select id="panel-consulta-bodega" class="input-merma">
+                                    <option value="">Todas</option>
+                                    <option value="real_audiencia">Real Audiencia</option>
+                                    <option value="floreana">Floreana</option>
+                                    <option value="portugal">Portugal</option>
+                                    <option value="santo_cachon_real">Santo Cachon Real</option>
+                                    <option value="santo_cachon_portugal">Santo Cachon Portugal</option>
+                                    <option value="simon_bolon">Simon Bolon</option>
+                                </select>
+                            </div>
+                            <button class="btn-primary btn-sm" onclick="panelConsultar()">
+                                <i class="fas fa-search"></i> Consultar
+                            </button>
+                        </div>
+                        <div id="panel-consulta-resumen" class="panel-resumen hidden"></div>
+                        <div id="panel-consulta-tabla" class="panel-tabla-container"></div>
+                    </div>
+
+                    <!-- Borrar Stock -->
+                    <div class="panel-section panel-section-danger">
+                        <div class="panel-section-header">
+                            <span class="panel-section-icon panel-icon-red"><i class="fas fa-eraser"></i></span>
+                            <div>
+                                <h3>Borrar Stock (cantidad)</h3>
+                                <p>Pone la columna <code>cantidad</code> en NULL. <strong>No toca conteos.</strong></p>
+                            </div>
+                        </div>
+                        <div class="panel-consulta-filtros">
+                            <div class="form-group">
+                                <label>Bodega</label>
+                                <select id="panel-borrar-bodega" class="input-merma">
+                                    <option value="">Todas</option>
+                                    <option value="real_audiencia">Real Audiencia</option>
+                                    <option value="floreana">Floreana</option>
+                                    <option value="portugal">Portugal</option>
+                                    <option value="santo_cachon_real">Santo Cachon Real</option>
+                                    <option value="santo_cachon_portugal">Santo Cachon Portugal</option>
+                                    <option value="simon_bolon">Simon Bolon</option>
+                                </select>
+                            </div>
+                            <button class="panel-btn panel-btn-red" onclick="panelBorrarStock()">
+                                <i class="fas fa-eraser"></i> Borrar Stock
+                            </button>
+                        </div>
+                        <div id="panel-borrar-info" class="panel-info-msg"></div>
+                    </div>
+
+                    <!-- Consola de salida -->
+                    <div class="panel-section">
+                        <div class="panel-section-header">
+                            <span class="panel-section-icon panel-icon-gray"><i class="fas fa-terminal"></i></span>
+                            <div>
+                                <h3>Consola</h3>
+                                <p>Salida en tiempo real del proceso en ejecucion</p>
+                            </div>
+                            <div class="panel-consola-btns">
+                                <button class="btn-sm btn-secondary" onclick="panelLimpiarConsola()">
+                                    <i class="fas fa-broom"></i> Limpiar
+                                </button>
+                            </div>
+                        </div>
+                        <div id="panel-consola" class="panel-consola">
+                            <span class="panel-consola-placeholder">La salida aparecera aqui al ejecutar una accion...</span>
+                        </div>
+                        <div id="panel-status" class="panel-status-bar">
+                            <span id="panel-status-text">Listo</span>
+                        </div>
+                    </div>
+                </div>
             </main>
         </div>
     </div>
@@ -575,7 +742,7 @@
     <!-- Toast notifications -->
     <div id="toast-container"></div>
 
-    <script src="js/config.js?v=20260313j"></script>
-    <script src="js/app.js?v=20260313j"></script>
+    <script src="js/config.js?v=20260317a"></script>
+    <script src="js/app.js?v=20260317a"></script>
 </body>
 </html>

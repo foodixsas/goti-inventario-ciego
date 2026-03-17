@@ -2109,6 +2109,138 @@ try:
 except Exception as _e:
     print(f'Startup init_db error: {_e}')
 
+# ==================== PANEL DE CONTROL ====================
+
+@app.route('/api/panel/consultar', methods=['GET'])
+def panel_consultar():
+    """Consulta inventario por fecha y bodega opcional"""
+    fecha = request.args.get('fecha')
+    bodega = request.args.get('bodega', '')
+    if not fecha:
+        return jsonify({'error': 'Falta fecha'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        query = """
+            SELECT local, codigo, nombre, unidad,
+                   cantidad, cantidad_contada, cantidad_contada_2, costo_unitario
+            FROM inventario_diario.inventario_ciego_conteos
+            WHERE fecha = %s
+        """
+        params = [fecha]
+        if bodega:
+            query += ' AND local = %s'
+            params.append(bodega)
+        query += ' ORDER BY local, nombre'
+
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+        return jsonify({
+            'total': len(rows),
+            'data': rows
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/panel/borrar-stock', methods=['POST'])
+def panel_borrar_stock():
+    """Pone cantidad=NULL para fecha/bodega. NO toca conteos."""
+    data = request.get_json()
+    fecha = data.get('fecha')
+    bodega = data.get('bodega', '')
+    if not fecha:
+        return jsonify({'error': 'Falta fecha'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Contar afectados
+        q_count = """
+            SELECT COUNT(*) as cnt FROM inventario_diario.inventario_ciego_conteos
+            WHERE fecha = %s AND cantidad IS NOT NULL
+        """
+        params = [fecha]
+        if bodega:
+            q_count += ' AND local = %s'
+            params.append(bodega)
+
+        cur.execute(q_count, params)
+        count = cur.fetchone()['cnt']
+
+        if count == 0:
+            return jsonify({'affected': 0, 'message': 'No hay registros con stock para esa fecha'})
+
+        # Ejecutar UPDATE
+        q_update = """
+            UPDATE inventario_diario.inventario_ciego_conteos
+            SET cantidad = NULL
+            WHERE fecha = %s AND cantidad IS NOT NULL
+        """
+        params2 = [fecha]
+        if bodega:
+            q_update += ' AND local = %s'
+            params2.append(bodega)
+
+        cur.execute(q_update, params2)
+        affected = cur.rowcount
+        conn.commit()
+
+        return jsonify({
+            'affected': affected,
+            'message': f'Stock borrado: {affected} registros actualizados'
+        })
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/panel/contar-stock', methods=['GET'])
+def panel_contar_stock():
+    """Cuenta registros con stock para preview antes de borrar"""
+    fecha = request.args.get('fecha')
+    bodega = request.args.get('bodega', '')
+    if not fecha:
+        return jsonify({'error': 'Falta fecha'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        query = """
+            SELECT COUNT(*) as cnt FROM inventario_diario.inventario_ciego_conteos
+            WHERE fecha = %s AND cantidad IS NOT NULL
+        """
+        params = [fecha]
+        if bodega:
+            query += ' AND local = %s'
+            params.append(bodega)
+
+        cur.execute(query, params)
+        count = cur.fetchone()['cnt']
+
+        return jsonify({'count': count})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)

@@ -527,6 +527,11 @@ function cambiarVista(viewName) {
         cargarProductosBaja(); // precarga catálogo Airtable
     }
 
+    // Auto-inicializar panel al entrar
+    if (viewName === 'panel') {
+        panelInit();
+    }
+
     // Auto-cargar dashboard al entrar
     if (viewName === 'dashboard') {
         const dashDesde = document.getElementById('dash-fecha-desde');
@@ -4193,5 +4198,260 @@ async function guardarTodasCorrecciones() {
         showToast(`✓ ${ok} productos guardados correctamente`, 'success');
     } else {
         showToast(`${ok} guardados, ${errores} con error`, 'error');
+    }
+}
+
+
+// ==================== PANEL DE CONTROL ====================
+
+let _panelInited = false;
+let _panelPolling = null;
+
+function panelInit() {
+    if (_panelInited) return;
+    _panelInited = true;
+
+    const fechaInput = document.getElementById('panel-fecha');
+    if (!fechaInput.value) {
+        fechaInput.value = new Date().toISOString().split('T')[0];
+    }
+
+    // Botones de fecha rapida
+    document.querySelectorAll('.panel-fecha-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const delta = parseInt(btn.dataset.delta);
+            const d = new Date();
+            d.setDate(d.getDate() + delta);
+            document.getElementById('panel-fecha').value = d.toISOString().split('T')[0];
+        });
+    });
+}
+
+function panelGetFecha() {
+    const v = document.getElementById('panel-fecha').value;
+    if (!v) {
+        showToast('Selecciona una fecha', 'error');
+        return null;
+    }
+    return v;
+}
+
+function panelFechaDD(isoDate) {
+    const [y, m, d] = isoDate.split('-');
+    return `${d}/${m}/${y}`;
+}
+
+function panelLog(text) {
+    const el = document.getElementById('panel-consola');
+    const placeholder = el.querySelector('.panel-consola-placeholder');
+    if (placeholder) placeholder.remove();
+    el.textContent += text + '\n';
+    el.scrollTop = el.scrollHeight;
+}
+
+function panelLimpiarConsola() {
+    const el = document.getElementById('panel-consola');
+    el.innerHTML = '<span class="panel-consola-placeholder">La salida aparecera aqui al ejecutar una accion...</span>';
+}
+
+function panelSetStatus(text, cls) {
+    const el = document.getElementById('panel-status-text');
+    el.textContent = text;
+    el.className = cls || '';
+}
+
+function panelSetBtnsDisabled(disabled) {
+    document.querySelectorAll('#view-panel .panel-btn').forEach(b => b.disabled = disabled);
+}
+
+async function panelEjecutar(tipo, modo) {
+    const fecha = panelGetFecha();
+    if (!fecha) return;
+
+    const fechaDD = panelFechaDD(fecha);
+    let desc = '';
+    if (tipo === 'carga') desc = `Carga BD ${modo}`;
+    else if (tipo === 'toma') desc = `Toma Fisica ${modo}`;
+    else desc = 'Consulta Plataformas';
+
+    // Confirmar
+    if (!confirm(`Ejecutar: ${desc}\nFecha: ${fechaDD}\n\nEste proceso se ejecutara en el servidor local (no en Render).\nContinuar?`)) {
+        return;
+    }
+
+    panelSetBtnsDisabled(true);
+    panelSetStatus(`Ejecutando: ${desc} | ${fechaDD}...`, 'status-running');
+
+    const el = document.getElementById('panel-consola');
+    const placeholder = el.querySelector('.panel-consola-placeholder');
+    if (placeholder) placeholder.remove();
+    el.textContent += `\n${'='.repeat(60)}\n  ${desc}  |  Fecha: ${fechaDD}  |  ${new Date().toLocaleTimeString()}\n${'='.repeat(60)}\n\n`;
+    el.scrollTop = el.scrollHeight;
+
+    // Nota: Los scripts (cargar_inventario_bd.py, registrar_toma_fisica.py, consulta_plataformas.py)
+    // se ejecutan localmente con el BAT, no desde Render.
+    // Aqui mostramos instrucciones claras.
+    const cmds = {
+        carga: `python cargar_inventario_bd.py ${modo} ${fechaDD}`,
+        toma: `python registrar_toma_fisica.py ${fechaDD} ${modo}`,
+        plataformas: `python consulta_plataformas.py ${fechaDD}`
+    };
+    const cmd = cmds[tipo];
+
+    el.textContent += `  COMANDO A EJECUTAR:\n  cd INVENTARIO_CIEGO\n  ${cmd}\n\n`;
+    el.textContent += `  Copiado al portapapeles. Pegalo en una terminal.\n\n`;
+    el.scrollTop = el.scrollHeight;
+
+    // Copiar al portapapeles
+    try {
+        await navigator.clipboard.writeText(cmd);
+        showToast(`Comando copiado: ${cmd}`, 'success');
+    } catch(e) {
+        // Fallback
+        showToast(`Comando: ${cmd}`, 'success');
+    }
+
+    panelSetStatus(`Comando listo: ${desc}`, 'status-ok');
+    panelSetBtnsDisabled(false);
+}
+
+async function panelConsultar() {
+    const fecha = panelGetFecha();
+    if (!fecha) return;
+
+    const bodega = document.getElementById('panel-consulta-bodega').value;
+    const resumenEl = document.getElementById('panel-consulta-resumen');
+    const tablaEl = document.getElementById('panel-consulta-tabla');
+
+    resumenEl.classList.add('hidden');
+    tablaEl.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Consultando...</p></div>';
+
+    try {
+        let url = `${CONFIG.API_URL}/api/panel/consultar?fecha=${fecha}`;
+        if (bodega) url += `&bodega=${bodega}`;
+
+        const res = await fetch(url);
+        const json = await res.json();
+
+        if (json.error) {
+            tablaEl.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><p>${escapeHtml(json.error)}</p></div>`;
+            return;
+        }
+
+        const rows = json.data;
+        if (!rows || rows.length === 0) {
+            tablaEl.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>No hay datos para esta fecha</p></div>';
+            resumenEl.classList.add('hidden');
+            return;
+        }
+
+        // Calcular resumen
+        const bodegas = new Set();
+        let conConteo = 0, sinStock = 0;
+        rows.forEach(r => {
+            bodegas.add(r.local);
+            if (r.cantidad_contada !== null || r.cantidad_contada_2 !== null) conConteo++;
+            if (r.cantidad === null) sinStock++;
+        });
+
+        resumenEl.innerHTML = `
+            <span><i class="fas fa-boxes-stacked"></i> ${rows.length} productos</span>
+            <span><i class="fas fa-warehouse"></i> ${bodegas.size} bodegas</span>
+            <span><i class="fas fa-clipboard-check"></i> ${conConteo} con conteo</span>
+            <span><i class="fas fa-exclamation-circle"></i> ${sinStock} sin stock</span>
+        `;
+        resumenEl.classList.remove('hidden');
+
+        // Tabla
+        let html = `<table class="panel-tabla">
+            <thead><tr>
+                <th>Bodega</th><th>Codigo</th><th>Producto</th><th>Unidad</th>
+                <th class="text-right">Stock</th><th class="text-right">Conteo 1</th>
+                <th class="text-right">Conteo 2</th><th class="text-right">Costo</th>
+            </tr></thead><tbody>`;
+
+        rows.forEach(r => {
+            const cant = r.cantidad !== null ? parseFloat(r.cantidad).toFixed(1) : '<span class="val-null">-</span>';
+            const c1 = r.cantidad_contada !== null ? `<span class="val-success">${parseFloat(r.cantidad_contada).toFixed(1)}</span>` : '<span class="val-null">-</span>';
+            const c2 = r.cantidad_contada_2 !== null ? `<span class="val-success">${parseFloat(r.cantidad_contada_2).toFixed(1)}</span>` : '<span class="val-null">-</span>';
+            const costo = r.costo_unitario !== null && parseFloat(r.costo_unitario) > 0 ? parseFloat(r.costo_unitario).toFixed(2) : '<span class="val-null">-</span>';
+            const cantClass = r.cantidad === null ? 'val-danger' : '';
+
+            html += `<tr>
+                <td>${escapeHtml(r.local)}</td>
+                <td>${escapeHtml(r.codigo)}</td>
+                <td>${escapeHtml(r.nombre)}</td>
+                <td>${escapeHtml(r.unidad || '')}</td>
+                <td class="text-right ${cantClass}">${cant}</td>
+                <td class="text-right">${c1}</td>
+                <td class="text-right">${c2}</td>
+                <td class="text-right">${costo}</td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        tablaEl.innerHTML = html;
+
+    } catch(e) {
+        tablaEl.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><p>Error: ${escapeHtml(e.message)}</p></div>`;
+    }
+}
+
+async function panelBorrarStock() {
+    const fecha = panelGetFecha();
+    if (!fecha) return;
+
+    const bodega = document.getElementById('panel-borrar-bodega').value;
+    const infoEl = document.getElementById('panel-borrar-info');
+
+    // Primero contar
+    try {
+        let url = `${CONFIG.API_URL}/api/panel/contar-stock?fecha=${fecha}`;
+        if (bodega) url += `&bodega=${bodega}`;
+
+        const res = await fetch(url);
+        const json = await res.json();
+
+        if (json.count === 0) {
+            infoEl.textContent = 'No hay registros con stock para esta fecha.';
+            infoEl.className = 'panel-info-msg msg-warn';
+            return;
+        }
+
+        const bodegaTxt = bodega || 'TODAS las bodegas';
+        const fechaDD = panelFechaDD(fecha);
+
+        if (!confirm(
+            `Se pondra cantidad = NULL en ${json.count} registros.\n\n` +
+            `Fecha: ${fechaDD}\n` +
+            `Bodega: ${bodegaTxt}\n\n` +
+            `SOLO se borra "cantidad" (stock sistema).\n` +
+            `Los conteos (cantidad_contada, cantidad_contada_2) NO se tocan.\n\n` +
+            `Continuar?`
+        )) {
+            return;
+        }
+
+        infoEl.textContent = 'Borrando...';
+        infoEl.className = 'panel-info-msg';
+
+        const res2 = await fetch(`${CONFIG.API_URL}/api/panel/borrar-stock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fecha, bodega })
+        });
+        const json2 = await res2.json();
+
+        if (json2.error) {
+            infoEl.textContent = `Error: ${json2.error}`;
+            infoEl.className = 'panel-info-msg msg-err';
+        } else {
+            infoEl.textContent = `${json2.message} | Bodega: ${bodegaTxt} | Fecha: ${fechaDD}`;
+            infoEl.className = 'panel-info-msg msg-ok';
+            showToast(json2.message, 'success');
+        }
+    } catch(e) {
+        infoEl.textContent = `Error: ${e.message}`;
+        infoEl.className = 'panel-info-msg msg-err';
     }
 }
