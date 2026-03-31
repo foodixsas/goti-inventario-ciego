@@ -4608,3 +4608,438 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     .panel-btn { justify-content: center; }
     .panel-consulta-filtros { flex-direction: column; }
 }
+
+/* ==================== SEMANAL - Asignacion Semanal ==================== */
+
+/* Alerta pendientes */
+.sem-alerta {
+    background: #FFFBEB;
+    border: 1px solid #F59E0B;
+    border-left: 4px solid #D97706;
+    border-radius: var(--radius-sm);
+    padding: 16px 20px;
+    margin: 0 16px 16px;
+}
+.sem-alerta-header {
+    font-weight: 700;
+    font-family: 'Inter', sans-serif;
+    color: #92400E;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.sem-alerta-header i {
+    color: #D97706;
+}
+.sem-alerta ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.sem-alerta li {
+    padding: 4px 0;
+    font-size: 13px;
+    color: #78350F;
+}
+.sem-alerta-sin-cerrar {
+    color: #B91C1C;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 11px;
+}
+
+/* Header info semana */
+.sem-header-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 14px 20px;
+    margin: 0 16px 12px;
+    background: var(--bg-white);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+    box-shadow: var(--shadow);
+}
+.sem-rango {
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    color: var(--text-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+}
+.sem-rango i {
+    color: var(--accent);
+}
+.sem-acciones {
+    display: flex;
+    gap: 8px;
+}
+.sem-acciones .btn-danger {
+    padding: 8px 16px;
+    font-size: 13px;
+    width: auto;
+    background: linear-gradient(180deg, #EF4444 0%, #B91C1C 100%);
+    box-shadow: 0 2px 8px rgba(185,28,28,0.2);
+}
+.sem-acciones .btn-secondary {
+    padding: 8px 16px;
+    font-size: 13px;
+    width: auto;
+}
+
+/* Badges */
+.sem-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+}
+.sem-badge-abierta {
+    background: #ECFDF5;
+    color: #059669;
+    border: 1px solid #A7F3D0;
+}
+.sem-badge-cerrada {
+    background: #F1F5F9;
+    color: #64748B;
+    border: 1px solid #CBD5E1;
+}
+.sem-cerrada-info {
+    font-size: 12px;
+    color: var(--text-gray);
+    font-style: italic;
+}
+
+/* Lista de semanas (cards grid) */
+.sem-lista-semanas {
+    padding: 0 16px;
+    margin-bottom: 16px;
+}
+.sem-seccion-titulo {
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    color: var(--text-dark);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.sem-seccion-titulo i {
+    color: var(--accent);
+}
+.sem-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+}
+.sem-semana-card {
+    background: var(--bg-white);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: var(--shadow);
+}
+.sem-semana-card:hover {
+    border-color: var(--accent-light);
+    box-shadow: var(--shadow-md);
+}
+.sem-semana-card.sem-card-activa {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(244,63,94,0.15);
+}
+.sem-card-rango {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-dark);
+    margin-bottom: 8px;
+}
+.sem-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.sem-card-stat {
+    font-size: 12px;
+    color: var(--text-gray);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.sem-card-cerrada-info {
+    font-size: 11px;
+    color: var(--text-light);
+    margin-top: 6px;
+    font-style: italic;
+}
+
+/* Toolbar diferencias */
+.sem-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    margin: 0 16px 12px;
+    background: var(--bg-white);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+}
+.sem-toolbar h3 {
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    color: var(--text-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.sem-toolbar h3 i {
+    color: #D97706;
+}
+.sem-toolbar .btn-primary {
+    width: auto;
+    padding: 10px 20px;
+    font-size: 13px;
+}
+
+/* Producto row */
+.sem-producto-row {
+    margin: 0 16px 12px;
+    background: var(--bg-white);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+}
+.sem-prod-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--bg-light);
+    border-bottom: 1px solid var(--border-light);
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.sem-prod-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 200px;
+}
+.sem-prod-codigo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-gray);
+    background: var(--bg-alt);
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.sem-prod-nombre {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-dark);
+}
+.sem-prod-numeros {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+}
+.sem-prod-stock, .sem-prod-contado {
+    color: var(--text-gray);
+}
+.sem-prod-diff {
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.sem-diff-negativo {
+    color: #B91C1C;
+    background: #FEF2F2;
+}
+.sem-diff-positivo {
+    color: #059669;
+    background: #ECFDF5;
+}
+.sem-prod-costo {
+    color: var(--text-light);
+    font-size: 11px;
+}
+.sem-prod-valor {
+    font-weight: 700;
+    font-size: 14px;
+}
+
+/* Persona assignment rows */
+.sem-asig-container {
+    padding: 10px 16px;
+}
+.sem-persona-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.sem-persona-select {
+    flex: 2;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 13px;
+    background: var(--bg-white);
+    color: var(--text-dark);
+    appearance: auto;
+}
+.sem-persona-select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(244,63,94,0.1);
+}
+.sem-persona-cant {
+    width: 90px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    text-align: right;
+    background: var(--bg-white);
+    color: var(--text-dark);
+}
+.sem-persona-cant:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(244,63,94,0.1);
+}
+.sem-persona-monto {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dark);
+    min-width: 80px;
+    text-align: right;
+}
+.sem-btn-remove-persona {
+    color: var(--text-light);
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: color 0.2s;
+}
+.sem-btn-remove-persona:hover {
+    color: #B91C1C;
+}
+.sem-btn-add-persona {
+    margin-top: 4px;
+    padding: 4px 12px !important;
+    font-size: 12px !important;
+}
+
+/* Asig total per product */
+.sem-asig-total {
+    padding: 8px 16px;
+    font-size: 12px;
+    color: var(--text-gray);
+    border-top: 1px solid var(--border-light);
+    background: var(--bg-light);
+}
+.sem-asig-total-val {
+    color: var(--text-dark);
+}
+
+/* Resumen por persona */
+#sem-resumen-personas {
+    margin: 0 16px 16px;
+}
+#sem-resumen-personas h3 {
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    color: var(--text-dark);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+#sem-resumen-personas h3 i {
+    color: var(--accent);
+}
+.sem-resumen-tabla {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-white);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border-light);
+}
+.sem-resumen-tabla th {
+    background: var(--primary);
+    color: white;
+    padding: 10px 14px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+}
+.sem-resumen-tabla td {
+    padding: 10px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border-light);
+}
+.sem-resumen-tabla tr:last-child td {
+    border-bottom: none;
+}
+.sem-resumen-tabla tr:hover td {
+    background: var(--bg-light);
+}
+
+/* Responsive semanal */
+@media (max-width: 768px) {
+    .sem-header-info {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .sem-prod-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .sem-prod-numeros {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .sem-persona-row {
+        flex-wrap: wrap;
+    }
+    .sem-persona-select {
+        flex: 1;
+        min-width: 150px;
+    }
+    .sem-cards-grid {
+        grid-template-columns: 1fr;
+    }
+    .sem-toolbar {
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+    }
+    .sem-toolbar .btn-primary {
+        width: 100%;
+    }
+}

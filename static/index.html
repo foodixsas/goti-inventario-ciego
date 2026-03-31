@@ -80,6 +80,10 @@
                     <i class="fas fa-arrow-down"></i>
                     <span>Bajas</span>
                 </button>
+                <button class="nav-btn nav-admin-only" data-view="semanal" style="display:none;">
+                    <i class="fas fa-calendar-week"></i>
+                    <span>Semanal</span>
+                </button>
                 <button class="nav-btn nav-admin-only" data-view="correccion" style="display:none;">
                     <i class="fas fa-edit"></i>
                     <span>Corregir</span>
@@ -703,6 +707,71 @@
                         <div id="panel-status" class="panel-status-bar">
                             <span id="panel-status-text">Listo</span>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Vista Semanal (solo admin) -->
+                <div id="view-semanal" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-calendar-week"></i> Asignacion Semanal</h2>
+                    </div>
+
+                    <!-- Selector bodega + semana -->
+                    <div class="form-section">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label><i class="fas fa-warehouse"></i> Bodega</label>
+                                <select id="sem-bodega">
+                                    <option value="">Seleccionar bodega...</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label><i class="fas fa-calendar"></i> Semana del</label>
+                                <input type="date" id="sem-fecha-lunes">
+                            </div>
+                            <button id="btn-sem-cargar" class="btn-primary">
+                                <i class="fas fa-search"></i> Cargar Semana
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Alerta semanas pendientes -->
+                    <div id="sem-alerta-pendientes" class="sem-alerta hidden"></div>
+
+                    <!-- Info de la semana actual -->
+                    <div id="sem-info" class="hidden">
+                        <div class="sem-header-info">
+                            <div id="sem-rango-fechas" class="sem-rango"></div>
+                            <div id="sem-estado-badge"></div>
+                            <div class="sem-acciones">
+                                <button id="btn-sem-cerrar" class="btn-danger" style="display:none;">
+                                    <i class="fas fa-lock"></i> Cerrar Semana
+                                </button>
+                                <button id="btn-sem-reabrir" class="btn-secondary" style="display:none;">
+                                    <i class="fas fa-lock-open"></i> Reabrir
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Lista de semanas existentes -->
+                    <div id="sem-lista-semanas" class="sem-lista-semanas"></div>
+
+                    <!-- Diferencias semanales y asignaciones -->
+                    <div id="sem-diferencias" class="hidden">
+                        <div class="sem-toolbar">
+                            <h3><i class="fas fa-exclamation-triangle"></i> Diferencias de la Semana</h3>
+                            <button id="btn-sem-guardar-todo" class="btn-primary">
+                                <i class="fas fa-save"></i> Guardar Asignaciones
+                            </button>
+                        </div>
+                        <div id="sem-productos-list"></div>
+                    </div>
+
+                    <!-- Resumen por persona -->
+                    <div id="sem-resumen-personas" class="hidden">
+                        <h3><i class="fas fa-users"></i> Resumen por Persona</h3>
+                        <div id="sem-resumen-contenido"></div>
                     </div>
                 </div>
             </main>

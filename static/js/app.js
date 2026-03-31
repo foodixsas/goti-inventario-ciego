@@ -532,6 +532,11 @@ function cambiarVista(viewName) {
         panelInit();
     }
 
+    // Auto-inicializar semanal al entrar
+    if (viewName === 'semanal') {
+        semanalInit();
+    }
+
     // Auto-cargar dashboard al entrar
     if (viewName === 'dashboard') {
         const dashDesde = document.getElementById('dash-fecha-desde');
@@ -4454,4 +4459,500 @@ async function panelBorrarStock() {
         infoEl.textContent = `Error: ${e.message}`;
         infoEl.className = 'panel-info-msg msg-err';
     }
+}
+
+// ==================== SEMANAL - ASIGNACION SEMANAL ====================
+
+let _semanalListenersAdded = false;
+let _semanalSemanaActual = null; // semana object actual cargada
+let _semanalDiferencias = []; // diferencias de la semana actual
+
+function semanalInit() {
+    // Poblar bodegas
+    const sel = document.getElementById('sem-bodega');
+    if (sel && sel.options.length <= 1) {
+        CONFIG.BODEGAS.forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = b.id;
+            opt.textContent = b.nombre;
+            sel.appendChild(opt);
+        });
+    }
+
+    // Setear fecha al lunes mas reciente
+    const fechaInput = document.getElementById('sem-fecha-lunes');
+    if (fechaInput && !fechaInput.value) {
+        fechaInput.value = _semanalGetLunes(new Date());
+    }
+
+    // Cargar pendientes
+    semanalCargarPendientes();
+
+    // Event listeners (solo una vez)
+    if (!_semanalListenersAdded) {
+        _semanalListenersAdded = true;
+
+        document.getElementById('btn-sem-cargar').addEventListener('click', semanalCargar);
+        document.getElementById('btn-sem-guardar-todo').addEventListener('click', semanalGuardarTodo);
+        document.getElementById('btn-sem-cerrar').addEventListener('click', semanalCerrar);
+        document.getElementById('btn-sem-reabrir').addEventListener('click', semanalReabrir);
+    }
+}
+
+function _semanalGetLunes(date) {
+    const d = new Date(date);
+    const day = d.getDay(); // 0=dom, 1=lun...
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    d.setDate(diff);
+    return d.toISOString().split('T')[0];
+}
+
+function _semanalFormatFecha(isoStr) {
+    if (!isoStr) return '';
+    const parts = isoStr.split('-');
+    const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    return `${d.getDate()} ${meses[d.getMonth()]}`;
+}
+
+function _semanalFormatFechaLarga(isoStr) {
+    if (!isoStr) return '';
+    const parts = isoStr.split('-');
+    const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    return `${d.getDate()} ${meses[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function _semanalBodegaNombre(id) {
+    const b = CONFIG.BODEGAS.find(x => x.id === id);
+    return b ? b.nombre : id;
+}
+
+async function semanalCargar() {
+    const bodega = document.getElementById('sem-bodega').value;
+    const fechaRaw = document.getElementById('sem-fecha-lunes').value;
+
+    if (!bodega) {
+        showToast('Selecciona una bodega', 'error');
+        return;
+    }
+    if (!fechaRaw) {
+        showToast('Selecciona una fecha', 'error');
+        return;
+    }
+
+    // Ajustar a lunes
+    const fechaLunes = _semanalGetLunes(new Date(fechaRaw + 'T12:00:00'));
+    document.getElementById('sem-fecha-lunes').value = fechaLunes;
+
+    try {
+        // Crear/obtener semana
+        const resCrear = await fetch(`${CONFIG.API_URL}/api/semanas/crear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ local: bodega, fecha_inicio: fechaLunes })
+        });
+        const semana = await resCrear.json();
+        if (semana.error) {
+            showToast(semana.error, 'error');
+            return;
+        }
+
+        _semanalSemanaActual = semana;
+
+        // Cargar diferencias
+        const resDif = await fetch(`${CONFIG.API_URL}/api/semanas/${semana.id}/diferencias`);
+        const dataDif = await resDif.json();
+        if (dataDif.error) {
+            showToast(dataDif.error, 'error');
+            return;
+        }
+
+        _semanalSemanaActual = dataDif.semana || semana;
+        _semanalDiferencias = dataDif.diferencias || [];
+
+        // Mostrar info de semana
+        semanalRenderInfo(_semanalSemanaActual);
+        semanalRenderDiferencias(dataDif);
+
+        // Cargar lista de semanas de esta bodega
+        const resSemanas = await fetch(`${CONFIG.API_URL}/api/semanas?local=${bodega}`);
+        const semanas = await resSemanas.json();
+        if (!semanas.error) {
+            semanalRenderSemanas(semanas);
+        }
+
+        // Cargar resumen por persona
+        const resResumen = await fetch(`${CONFIG.API_URL}/api/semanas/resumen-persona?local=${bodega}`);
+        const resumenData = await resResumen.json();
+        if (!resumenData.error) {
+            semanalRenderResumenPersonas(resumenData);
+        }
+
+    } catch (error) {
+        console.error('Error cargando semana:', error);
+        showToast('Error de conexion al cargar semana', 'error');
+    }
+}
+
+function semanalRenderInfo(semana) {
+    const infoEl = document.getElementById('sem-info');
+    infoEl.classList.remove('hidden');
+
+    const rangoEl = document.getElementById('sem-rango-fechas');
+    rangoEl.innerHTML = `<i class="fas fa-calendar-week"></i> <strong>${_semanalFormatFechaLarga(semana.fecha_inicio)}</strong> al <strong>${_semanalFormatFechaLarga(semana.fecha_fin)}</strong> &mdash; ${_semanalBodegaNombre(semana.local)}`;
+
+    const badgeEl = document.getElementById('sem-estado-badge');
+    const esCerrada = semana.estado === 'cerrada';
+    badgeEl.innerHTML = esCerrada
+        ? `<span class="sem-badge sem-badge-cerrada"><i class="fas fa-lock"></i> Cerrada</span>`
+        : `<span class="sem-badge sem-badge-abierta"><i class="fas fa-lock-open"></i> Abierta</span>`;
+
+    if (esCerrada && semana.cerrada_por) {
+        const cerradaAt = semana.cerrada_at ? ` el ${_semanalFormatFechaLarga(semana.cerrada_at.split('T')[0])}` : '';
+        badgeEl.innerHTML += `<span class="sem-cerrada-info">por ${escapeHtml(semana.cerrada_por)}${cerradaAt}</span>`;
+    }
+
+    document.getElementById('btn-sem-cerrar').style.display = esCerrada ? 'none' : '';
+    document.getElementById('btn-sem-reabrir').style.display = esCerrada ? '' : 'none';
+}
+
+function semanalRenderSemanas(semanas) {
+    const container = document.getElementById('sem-lista-semanas');
+    if (!semanas || semanas.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '<h3 class="sem-seccion-titulo"><i class="fas fa-list"></i> Semanas de esta Bodega</h3><div class="sem-cards-grid">';
+
+    semanas.forEach(s => {
+        const esCerrada = s.estado === 'cerrada';
+        const esActiva = _semanalSemanaActual && _semanalSemanaActual.id === s.id;
+        const rangoTxt = `${_semanalFormatFecha(s.fecha_inicio)} - ${_semanalFormatFechaLarga(s.fecha_fin)}`;
+        const badgeClass = esCerrada ? 'sem-badge-cerrada' : 'sem-badge-abierta';
+        const badgeIcon = esCerrada ? 'fa-lock' : 'fa-lock-open';
+        const badgeText = esCerrada ? 'Cerrada' : 'Abierta';
+        const totalAsig = typeof s.total_asignado === 'number' ? `$${s.total_asignado.toFixed(2)}` : '$0.00';
+
+        html += `
+            <div class="sem-semana-card ${esActiva ? 'sem-card-activa' : ''}" onclick="semanalCargarSemanaById(${s.id})">
+                <div class="sem-card-rango">${rangoTxt}</div>
+                <div class="sem-card-meta">
+                    <span class="sem-badge ${badgeClass}"><i class="fas ${badgeIcon}"></i> ${badgeText}</span>
+                    <span class="sem-card-stat"><i class="fas fa-box"></i> ${s.total_productos || 0} productos</span>
+                    <span class="sem-card-stat"><i class="fas fa-dollar-sign"></i> ${totalAsig}</span>
+                </div>
+                ${esCerrada && s.cerrada_por ? `<div class="sem-card-cerrada-info">Cerrada por ${escapeHtml(s.cerrada_por)}</div>` : ''}
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+async function semanalCargarSemanaById(id) {
+    try {
+        const resDif = await fetch(`${CONFIG.API_URL}/api/semanas/${id}/diferencias`);
+        const dataDif = await resDif.json();
+        if (dataDif.error) {
+            showToast(dataDif.error, 'error');
+            return;
+        }
+        _semanalSemanaActual = dataDif.semana;
+        _semanalDiferencias = dataDif.diferencias || [];
+        semanalRenderInfo(_semanalSemanaActual);
+        semanalRenderDiferencias(dataDif);
+
+        // Re-highlight the card
+        document.querySelectorAll('.sem-semana-card').forEach(c => c.classList.remove('sem-card-activa'));
+    } catch (error) {
+        console.error('Error cargando semana:', error);
+        showToast('Error al cargar semana', 'error');
+    }
+}
+
+function semanalRenderDiferencias(data) {
+    const container = document.getElementById('sem-diferencias');
+    const listEl = document.getElementById('sem-productos-list');
+    const diferencias = data.diferencias || [];
+
+    if (diferencias.length === 0) {
+        container.classList.remove('hidden');
+        listEl.innerHTML = '<div class="empty-state"><i class="fas fa-check-circle"></i><p>No hay diferencias en esta semana</p></div>';
+        document.getElementById('btn-sem-guardar-todo').style.display = 'none';
+        return;
+    }
+
+    container.classList.remove('hidden');
+    const esCerrada = _semanalSemanaActual && _semanalSemanaActual.estado === 'cerrada';
+    document.getElementById('btn-sem-guardar-todo').style.display = esCerrada ? 'none' : '';
+
+    let html = '';
+    diferencias.forEach((prod, idx) => {
+        const diff = parseFloat(prod.diferencia) || 0;
+        const diffClass = diff < 0 ? 'sem-diff-negativo' : (diff > 0 ? 'sem-diff-positivo' : '');
+        const diffLabel = diff < 0 ? 'Faltante' : (diff > 0 ? 'Sobrante' : 'OK');
+        const costo = parseFloat(prod.costo_unitario) || 0;
+        const valorTotal = Math.abs(diff) * costo;
+
+        // Existing assignments
+        const asignacion = prod.asignacion;
+        const personasAsig = asignacion && asignacion.personas ? asignacion.personas : [];
+
+        html += `
+            <div class="sem-producto-row" data-idx="${idx}" data-codigo="${escapeHtml(prod.codigo)}">
+                <div class="sem-prod-header">
+                    <div class="sem-prod-info">
+                        <span class="sem-prod-codigo">${escapeHtml(prod.codigo)}</span>
+                        <span class="sem-prod-nombre">${escapeHtml(prod.nombre)}</span>
+                    </div>
+                    <div class="sem-prod-numeros">
+                        <span class="sem-prod-stock" title="Stock sistema">${parseFloat(prod.stock_sistema || 0).toFixed(2)}</span>
+                        <span class="sem-prod-contado" title="Contado">${parseFloat(prod.contado || 0).toFixed(2)}</span>
+                        <span class="sem-prod-diff ${diffClass}" title="${diffLabel}">${diff > 0 ? '+' : ''}${diff.toFixed(2)}</span>
+                        <span class="sem-prod-costo" title="Costo unit.">$${costo.toFixed(4)}</span>
+                        <span class="sem-prod-valor ${diffClass}" title="Valor">$${valorTotal.toFixed(2)}</span>
+                    </div>
+                </div>
+                <div class="sem-asig-container" data-idx="${idx}">
+                    ${personasAsig.length > 0 ? personasAsig.map((pa, pi) => _semanalPersonaRowHTML(idx, pi, pa.persona, pa.cantidad, costo, esCerrada)).join('') : _semanalPersonaRowHTML(idx, 0, '', '', costo, esCerrada)}
+                    ${!esCerrada ? `<button class="btn-secondary btn-sm sem-btn-add-persona" onclick="semanalAddPersonaRow(${idx})"><i class="fas fa-plus"></i> Persona</button>` : ''}
+                </div>
+                <div class="sem-asig-total" data-idx="${idx}">
+                    Asignado: <strong class="sem-asig-total-val">$${personasAsig.reduce((s, p) => s + (parseFloat(p.cantidad) || 0) * costo, 0).toFixed(2)}</strong>
+                    de <strong>$${valorTotal.toFixed(2)}</strong>
+                </div>
+            </div>
+        `;
+    });
+
+    listEl.innerHTML = html;
+}
+
+function _semanalPersonaRowHTML(prodIdx, personaIdx, persona, cantidad, costoUnit, readOnly) {
+    const monto = (parseFloat(cantidad) || 0) * costoUnit;
+    const disabledAttr = readOnly ? 'disabled' : '';
+    const personasOpts = (state.personas || []).map(p => {
+        const nombre = typeof p === 'string' ? p : p.nombre;
+        const selected = nombre === persona ? 'selected' : '';
+        return `<option value="${escapeHtml(nombre)}" ${selected}>${escapeHtml(nombre)}</option>`;
+    }).join('');
+
+    return `
+        <div class="sem-persona-row" data-prod-idx="${prodIdx}" data-persona-idx="${personaIdx}">
+            <select class="sem-persona-select" ${disabledAttr} onchange="semanalRecalcRow(this)">
+                <option value="">Seleccionar...</option>
+                ${personasOpts}
+            </select>
+            <input type="number" class="sem-persona-cant" value="${cantidad || ''}" min="0" step="0.01"
+                   placeholder="Cant." ${disabledAttr} onchange="semanalRecalcRow(this)" oninput="semanalRecalcRow(this)">
+            <span class="sem-persona-monto">$${monto.toFixed(2)}</span>
+            ${!readOnly ? `<button class="btn-icon sem-btn-remove-persona" onclick="semanalRemovePersonaRow(this)" title="Quitar"><i class="fas fa-times"></i></button>` : ''}
+        </div>
+    `;
+}
+
+function semanalAddPersonaRow(prodIdx) {
+    const container = document.querySelector(`.sem-asig-container[data-idx="${prodIdx}"]`);
+    if (!container) return;
+    const existing = container.querySelectorAll('.sem-persona-row');
+    const newIdx = existing.length;
+    const prod = _semanalDiferencias[prodIdx];
+    const costo = parseFloat(prod ? prod.costo_unitario : 0) || 0;
+    const esCerrada = _semanalSemanaActual && _semanalSemanaActual.estado === 'cerrada';
+
+    const addBtn = container.querySelector('.sem-btn-add-persona');
+    const temp = document.createElement('div');
+    temp.innerHTML = _semanalPersonaRowHTML(prodIdx, newIdx, '', '', costo, esCerrada);
+    const row = temp.firstElementChild;
+    container.insertBefore(row, addBtn);
+}
+
+function semanalRemovePersonaRow(btn) {
+    const row = btn.closest('.sem-persona-row');
+    if (!row) return;
+    const container = row.closest('.sem-asig-container');
+    const prodIdx = container.dataset.idx;
+    row.remove();
+    _semanalRecalcTotal(prodIdx);
+}
+
+function semanalRecalcRow(el) {
+    const row = el.closest('.sem-persona-row');
+    const container = row.closest('.sem-asig-container');
+    const prodIdx = container.dataset.idx;
+    const prod = _semanalDiferencias[prodIdx];
+    const costo = parseFloat(prod ? prod.costo_unitario : 0) || 0;
+    const cant = parseFloat(row.querySelector('.sem-persona-cant').value) || 0;
+    row.querySelector('.sem-persona-monto').textContent = `$${(cant * costo).toFixed(2)}`;
+    _semanalRecalcTotal(prodIdx);
+}
+
+function _semanalRecalcTotal(prodIdx) {
+    const container = document.querySelector(`.sem-asig-container[data-idx="${prodIdx}"]`);
+    if (!container) return;
+    const rows = container.querySelectorAll('.sem-persona-row');
+    const prod = _semanalDiferencias[prodIdx];
+    const costo = parseFloat(prod ? prod.costo_unitario : 0) || 0;
+    let totalAsig = 0;
+    rows.forEach(r => {
+        const cant = parseFloat(r.querySelector('.sem-persona-cant').value) || 0;
+        totalAsig += cant * costo;
+    });
+    const totalEl = document.querySelector(`.sem-asig-total[data-idx="${prodIdx}"] .sem-asig-total-val`);
+    if (totalEl) totalEl.textContent = `$${totalAsig.toFixed(2)}`;
+}
+
+async function semanalGuardarTodo() {
+    if (!_semanalSemanaActual) {
+        showToast('No hay semana cargada', 'error');
+        return;
+    }
+
+    const asignaciones = [];
+    const productoRows = document.querySelectorAll('.sem-producto-row');
+
+    productoRows.forEach(prodRow => {
+        const idx = parseInt(prodRow.dataset.idx);
+        const prod = _semanalDiferencias[idx];
+        if (!prod) return;
+
+        const personaRows = prodRow.querySelectorAll('.sem-persona-row');
+        const personas = [];
+        personaRows.forEach(pr => {
+            const persona = pr.querySelector('.sem-persona-select').value;
+            const cantidad = parseFloat(pr.querySelector('.sem-persona-cant').value) || 0;
+            if (persona && cantidad !== 0) {
+                personas.push({ persona, cantidad });
+            }
+        });
+
+        if (personas.length > 0) {
+            asignaciones.push({
+                codigo: prod.codigo,
+                nombre: prod.nombre,
+                unidad: prod.unidad || '',
+                diferencia_semanal: parseFloat(prod.diferencia) || 0,
+                costo_unitario: parseFloat(prod.costo_unitario) || 0,
+                personas: personas
+            });
+        }
+    });
+
+    if (asignaciones.length === 0) {
+        showToast('No hay asignaciones para guardar', 'info');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/semanas/${_semanalSemanaActual.id}/asignar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ asignaciones })
+        });
+        const data = await res.json();
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+        showToast('Asignaciones guardadas correctamente', 'success');
+        // Recargar
+        semanalCargarSemanaById(_semanalSemanaActual.id);
+    } catch (error) {
+        console.error('Error guardando asignaciones:', error);
+        showToast('Error al guardar asignaciones', 'error');
+    }
+}
+
+async function semanalCerrar() {
+    if (!_semanalSemanaActual) return;
+    if (!confirm(`Cerrar la semana del ${_semanalFormatFechaLarga(_semanalSemanaActual.fecha_inicio)} al ${_semanalFormatFechaLarga(_semanalSemanaActual.fecha_fin)}?\n\nUna vez cerrada no se podran editar las asignaciones.`)) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/semanas/${_semanalSemanaActual.id}/cerrar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cerrada_por: state.user ? state.user.username : 'admin' })
+        });
+        const data = await res.json();
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+        showToast('Semana cerrada correctamente', 'success');
+        semanalCargar();
+    } catch (error) {
+        showToast('Error al cerrar semana', 'error');
+    }
+}
+
+async function semanalReabrir() {
+    if (!_semanalSemanaActual) return;
+    if (!confirm('Reabrir esta semana? Las asignaciones podran editarse nuevamente.')) return;
+
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/semanas/${_semanalSemanaActual.id}/reabrir`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+        showToast('Semana reabierta', 'success');
+        semanalCargar();
+    } catch (error) {
+        showToast('Error al reabrir semana', 'error');
+    }
+}
+
+async function semanalCargarPendientes() {
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/semanas/pendientes`);
+        const data = await res.json();
+        const alertaEl = document.getElementById('sem-alerta-pendientes');
+        if (!data || data.length === 0) {
+            alertaEl.classList.add('hidden');
+            return;
+        }
+        alertaEl.classList.remove('hidden');
+        let html = '<div class="sem-alerta-header"><i class="fas fa-exclamation-triangle"></i> Semanas Pendientes de Cerrar</div><ul>';
+        data.forEach(s => {
+            const ini = _semanalFormatFecha(s.fecha_inicio);
+            const fin = _semanalFormatFecha(s.fecha_fin);
+            html += `<li><strong>${_semanalBodegaNombre(s.local)}</strong> &mdash; Semana del ${ini} al ${fin} &mdash; <span class="sem-alerta-sin-cerrar">SIN CERRAR</span></li>`;
+        });
+        html += '</ul>';
+        alertaEl.innerHTML = html;
+    } catch (error) {
+        console.error('Error cargando pendientes:', error);
+    }
+}
+
+function semanalRenderResumenPersonas(data) {
+    const container = document.getElementById('sem-resumen-personas');
+    const contenido = document.getElementById('sem-resumen-contenido');
+
+    if (!data || data.length === 0) {
+        container.classList.add('hidden');
+        return;
+    }
+
+    container.classList.remove('hidden');
+    let html = '<table class="sem-resumen-tabla"><thead><tr><th>Persona</th><th>Semanas</th><th>Cant. Total</th><th>Monto Total</th></tr></thead><tbody>';
+    data.forEach(p => {
+        html += `<tr>
+            <td>${escapeHtml(p.persona)}</td>
+            <td>${p.semanas_count || 0}</td>
+            <td>${parseFloat(p.total_cantidad || 0).toFixed(2)}</td>
+            <td>$${parseFloat(p.total_monto || 0).toFixed(2)}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    contenido.innerHTML = html;
 }

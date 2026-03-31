@@ -195,6 +195,43 @@ def init_db():
                 monto NUMERIC(12,2)
             )
         """)
+        # ---- Tablas para Asignacion Semanal ----
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventario_diario.semanas_inventario (
+                id SERIAL PRIMARY KEY,
+                fecha_inicio DATE NOT NULL,
+                fecha_fin DATE NOT NULL,
+                local VARCHAR(50) NOT NULL,
+                estado VARCHAR(20) DEFAULT 'abierta' CHECK (estado IN ('abierta', 'cerrada')),
+                cerrada_por VARCHAR(100),
+                cerrada_at TIMESTAMP,
+                notas TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(fecha_inicio, local)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventario_diario.asignacion_semanal (
+                id SERIAL PRIMARY KEY,
+                semana_id INT NOT NULL,
+                codigo VARCHAR(50) NOT NULL,
+                nombre VARCHAR(150),
+                unidad VARCHAR(20),
+                local VARCHAR(50),
+                diferencia_semanal NUMERIC(12,4) DEFAULT 0,
+                costo_unitario NUMERIC(12,4) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventario_diario.asignacion_semanal_personas (
+                id SERIAL PRIMARY KEY,
+                asignacion_semanal_id INT NOT NULL,
+                persona VARCHAR(100) NOT NULL,
+                cantidad NUMERIC(12,4) DEFAULT 0,
+                monto NUMERIC(12,2) DEFAULT 0
+            )
+        """)
         conn.commit()
         print('init_db: tablas OK')
     except Exception as e:
@@ -2234,6 +2271,507 @@ def panel_contar_stock():
         count = cur.fetchone()['cnt']
 
         return jsonify({'count': count})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+# ==================== ASIGNACION SEMANAL ====================
+
+@app.route('/api/semanas', methods=['GET'])
+def listar_semanas():
+    """Lista semanas de inventario para una bodega"""
+    local = request.args.get('local')
+    if not local:
+        return jsonify({'error': 'Falta parametro local'}), 400
+
+    fecha_desde = request.args.get('fecha_desde')
+    fecha_hasta = request.args.get('fecha_hasta')
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        query = """
+            SELECT s.*,
+                (SELECT COUNT(DISTINCT c.codigo)
+                 FROM inventario_diario.inventario_ciego_conteos c
+                 WHERE c.local = s.local
+                   AND c.fecha BETWEEN s.fecha_inicio AND s.fecha_fin
+                   AND (c.cantidad_contada IS NOT NULL OR c.cantidad_contada_2 IS NOT NULL)
+                ) as total_productos,
+                COALESCE((SELECT SUM(ap.monto)
+                 FROM inventario_diario.asignacion_semanal a
+                 JOIN inventario_diario.asignacion_semanal_personas ap ON ap.asignacion_semanal_id = a.id
+                 WHERE a.semana_id = s.id
+                ), 0) as total_asignado
+            FROM inventario_diario.semanas_inventario s
+            WHERE s.local = %s
+        """
+        params = [local]
+
+        if fecha_desde:
+            query += ' AND s.fecha_inicio >= %s'
+            params.append(fecha_desde)
+        if fecha_hasta:
+            query += ' AND s.fecha_fin <= %s'
+            params.append(fecha_hasta)
+
+        query += ' ORDER BY s.fecha_inicio DESC'
+        cur.execute(query, params)
+        semanas = cur.fetchall()
+
+        # Convert dates to strings
+        for s in semanas:
+            s['fecha_inicio'] = str(s['fecha_inicio'])
+            s['fecha_fin'] = str(s['fecha_fin'])
+            if s.get('cerrada_at'):
+                s['cerrada_at'] = str(s['cerrada_at'])
+            if s.get('created_at'):
+                s['created_at'] = str(s['created_at'])
+
+        return jsonify(semanas)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/semanas/crear', methods=['POST'])
+def crear_semana():
+    """Crea o retorna una semana de inventario"""
+    data = request.get_json()
+    local = data.get('local')
+    fecha_inicio = data.get('fecha_inicio')
+
+    if not local or not fecha_inicio:
+        return jsonify({'error': 'Faltan parametros local y fecha_inicio'}), 400
+
+    from datetime import datetime, timedelta
+    try:
+        dt_inicio = datetime.strptime(fecha_inicio, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'error': 'fecha_inicio debe ser formato YYYY-MM-DD'}), 400
+
+    # Validar que sea lunes (ISO weekday 1)
+    if dt_inicio.isoweekday() != 1:
+        return jsonify({'error': 'fecha_inicio debe ser un lunes'}), 400
+
+    dt_fin = dt_inicio + timedelta(days=6)  # domingo
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Verificar si ya existe
+        cur.execute("""
+            SELECT * FROM inventario_diario.semanas_inventario
+            WHERE fecha_inicio = %s AND local = %s
+        """, (dt_inicio, local))
+        existing = cur.fetchone()
+
+        if existing:
+            existing['fecha_inicio'] = str(existing['fecha_inicio'])
+            existing['fecha_fin'] = str(existing['fecha_fin'])
+            if existing.get('cerrada_at'):
+                existing['cerrada_at'] = str(existing['cerrada_at'])
+            if existing.get('created_at'):
+                existing['created_at'] = str(existing['created_at'])
+            return jsonify(existing)
+
+        # Verificar que no haya otra semana abierta para este local
+        cur.execute("""
+            SELECT id, fecha_inicio, fecha_fin FROM inventario_diario.semanas_inventario
+            WHERE local = %s AND estado = 'abierta'
+        """, (local,))
+        abierta = cur.fetchone()
+
+        if abierta:
+            return jsonify({
+                'error': f'Ya existe una semana abierta para {local} ({abierta["fecha_inicio"]} - {abierta["fecha_fin"]}). Cierre primero antes de crear otra.'
+            }), 409
+
+        cur.execute("""
+            INSERT INTO inventario_diario.semanas_inventario (fecha_inicio, fecha_fin, local)
+            VALUES (%s, %s, %s)
+            RETURNING *
+        """, (dt_inicio, dt_fin, local))
+        nueva = cur.fetchone()
+        conn.commit()
+
+        nueva['fecha_inicio'] = str(nueva['fecha_inicio'])
+        nueva['fecha_fin'] = str(nueva['fecha_fin'])
+        if nueva.get('created_at'):
+            nueva['created_at'] = str(nueva['created_at'])
+
+        return jsonify(nueva), 201
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/semanas/<int:semana_id>/diferencias', methods=['GET'])
+def diferencias_semana(semana_id):
+    """Obtiene diferencias semanales de productos para una semana"""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Obtener datos de la semana
+        cur.execute("""
+            SELECT * FROM inventario_diario.semanas_inventario WHERE id = %s
+        """, (semana_id,))
+        semana = cur.fetchone()
+        if not semana:
+            return jsonify({'error': 'Semana no encontrada'}), 404
+
+        fecha_inicio = semana['fecha_inicio']
+        fecha_fin = semana['fecha_fin']
+        local = semana['local']
+
+        # Para cada producto, obtener primer registro (stock) y ultimo registro (contado)
+        cur.execute("""
+            WITH primer_conteo AS (
+                SELECT DISTINCT ON (codigo)
+                    codigo, nombre, unidad, cantidad, fecha, costo_unitario
+                FROM inventario_diario.inventario_ciego_conteos
+                WHERE local = %s AND fecha BETWEEN %s AND %s
+                ORDER BY codigo, fecha ASC, id ASC
+            ),
+            ultimo_conteo AS (
+                SELECT DISTINCT ON (codigo)
+                    codigo,
+                    COALESCE(cantidad_contada_2, cantidad_contada) as contado,
+                    fecha as fecha_ultimo,
+                    costo_unitario as costo_ultimo
+                FROM inventario_diario.inventario_ciego_conteos
+                WHERE local = %s AND fecha BETWEEN %s AND %s
+                  AND (cantidad_contada IS NOT NULL OR cantidad_contada_2 IS NOT NULL)
+                ORDER BY codigo, fecha DESC, id DESC
+            )
+            SELECT
+                p.codigo,
+                p.nombre,
+                p.unidad,
+                p.cantidad as stock_sistema,
+                u.contado,
+                COALESCE(u.contado, 0) - COALESCE(p.cantidad, 0) as diferencia,
+                COALESCE(u.costo_ultimo, p.costo_unitario, 0) as costo_unitario,
+                p.fecha as fecha_primer,
+                u.fecha_ultimo
+            FROM primer_conteo p
+            LEFT JOIN ultimo_conteo u ON p.codigo = u.codigo
+            WHERE u.contado IS NOT NULL
+              AND (COALESCE(u.contado, 0) - COALESCE(p.cantidad, 0)) != 0
+            ORDER BY p.nombre
+        """, (local, fecha_inicio, fecha_fin, local, fecha_inicio, fecha_fin))
+        diferencias = cur.fetchall()
+
+        # Serializar fechas
+        for d in diferencias:
+            d['fecha_primer'] = str(d['fecha_primer']) if d.get('fecha_primer') else None
+            d['fecha_ultimo'] = str(d['fecha_ultimo']) if d.get('fecha_ultimo') else None
+
+        # Obtener asignaciones existentes para esta semana
+        cur.execute("""
+            SELECT a.id, a.codigo, a.nombre, a.unidad, a.diferencia_semanal, a.costo_unitario,
+                   json_agg(json_build_object(
+                       'id', ap.id,
+                       'persona', ap.persona,
+                       'cantidad', ap.cantidad,
+                       'monto', ap.monto
+                   )) FILTER (WHERE ap.id IS NOT NULL) as personas
+            FROM inventario_diario.asignacion_semanal a
+            LEFT JOIN inventario_diario.asignacion_semanal_personas ap
+                ON ap.asignacion_semanal_id = a.id
+            WHERE a.semana_id = %s
+            GROUP BY a.id, a.codigo, a.nombre, a.unidad, a.diferencia_semanal, a.costo_unitario
+        """, (semana_id,))
+        asignaciones = cur.fetchall()
+
+        # Mapear asignaciones por codigo
+        asig_map = {}
+        for a in asignaciones:
+            asig_map[a['codigo']] = {
+                'id': a['id'],
+                'diferencia_semanal': a['diferencia_semanal'],
+                'costo_unitario': a['costo_unitario'],
+                'personas': a['personas'] or []
+            }
+
+        # Combinar diferencias con asignaciones
+        resultado = []
+        for d in diferencias:
+            item = dict(d)
+            if d['codigo'] in asig_map:
+                item['asignacion'] = asig_map[d['codigo']]
+            else:
+                item['asignacion'] = None
+            resultado.append(item)
+
+        semana_info = {
+            'id': semana['id'],
+            'fecha_inicio': str(semana['fecha_inicio']),
+            'fecha_fin': str(semana['fecha_fin']),
+            'local': semana['local'],
+            'estado': semana['estado']
+        }
+
+        return jsonify({
+            'semana': semana_info,
+            'diferencias': resultado
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/semanas/<int:semana_id>/asignar', methods=['POST'])
+def asignar_semana(semana_id):
+    """Guarda asignaciones semanales de diferencias"""
+    data = request.get_json()
+    asignaciones = data.get('asignaciones', [])
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Verificar que la semana existe y esta abierta
+        cur.execute("""
+            SELECT * FROM inventario_diario.semanas_inventario WHERE id = %s
+        """, (semana_id,))
+        semana = cur.fetchone()
+        if not semana:
+            return jsonify({'error': 'Semana no encontrada'}), 404
+        if semana['estado'] != 'abierta':
+            return jsonify({'error': 'La semana esta cerrada, no se pueden modificar asignaciones'}), 400
+
+        # Borrar asignaciones previas de esta semana
+        cur.execute("""
+            DELETE FROM inventario_diario.asignacion_semanal_personas
+            WHERE asignacion_semanal_id IN (
+                SELECT id FROM inventario_diario.asignacion_semanal WHERE semana_id = %s
+            )
+        """, (semana_id,))
+        cur.execute("""
+            DELETE FROM inventario_diario.asignacion_semanal WHERE semana_id = %s
+        """, (semana_id,))
+
+        # Insertar nuevas asignaciones
+        total_insertadas = 0
+        for asig in asignaciones:
+            cur.execute("""
+                INSERT INTO inventario_diario.asignacion_semanal
+                    (semana_id, codigo, nombre, unidad, local, diferencia_semanal, costo_unitario)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                semana_id,
+                asig.get('codigo'),
+                asig.get('nombre'),
+                asig.get('unidad'),
+                semana['local'],
+                asig.get('diferencia_semanal', 0),
+                asig.get('costo_unitario', 0)
+            ))
+            asig_id = cur.fetchone()['id']
+
+            for persona in asig.get('personas', []):
+                cantidad = persona.get('cantidad', 0)
+                costo = asig.get('costo_unitario', 0)
+                monto = float(cantidad) * float(costo) if cantidad and costo else 0
+                cur.execute("""
+                    INSERT INTO inventario_diario.asignacion_semanal_personas
+                        (asignacion_semanal_id, persona, cantidad, monto)
+                    VALUES (%s, %s, %s, %s)
+                """, (asig_id, persona.get('persona'), cantidad, round(monto, 2)))
+
+            total_insertadas += 1
+
+        conn.commit()
+        return jsonify({
+            'ok': True,
+            'message': f'{total_insertadas} asignaciones guardadas para semana {semana_id}'
+        })
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/semanas/<int:semana_id>/cerrar', methods=['POST'])
+def cerrar_semana(semana_id):
+    """Cierra una semana de inventario"""
+    data = request.get_json() or {}
+    cerrada_por = data.get('cerrada_por', 'sistema')
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT estado FROM inventario_diario.semanas_inventario WHERE id = %s
+        """, (semana_id,))
+        semana = cur.fetchone()
+        if not semana:
+            return jsonify({'error': 'Semana no encontrada'}), 404
+        if semana['estado'] != 'abierta':
+            return jsonify({'error': 'La semana ya esta cerrada'}), 400
+
+        cur.execute("""
+            UPDATE inventario_diario.semanas_inventario
+            SET estado = 'cerrada', cerrada_por = %s, cerrada_at = NOW()
+            WHERE id = %s
+            RETURNING *
+        """, (cerrada_por, semana_id))
+        updated = cur.fetchone()
+        conn.commit()
+
+        updated['fecha_inicio'] = str(updated['fecha_inicio'])
+        updated['fecha_fin'] = str(updated['fecha_fin'])
+        if updated.get('cerrada_at'):
+            updated['cerrada_at'] = str(updated['cerrada_at'])
+        if updated.get('created_at'):
+            updated['created_at'] = str(updated['created_at'])
+
+        return jsonify({'ok': True, 'semana': updated})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/semanas/<int:semana_id>/reabrir', methods=['POST'])
+def reabrir_semana(semana_id):
+    """Reabre una semana cerrada (solo admin)"""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT estado FROM inventario_diario.semanas_inventario WHERE id = %s
+        """, (semana_id,))
+        semana = cur.fetchone()
+        if not semana:
+            return jsonify({'error': 'Semana no encontrada'}), 404
+        if semana['estado'] != 'cerrada':
+            return jsonify({'error': 'La semana ya esta abierta'}), 400
+
+        cur.execute("""
+            UPDATE inventario_diario.semanas_inventario
+            SET estado = 'abierta', cerrada_por = NULL, cerrada_at = NULL
+            WHERE id = %s
+            RETURNING *
+        """, (semana_id,))
+        updated = cur.fetchone()
+        conn.commit()
+
+        updated['fecha_inicio'] = str(updated['fecha_inicio'])
+        updated['fecha_fin'] = str(updated['fecha_fin'])
+        if updated.get('created_at'):
+            updated['created_at'] = str(updated['created_at'])
+
+        return jsonify({'ok': True, 'semana': updated})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/semanas/pendientes', methods=['GET'])
+def semanas_pendientes():
+    """Retorna semanas abiertas cuyo periodo ya termino (para recordatorios)"""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT s.*
+            FROM inventario_diario.semanas_inventario s
+            WHERE s.estado = 'abierta'
+              AND s.fecha_fin < CURRENT_DATE
+            ORDER BY s.fecha_fin ASC
+        """)
+        semanas = cur.fetchall()
+
+        for s in semanas:
+            s['fecha_inicio'] = str(s['fecha_inicio'])
+            s['fecha_fin'] = str(s['fecha_fin'])
+            if s.get('created_at'):
+                s['created_at'] = str(s['created_at'])
+
+        return jsonify(semanas)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/semanas/resumen-persona', methods=['GET'])
+def resumen_persona_semanal():
+    """Resumen de asignaciones por persona a traves de semanas cerradas"""
+    local = request.args.get('local')
+    fecha_desde = request.args.get('fecha_desde')
+    fecha_hasta = request.args.get('fecha_hasta')
+
+    if not local:
+        return jsonify({'error': 'Falta parametro local'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        query = """
+            SELECT ap.persona,
+                   SUM(ap.cantidad) as total_cantidad,
+                   SUM(ap.monto) as total_monto,
+                   COUNT(DISTINCT a.semana_id) as semanas_count
+            FROM inventario_diario.asignacion_semanal_personas ap
+            JOIN inventario_diario.asignacion_semanal a ON a.id = ap.asignacion_semanal_id
+            JOIN inventario_diario.semanas_inventario s ON s.id = a.semana_id
+            WHERE s.local = %s AND s.estado = 'cerrada'
+        """
+        params = [local]
+
+        if fecha_desde:
+            query += ' AND s.fecha_inicio >= %s'
+            params.append(fecha_desde)
+        if fecha_hasta:
+            query += ' AND s.fecha_fin <= %s'
+            params.append(fecha_hasta)
+
+        query += ' GROUP BY ap.persona ORDER BY total_monto DESC'
+        cur.execute(query, params)
+        resumen = cur.fetchall()
+
+        return jsonify(resumen)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
