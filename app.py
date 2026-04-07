@@ -2797,7 +2797,7 @@ def resumen_persona_semanal():
 #        Panel web -> GET /estado/<id> (polling) -> muestra resultado
 
 # Token simple para autenticar al worker (env var)
-WORKER_TOKEN = os.environ.get('CRUCE_WORKER_TOKEN', 'worker-foodix-2026-changeme')
+WORKER_TOKEN = os.environ.get('CRUCE_WORKER_TOKEN', 'worker-foodix-2026-7K3xR9pL2qN8mZ4w')
 
 
 @app.route('/api/cruce-op/solicitar', methods=['POST'])
