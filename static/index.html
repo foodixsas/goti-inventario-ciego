@@ -519,6 +519,32 @@
                         </button>
                     </div>
 
+                    <!-- BLOQUE CUADRAR (boton + estado worker) -->
+                    <div class="cuadrar-block" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:16px;">
+                        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                            <i class="fas fa-bolt" style="color:#1E3A5F;font-size:20px;"></i>
+                            <strong>Ejecutar nuevo cruce</strong>
+                            <select id="cuadrar-bodega" class="form-control" style="max-width:220px;">
+                                <option value="bodega_principal">Bodega Principal</option>
+                                <option value="materia_prima">Materia Prima</option>
+                                <option value="planta">Planta de Produccion</option>
+                            </select>
+                            <select id="cuadrar-fecha" class="form-control" style="max-width:220px;">
+                                <option value="">Cargando fechas...</option>
+                            </select>
+                            <button id="btn-cuadrar" class="btn-primary" onclick="cuadrarSolicitar()">
+                                <i class="fas fa-bolt"></i> CUADRAR
+                            </button>
+                            <span id="cuadrar-status" style="margin-left:8px;color:#64748b;"></span>
+                        </div>
+                        <div id="cuadrar-progreso" style="margin-top:10px;display:none;">
+                            <div style="background:#e2e8f0;border-radius:4px;height:8px;overflow:hidden;">
+                                <div id="cuadrar-progreso-bar" style="background:linear-gradient(90deg,#1E3A5F,#3b82f6);height:100%;width:5%;transition:width 0.5s;"></div>
+                            </div>
+                            <small id="cuadrar-progreso-msg" style="color:#475569;display:block;margin-top:6px;"></small>
+                        </div>
+                    </div>
+
                     <div id="cruce-resumen" class="dashboard-stats-grid"></div>
 
                     <div id="cruce-ejecuciones" class="cruce-ejecuciones-list">

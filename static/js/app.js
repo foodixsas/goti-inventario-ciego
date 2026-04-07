@@ -505,6 +505,7 @@ function cambiarVista(viewName) {
             cHasta.value = hoy.toISOString().split('T')[0];
         }
         cargarCruceOperativo();
+        cuadrarCargarFechas();
     }
 
     // Auto-renderizar observaciones al entrar
@@ -4955,4 +4956,116 @@ function semanalRenderResumenPersonas(data) {
     });
     html += '</tbody></table>';
     contenido.innerHTML = html;
+}
+
+// ============================================================
+// CUADRAR - Solicitar nuevo cruce operativo (boton + worker)
+// ============================================================
+let cuadrarPollHandle = null;
+
+async function cuadrarCargarFechas() {
+    const sel = document.getElementById('cuadrar-fecha');
+    const bodSel = document.getElementById('cuadrar-bodega');
+    if (!sel || !bodSel) return;
+    bodSel.onchange = cuadrarCargarFechas;
+    sel.innerHTML = '<option value="">Cargando fechas...</option>';
+    try {
+        const r = await fetch(`${CONFIG.API_URL}/api/cruce-op/fechas-disponibles?bodega=${bodSel.value}`);
+        const fechas = await r.json();
+        if (!Array.isArray(fechas) || fechas.length === 0) {
+            sel.innerHTML = '<option value="">Sin tomas fisicas</option>';
+            return;
+        }
+        sel.innerHTML = fechas.map(f =>
+            `<option value="${f.fecha}">${f.fecha} (${f.productos} productos)</option>`
+        ).join('');
+    } catch (e) {
+        sel.innerHTML = '<option value="">Error cargando</option>';
+        console.error(e);
+    }
+}
+
+async function cuadrarSolicitar() {
+    const bodega = document.getElementById('cuadrar-bodega').value;
+    const fecha = document.getElementById('cuadrar-fecha').value;
+    const btn = document.getElementById('btn-cuadrar');
+    const status = document.getElementById('cuadrar-status');
+    const prog = document.getElementById('cuadrar-progreso');
+    const progBar = document.getElementById('cuadrar-progreso-bar');
+    const progMsg = document.getElementById('cuadrar-progreso-msg');
+
+    if (!fecha) { alert('Selecciona una fecha'); return; }
+
+    btn.disabled = true;
+    status.textContent = '';
+    prog.style.display = 'block';
+    progBar.style.width = '5%';
+    progMsg.textContent = 'Solicitando ejecucion...';
+
+    try {
+        const r = await fetch(`${CONFIG.API_URL}/api/cruce-op/solicitar`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                bodega, fecha_toma: fecha,
+                usuario: state.usuario?.username || 'panel'
+            })
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Error solicitando');
+        progMsg.textContent = `Tarea creada (id ${data.id}). Esperando worker...`;
+        progBar.style.width = '15%';
+        cuadrarPollEstado(data.id);
+    } catch (e) {
+        prog.style.display = 'none';
+        btn.disabled = false;
+        status.innerHTML = `<span style="color:#dc2626;">Error: ${e.message}</span>`;
+    }
+}
+
+function cuadrarPollEstado(ejecId) {
+    const btn = document.getElementById('btn-cuadrar');
+    const progBar = document.getElementById('cuadrar-progreso-bar');
+    const progMsg = document.getElementById('cuadrar-progreso-msg');
+    const status = document.getElementById('cuadrar-status');
+    const prog = document.getElementById('cuadrar-progreso');
+
+    let intentos = 0;
+    if (cuadrarPollHandle) clearInterval(cuadrarPollHandle);
+
+    cuadrarPollHandle = setInterval(async () => {
+        intentos++;
+        try {
+            const r = await fetch(`${CONFIG.API_URL}/api/cruce-op/estado/${ejecId}`);
+            const d = await r.json();
+            if (d.estado === 'pendiente') {
+                progBar.style.width = Math.min(20 + intentos * 2, 30) + '%';
+                progMsg.textContent = `Esperando worker... (${intentos * 5}s)`;
+            } else if (d.estado === 'en_proceso') {
+                progBar.style.width = Math.min(40 + intentos, 80) + '%';
+                progMsg.textContent = `Worker procesando: descargando Contifico y calculando cruce...`;
+            } else if (d.estado === 'completado') {
+                clearInterval(cuadrarPollHandle);
+                progBar.style.width = '100%';
+                progMsg.textContent = `LISTO. Cruzados: ${d.total_cruzados} | Con diferencia: ${d.total_con_diferencia} | Valor descuadre: $${(d.valor_total_dif||0).toFixed(2)}`;
+                btn.disabled = false;
+                status.innerHTML = `<span style="color:#059669;font-weight:600;">Completado</span>`;
+                setTimeout(() => { cargarCruceOperativo(); }, 800);
+            } else if (d.estado === 'error') {
+                clearInterval(cuadrarPollHandle);
+                prog.style.display = 'none';
+                btn.disabled = false;
+                status.innerHTML = `<span style="color:#dc2626;">Error: ${d.error_msg || 'desconocido'}</span>`;
+            }
+
+            // Timeout 5 min
+            if (intentos > 60) {
+                clearInterval(cuadrarPollHandle);
+                progMsg.textContent = 'Tiempo de espera excedido. Verifica que el worker este corriendo en PC FINANZAS.';
+                btn.disabled = false;
+            }
+        } catch (e) {
+            console.error('poll error:', e);
+        }
+    }, 5000);
 }

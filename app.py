@@ -2788,6 +2788,264 @@ def resumen_persona_semanal():
             release_db(conn)
 
 
+# ============================================================
+# MODULO: Cruce Operativo "CUADRAR" - Boton + Worker local
+# ============================================================
+# Flujo: Panel web -> POST /solicitar -> tarea pendiente
+#        Worker PC FINANZAS -> GET /pendientes (cada 15s) -> toma tarea
+#        Worker descarga Contifico, calcula cruce -> POST /resultado
+#        Panel web -> GET /estado/<id> (polling) -> muestra resultado
+
+# Token simple para autenticar al worker (env var)
+WORKER_TOKEN = os.environ.get('CRUCE_WORKER_TOKEN', 'worker-foodix-2026-changeme')
+
+
+@app.route('/api/cruce-op/solicitar', methods=['POST'])
+def cruce_op_solicitar():
+    """Llamado desde el panel cuando el usuario presiona CUADRAR.
+    Crea una tarea pendiente que el worker tomara."""
+    data = request.json or {}
+    bodega = data.get('bodega')
+    fecha_toma = data.get('fecha_toma')
+    usuario = data.get('usuario', 'panel')
+
+    if bodega not in ('bodega_principal', 'materia_prima', 'planta'):
+        return jsonify({'error': 'bodega invalida'}), 400
+    if not fecha_toma:
+        return jsonify({'error': 'fecha_toma requerida'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        # Si ya hay una tarea pendiente o en proceso para misma bodega+fecha, devolver esa
+        cur.execute("""
+            SELECT id, estado FROM inventario_diario.cruce_operativo_ejecuciones
+            WHERE bodega = %s AND fecha_toma = %s AND estado IN ('pendiente', 'en_proceso')
+            ORDER BY solicitado_at DESC LIMIT 1
+        """, (bodega, fecha_toma))
+        existente = cur.fetchone()
+        if existente:
+            return jsonify({'id': existente['id'], 'estado': existente['estado'], 'reused': True})
+
+        cur.execute("""
+            INSERT INTO inventario_diario.cruce_operativo_ejecuciones
+            (bodega, fecha_toma, estado, solicitado_por, solicitado_at)
+            VALUES (%s, %s, 'pendiente', %s, NOW())
+            RETURNING id
+        """, (bodega, fecha_toma, usuario))
+        new_id = cur.fetchone()['id']
+        conn.commit()
+        return jsonify({'id': new_id, 'estado': 'pendiente'})
+    except Exception as e:
+        print(f"Error en /api/cruce-op/solicitar: {e}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/cruce-op/pendientes', methods=['GET'])
+def cruce_op_pendientes():
+    """Llamado por el worker. Devuelve tareas pendientes y las marca como en_proceso."""
+    token = request.headers.get('X-Worker-Token')
+    if token != WORKER_TOKEN:
+        return jsonify({'error': 'unauthorized'}), 401
+
+    worker_id = request.args.get('worker_id', 'pc-finanzas')
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        # Marca atomicamente las pendientes como en_proceso para este worker
+        cur.execute("""
+            UPDATE inventario_diario.cruce_operativo_ejecuciones
+            SET estado = 'en_proceso',
+                worker_lock = %s,
+                timestamp_descarga = NOW()
+            WHERE id IN (
+                SELECT id FROM inventario_diario.cruce_operativo_ejecuciones
+                WHERE estado = 'pendiente'
+                ORDER BY solicitado_at ASC
+                LIMIT 5
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING id, bodega, fecha_toma, solicitado_por, solicitado_at
+        """, (worker_id,))
+        rows = cur.fetchall()
+        conn.commit()
+        result = [{
+            'id': r['id'],
+            'bodega': r['bodega'],
+            'fecha_toma': r['fecha_toma'].isoformat() if r['fecha_toma'] else None,
+            'solicitado_por': r['solicitado_por'],
+        } for r in rows]
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error en /api/cruce-op/pendientes: {e}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/cruce-op/resultado', methods=['POST'])
+def cruce_op_resultado():
+    """Llamado por el worker al terminar. Inserta detalle y marca completado/error."""
+    token = request.headers.get('X-Worker-Token')
+    if token != WORKER_TOKEN:
+        return jsonify({'error': 'unauthorized'}), 401
+
+    data = request.json or {}
+    ejec_id = data.get('id')
+    estado = data.get('estado', 'completado')  # 'completado' o 'error'
+    error_msg = data.get('error_msg')
+    detalle = data.get('detalle', [])
+    resumen = data.get('resumen', {})
+
+    if not ejec_id:
+        return jsonify({'error': 'id requerido'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        if estado == 'error':
+            cur.execute("""
+                UPDATE inventario_diario.cruce_operativo_ejecuciones
+                SET estado = 'error', error_msg = %s, timestamp_cruce = NOW()
+                WHERE id = %s
+            """, (error_msg, ejec_id))
+            conn.commit()
+            return jsonify({'ok': True})
+
+        # Borrar detalle previo si existiera
+        cur.execute("DELETE FROM inventario_diario.cruce_operativo_detalle WHERE ejecucion_id = %s", (ejec_id,))
+
+        # Insertar detalle
+        if detalle:
+            for d in detalle:
+                cur.execute("""
+                    INSERT INTO inventario_diario.cruce_operativo_detalle
+                    (ejecucion_id, codigo, nombre, categoria, unidad, unidad_toma, factor,
+                     unidad_destino, cantidad_toma, cantidad_sistema, diferencia,
+                     costo_unitario, valor_diferencia, tipo_abc, origen)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    ejec_id, d.get('codigo'), d.get('nombre'), d.get('categoria'),
+                    d.get('unidad_destino'), d.get('unidad_toma'), d.get('factor'),
+                    d.get('unidad_destino'), d.get('cantidad_toma'), d.get('cantidad_sistema'),
+                    d.get('diferencia'), d.get('costo_unitario'), d.get('valor_diferencia'),
+                    d.get('tipo_abc'), d.get('origen', 'cruce_operativo')
+                ))
+
+        # Update ejecucion
+        cur.execute("""
+            UPDATE inventario_diario.cruce_operativo_ejecuciones
+            SET estado = 'completado',
+                total_productos_toma = %s,
+                total_productos_contifico = %s,
+                total_cruzados = %s,
+                total_con_diferencia = %s,
+                valor_total_dif = %s,
+                timestamp_cruce = NOW()
+            WHERE id = %s
+        """, (
+            resumen.get('total_productos_toma'),
+            resumen.get('total_productos_contifico'),
+            resumen.get('total_cruzados'),
+            resumen.get('total_con_diferencia'),
+            resumen.get('valor_total_dif'),
+            ejec_id
+        ))
+        conn.commit()
+        return jsonify({'ok': True, 'detalles_insertados': len(detalle)})
+    except Exception as e:
+        print(f"Error en /api/cruce-op/resultado: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'error': 'Error interno del servidor', 'detalle': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/cruce-op/estado/<int:ejec_id>', methods=['GET'])
+def cruce_op_estado(ejec_id):
+    """Polling desde el panel para saber estado de una ejecucion."""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, bodega, fecha_toma, estado, solicitado_por, solicitado_at,
+                   timestamp_descarga, timestamp_cruce, error_msg,
+                   total_productos_toma, total_productos_contifico, total_cruzados,
+                   total_con_diferencia, valor_total_dif
+            FROM inventario_diario.cruce_operativo_ejecuciones WHERE id = %s
+        """, (ejec_id,))
+        r = cur.fetchone()
+        if not r:
+            return jsonify({'error': 'no encontrado'}), 404
+        return jsonify({
+            'id': r['id'],
+            'bodega': r['bodega'],
+            'fecha_toma': r['fecha_toma'].isoformat() if r['fecha_toma'] else None,
+            'estado': r['estado'],
+            'solicitado_por': r['solicitado_por'],
+            'solicitado_at': r['solicitado_at'].isoformat() if r['solicitado_at'] else None,
+            'timestamp_descarga': r['timestamp_descarga'].isoformat() if r['timestamp_descarga'] else None,
+            'timestamp_cruce': r['timestamp_cruce'].isoformat() if r['timestamp_cruce'] else None,
+            'error_msg': r['error_msg'],
+            'total_productos_toma': r['total_productos_toma'],
+            'total_productos_contifico': r['total_productos_contifico'],
+            'total_cruzados': r['total_cruzados'],
+            'total_con_diferencia': r['total_con_diferencia'],
+            'valor_total_dif': float(r['valor_total_dif']) if r['valor_total_dif'] is not None else None,
+        })
+    except Exception as e:
+        print(f"Error en /api/cruce-op/estado: {e}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/cruce-op/fechas-disponibles', methods=['GET'])
+def cruce_op_fechas():
+    """Devuelve las fechas con toma fisica disponibles para una bodega."""
+    bodega = request.args.get('bodega')
+    tablas = {
+        'bodega_principal': 'public.toma_bodega',
+        'materia_prima':    'public.toma_materiaprima',
+        'planta':           'public.toma_planta',
+    }
+    if bodega not in tablas:
+        return jsonify({'error': 'bodega invalida'}), 400
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT fecha, COUNT(*) AS productos
+            FROM {tablas[bodega]}
+            WHERE fecha >= CURRENT_DATE - INTERVAL '90 days'
+            GROUP BY fecha ORDER BY fecha DESC
+        """)
+        rows = cur.fetchall()
+        return jsonify([{
+            'fecha': r['fecha'].isoformat(),
+            'productos': r['productos']
+        } for r in rows])
+    except Exception as e:
+        print(f"Error en /api/cruce-op/fechas-disponibles: {e}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
