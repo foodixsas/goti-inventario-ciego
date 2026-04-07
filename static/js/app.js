@@ -5070,8 +5070,25 @@ function cuadrarPollEstado(ejecId) {
                 progBar.style.width = '100%';
                 progMsg.textContent = 'Cruce completado correctamente';
                 btn.disabled = false;
-                status.innerHTML = `<div class="cuadrar-status-ok"><i class="fas fa-check-circle"></i> Completado &nbsp;·&nbsp; Cruzados: ${d.total_cruzados} &nbsp;·&nbsp; Con diferencia: ${d.total_con_diferencia} &nbsp;·&nbsp; Valor descuadre: $${(d.valor_total_dif||0).toFixed(2)}</div>`;
-                setTimeout(() => { cargarCruceOperativo(); prog.classList.add('hidden'); }, 1500);
+                status.innerHTML = `<div class="cuadrar-status-ok">
+                    <i class="fas fa-check-circle"></i>
+                    <span>Completado &nbsp;·&nbsp; Cruzados: <b>${d.total_cruzados}</b> &nbsp;·&nbsp; Con diferencia: <b>${d.total_con_diferencia}</b> &nbsp;·&nbsp; Valor descuadre: <b>$${(d.valor_total_dif||0).toLocaleString('es-EC',{minimumFractionDigits:2,maximumFractionDigits:2})}</b></span>
+                    <button class="btn-ver-detalle" onclick="verCruceDetalle(${ejecId})"><i class="fas fa-list"></i> Ver detalle</button>
+                </div>`;
+                setTimeout(() => {
+                    // Ampliar el rango de busqueda para incluir la fecha de toma del cruce
+                    const fechaToma = d.fecha_toma;
+                    if (fechaToma) {
+                        const desde = document.getElementById('cruce-fecha-desde');
+                        const hasta = document.getElementById('cruce-fecha-hasta');
+                        if (desde.value > fechaToma) desde.value = fechaToma;
+                        if (hasta.value < fechaToma) hasta.value = fechaToma;
+                    }
+                    cargarCruceOperativo();
+                    prog.classList.add('hidden');
+                    // Abrir automaticamente el detalle
+                    verCruceDetalle(ejecId);
+                }, 1200);
             } else if (d.estado === 'error') {
                 clearInterval(cuadrarPollHandle);
                 prog.classList.add('hidden');

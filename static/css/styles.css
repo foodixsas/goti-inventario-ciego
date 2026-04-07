@@ -5282,3 +5282,27 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     color: #fff;
     transform: scale(1.05);
 }
+
+.cuadrar-status-ok {
+    flex-wrap: wrap;
+}
+.cuadrar-status-ok span { flex: 1; min-width: 200px; }
+.btn-ver-detalle {
+    background: #059669;
+    color: #fff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s, transform 0.1s;
+    margin-left: auto;
+}
+.btn-ver-detalle:hover {
+    background: #047857;
+    transform: translateY(-1px);
+}
