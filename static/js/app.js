@@ -4971,6 +4971,7 @@ let cuadrarPollHandle = null;
 async function cuadrarCargarFechas() {
     const sel = document.getElementById('cuadrar-fecha');
     const bodSel = document.getElementById('cuadrar-bodega');
+    const corteInp = document.getElementById('cuadrar-fecha-corte');
     if (!sel || !bodSel) return;
     bodSel.onchange = cuadrarCargarFechas;
     sel.innerHTML = '<option value="">Cargando fechas...</option>';
@@ -4984,15 +4985,29 @@ async function cuadrarCargarFechas() {
         sel.innerHTML = fechas.map(f =>
             `<option value="${f.fecha}">${f.fecha} (${f.productos} productos)</option>`
         ).join('');
+        // Auto-set fecha corte = fecha toma + 1 dia cuando cambia la fecha
+        sel.onchange = cuadrarActualizarCorteDefault;
+        cuadrarActualizarCorteDefault();
     } catch (e) {
         sel.innerHTML = '<option value="">Error cargando</option>';
         console.error(e);
     }
 }
 
+function cuadrarActualizarCorteDefault() {
+    const toma = document.getElementById('cuadrar-fecha').value;
+    const corteInp = document.getElementById('cuadrar-fecha-corte');
+    if (!toma || !corteInp) return;
+    // default: toma + 1 dia
+    const d = new Date(toma + 'T00:00:00');
+    d.setDate(d.getDate() + 1);
+    corteInp.value = d.toISOString().split('T')[0];
+}
+
 async function cuadrarSolicitar() {
     const bodega = document.getElementById('cuadrar-bodega').value;
     const fecha = document.getElementById('cuadrar-fecha').value;
+    const fechaCorte = document.getElementById('cuadrar-fecha-corte').value || fecha;
     const btn = document.getElementById('btn-cuadrar');
     const status = document.getElementById('cuadrar-status');
     const prog = document.getElementById('cuadrar-progreso');
@@ -5013,6 +5028,7 @@ async function cuadrarSolicitar() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 bodega, fecha_toma: fecha,
+                fecha_corte_contifico: fechaCorte,
                 usuario: state.usuario?.username || 'panel'
             })
         });

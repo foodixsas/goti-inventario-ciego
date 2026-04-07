@@ -2809,6 +2809,7 @@ def cruce_op_solicitar():
     data = request.json or {}
     bodega = data.get('bodega')
     fecha_toma = data.get('fecha_toma')
+    fecha_corte = data.get('fecha_corte_contifico') or fecha_toma  # por defecto = fecha_toma
     usuario = data.get('usuario', 'panel')
 
     if bodega not in ('bodega_principal', 'materia_prima', 'planta'):
@@ -2838,22 +2839,23 @@ def cruce_op_solicitar():
             cur.execute("""
                 UPDATE inventario_diario.cruce_operativo_ejecuciones
                 SET estado='pendiente', solicitado_por=%s, solicitado_at=NOW(),
+                    fecha_corte_contifico=%s,
                     worker_lock=NULL, error_msg=NULL,
                     timestamp_descarga=NULL, timestamp_cruce=NULL,
                     total_productos_toma=NULL, total_productos_contifico=NULL,
                     total_cruzados=NULL, total_con_diferencia=NULL, valor_total_dif=NULL
                 WHERE id = %s
-            """, (usuario, existente['id']))
+            """, (usuario, fecha_corte, existente['id']))
             conn.commit()
             return jsonify({'id': existente['id'], 'estado': 'pendiente', 'reset': True})
 
         # No existe: crear nueva
         cur.execute("""
             INSERT INTO inventario_diario.cruce_operativo_ejecuciones
-            (bodega, fecha_toma, estado, solicitado_por, solicitado_at)
-            VALUES (%s, %s, 'pendiente', %s, NOW())
+            (bodega, fecha_toma, fecha_corte_contifico, estado, solicitado_por, solicitado_at)
+            VALUES (%s, %s, %s, 'pendiente', %s, NOW())
             RETURNING id
-        """, (bodega, fecha_toma, usuario))
+        """, (bodega, fecha_toma, fecha_corte, usuario))
         new_id = cur.fetchone()['id']
         conn.commit()
         return jsonify({'id': new_id, 'estado': 'pendiente'})
@@ -2911,7 +2913,7 @@ def cruce_op_pendientes():
                 LIMIT 5
                 FOR UPDATE SKIP LOCKED
             )
-            RETURNING id, bodega, fecha_toma, solicitado_por, solicitado_at
+            RETURNING id, bodega, fecha_toma, fecha_corte_contifico, solicitado_por, solicitado_at
         """, (worker_id,))
         rows = cur.fetchall()
         conn.commit()
@@ -2919,6 +2921,7 @@ def cruce_op_pendientes():
             'id': r['id'],
             'bodega': r['bodega'],
             'fecha_toma': r['fecha_toma'].isoformat() if r['fecha_toma'] else None,
+            'fecha_corte_contifico': r['fecha_corte_contifico'].isoformat() if r['fecha_corte_contifico'] else (r['fecha_toma'].isoformat() if r['fecha_toma'] else None),
             'solicitado_por': r['solicitado_por'],
         } for r in rows]
         return jsonify(result)
