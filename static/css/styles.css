@@ -5043,3 +5043,200 @@ tr.cruce-solo-cont { background: #F1F5F9; }
         width: 100%;
     }
 }
+
+/* ============================================================
+   CUADRAR - Bloque de solicitud de cruce operativo
+   ============================================================ */
+.cuadrar-card {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 0;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 4px 14px rgba(15, 23, 42, 0.04);
+    overflow: hidden;
+}
+.cuadrar-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px;
+    background: linear-gradient(135deg, #1E3A5F 0%, #2c5282 100%);
+    color: #fff;
+}
+.cuadrar-header-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.18);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+}
+.cuadrar-header-text h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+}
+.cuadrar-header-text p {
+    margin: 2px 0 0 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+}
+.cuadrar-body {
+    display: flex;
+    gap: 14px;
+    padding: 20px 22px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+.cuadrar-field {
+    flex: 1;
+    min-width: 190px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.cuadrar-field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.cuadrar-field label i {
+    margin-right: 4px;
+    color: #1E3A5F;
+}
+.cuadrar-field select {
+    height: 42px;
+    padding: 0 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 14px;
+    color: #1e293b;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 34px;
+}
+.cuadrar-field select:hover {
+    border-color: #94a3b8;
+}
+.cuadrar-field select:focus {
+    outline: none;
+    border-color: #1E3A5F;
+    box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.12);
+}
+.btn-cuadrar {
+    height: 42px;
+    padding: 0 28px;
+    background: linear-gradient(135deg, #1E3A5F 0%, #2c5282 100%);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: transform 0.1s, box-shadow 0.2s, background 0.2s;
+    box-shadow: 0 2px 6px rgba(30, 58, 95, 0.25);
+    white-space: nowrap;
+}
+.btn-cuadrar:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(30, 58, 95, 0.35);
+    background: linear-gradient(135deg, #243e66 0%, #335b91 100%);
+}
+.btn-cuadrar:active:not(:disabled) {
+    transform: translateY(0);
+}
+.btn-cuadrar:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: #94a3b8;
+    box-shadow: none;
+}
+.btn-cuadrar i {
+    font-size: 15px;
+}
+.cuadrar-progreso {
+    padding: 0 22px 18px 22px;
+}
+.cuadrar-progreso.hidden { display: none; }
+.cuadrar-progreso-track {
+    background: #e2e8f0;
+    border-radius: 999px;
+    height: 10px;
+    overflow: hidden;
+    position: relative;
+}
+.cuadrar-progreso-bar {
+    background: linear-gradient(90deg, #1E3A5F 0%, #3b82f6 50%, #1E3A5F 100%);
+    background-size: 200% 100%;
+    height: 100%;
+    width: 5%;
+    border-radius: 999px;
+    transition: width 0.5s ease;
+    animation: cuadrarBarFlow 2s linear infinite;
+}
+@keyframes cuadrarBarFlow {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+.cuadrar-progreso-msg {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 500;
+}
+.cuadrar-progreso-msg i { color: #1E3A5F; }
+.cuadrar-status {
+    padding: 0 22px;
+}
+.cuadrar-status:empty { padding: 0; }
+.cuadrar-status-ok {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    margin: 0 0 18px 0;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    border-radius: 8px;
+    color: #047857;
+    font-weight: 600;
+    font-size: 14px;
+}
+.cuadrar-status-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    margin: 0 0 18px 0;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    color: #b91c1c;
+    font-weight: 600;
+    font-size: 14px;
+}
+@media (max-width: 640px) {
+    .cuadrar-body { flex-direction: column; align-items: stretch; }
+    .cuadrar-field { width: 100%; }
+    .btn-cuadrar { width: 100%; justify-content: center; }
+}

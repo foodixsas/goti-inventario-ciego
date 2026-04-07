@@ -4997,8 +4997,8 @@ async function cuadrarSolicitar() {
     if (!fecha) { alert('Selecciona una fecha'); return; }
 
     btn.disabled = true;
-    status.textContent = '';
-    prog.style.display = 'block';
+    status.innerHTML = '';
+    prog.classList.remove('hidden');
     progBar.style.width = '5%';
     progMsg.textContent = 'Solicitando ejecucion...';
 
@@ -5017,9 +5017,9 @@ async function cuadrarSolicitar() {
         progBar.style.width = '15%';
         cuadrarPollEstado(data.id);
     } catch (e) {
-        prog.style.display = 'none';
+        prog.classList.add('hidden');
         btn.disabled = false;
-        status.innerHTML = `<span style="color:#dc2626;">Error: ${e.message}</span>`;
+        status.innerHTML = `<div class="cuadrar-status-error"><i class="fas fa-exclamation-triangle"></i> Error: ${e.message}</div>`;
     }
 }
 
@@ -5047,15 +5047,15 @@ function cuadrarPollEstado(ejecId) {
             } else if (d.estado === 'completado') {
                 clearInterval(cuadrarPollHandle);
                 progBar.style.width = '100%';
-                progMsg.textContent = `LISTO. Cruzados: ${d.total_cruzados} | Con diferencia: ${d.total_con_diferencia} | Valor descuadre: $${(d.valor_total_dif||0).toFixed(2)}`;
+                progMsg.textContent = 'Cruce completado correctamente';
                 btn.disabled = false;
-                status.innerHTML = `<span style="color:#059669;font-weight:600;">Completado</span>`;
-                setTimeout(() => { cargarCruceOperativo(); }, 800);
+                status.innerHTML = `<div class="cuadrar-status-ok"><i class="fas fa-check-circle"></i> Completado &nbsp;·&nbsp; Cruzados: ${d.total_cruzados} &nbsp;·&nbsp; Con diferencia: ${d.total_con_diferencia} &nbsp;·&nbsp; Valor descuadre: $${(d.valor_total_dif||0).toFixed(2)}</div>`;
+                setTimeout(() => { cargarCruceOperativo(); prog.classList.add('hidden'); }, 1500);
             } else if (d.estado === 'error') {
                 clearInterval(cuadrarPollHandle);
-                prog.style.display = 'none';
+                prog.classList.add('hidden');
                 btn.disabled = false;
-                status.innerHTML = `<span style="color:#dc2626;">Error: ${d.error_msg || 'desconocido'}</span>`;
+                status.innerHTML = `<div class="cuadrar-status-error"><i class="fas fa-exclamation-triangle"></i> Error: ${d.error_msg || 'desconocido'}</div>`;
             }
 
             // Timeout 5 min
