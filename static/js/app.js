@@ -5177,6 +5177,7 @@ function usuariosRenderTabla() {
             <td>${bodegas || '<span style="color:#475569;">Sin acceso</span>'}</td>
             <td class="usuarios-acciones">
                 <button class="btn-editar-user" onclick="usuariosEditar(${u.id})" title="Editar"><i class="fas fa-pen"></i></button>
+                ${u.email ? `<button class="btn-reenviar-user" onclick="usuariosReenviar(${u.id}, '${escapeHtml(u.email)}')" title="Reenviar invitacion"><i class="fas fa-envelope"></i></button>` : ''}
                 ${u.username !== 'admin' ? `<button class="btn-eliminar-user" onclick="usuariosEliminar(${u.id}, '${escapeHtml(u.username)}')" title="Eliminar"><i class="fas fa-trash"></i></button>` : ''}
             </td>
         </tr>`;
@@ -5192,9 +5193,11 @@ function usuariosMostrarFormNuevo() {
     document.getElementById('uform-username').disabled = false;
     document.getElementById('uform-nombre').value = '';
     document.getElementById('uform-password').value = '';
-    document.getElementById('uform-password').placeholder = 'Contrasena';
+    document.getElementById('uform-password').placeholder = 'Contrasena (o enviar por email)';
+    document.getElementById('uform-email').value = '';
     document.getElementById('uform-rol').value = 'empleado';
     document.getElementById('uform-activo').value = 'true';
+    document.getElementById('uform-enviar-invitacion').checked = false;
     usuariosSelNinguna();
 }
 
@@ -5210,8 +5213,10 @@ function usuariosEditar(id) {
     document.getElementById('uform-nombre').value = u.nombre;
     document.getElementById('uform-password').value = '';
     document.getElementById('uform-password').placeholder = 'Dejar vacio para no cambiar';
+    document.getElementById('uform-email').value = u.email || '';
     document.getElementById('uform-rol').value = u.rol;
     document.getElementById('uform-activo').value = u.activo ? 'true' : 'false';
+    document.getElementById('uform-enviar-invitacion').checked = false;
     document.querySelectorAll('#uform-bodegas input[type="checkbox"]').forEach(cb => {
         cb.checked = (u.bodegas || []).includes(cb.value);
     });
@@ -5232,8 +5237,12 @@ async function usuariosGuardar() {
     const bodegas = [];
     document.querySelectorAll('#uform-bodegas input[type="checkbox"]:checked').forEach(cb => bodegas.push(cb.value));
 
+    const email = document.getElementById('uform-email').value.trim();
+    const enviar_invitacion = document.getElementById('uform-enviar-invitacion').checked;
+
     if (!username || !nombre) { showToast('Usuario y nombre son obligatorios', 'error'); return; }
-    if (!id && !password) { showToast('La contrasena es obligatoria para nuevos usuarios', 'error'); return; }
+    if (!id && !password && !enviar_invitacion) { showToast('Asigna contrasena o marca enviar invitacion por email', 'error'); return; }
+    if (enviar_invitacion && !email) { showToast('Email es obligatorio para enviar invitacion', 'error'); return; }
 
     let adminPass = localStorage.getItem('admin_pass');
     if (!adminPass) {
@@ -5242,7 +5251,7 @@ async function usuariosGuardar() {
         localStorage.setItem('admin_pass', adminPass);
     }
 
-    const body = { username, nombre, password, rol, activo, bodegas, admin_user: state.user.username, admin_pass: adminPass };
+    const body = { username, nombre, password, rol, activo, bodegas, email, enviar_invitacion, admin_user: state.user.username, admin_pass: adminPass };
     try {
         const url = id ? `${CONFIG.API_URL}/api/admin/usuarios/${id}` : `${CONFIG.API_URL}/api/admin/usuarios`;
         const method = id ? 'PUT' : 'POST';
@@ -5275,6 +5284,25 @@ async function usuariosEliminar(id, username) {
         const data = await res.json();
         if (res.ok && data.success) { showToast(data.message || 'Eliminado', 'success'); usuariosCargar(); }
         else { if (res.status === 403) localStorage.removeItem('admin_pass'); showToast(data.error || 'Error al eliminar', 'error'); }
+    } catch (e) { showToast('Error de conexion', 'error'); }
+}
+
+async function usuariosReenviar(id, email) {
+    if (!confirm(`Reenviar invitacion a ${email}?`)) return;
+    let adminPass = localStorage.getItem('admin_pass');
+    if (!adminPass) {
+        adminPass = prompt('Ingresa tu contrasena de admin para confirmar:');
+        if (!adminPass) return;
+        localStorage.setItem('admin_pass', adminPass);
+    }
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/admin/usuarios/${id}/reenviar`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ admin_user: state.user.username, admin_pass: adminPass })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) { showToast(data.message, 'success'); }
+        else { if (res.status === 403) localStorage.removeItem('admin_pass'); showToast(data.error || 'Error', 'error'); }
     } catch (e) { showToast('Error de conexion', 'error'); }
 }
 

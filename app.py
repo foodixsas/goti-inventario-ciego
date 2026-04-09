@@ -2,14 +2,17 @@
 Backend Flask para Inventario Ciego - Render Deploy
 Conecta a Azure PostgreSQL
 """
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, render_template_string
 from flask_cors import CORS
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
-import os
+import os, secrets, smtplib
 from decimal import Decimal
+from datetime import datetime, timedelta
 from io import BytesIO
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
@@ -3103,6 +3106,60 @@ def cruce_op_fechas():
 
 # ==================== ADMIN USUARIOS ====================
 
+SMTP_CONFIG = {
+    'server': os.environ.get('SMTP_SERVER', 'smtp.gmail.com'),
+    'port': int(os.environ.get('SMTP_PORT', '587')),
+    'user': os.environ.get('SMTP_USER', 'ortiz.medranda@gmail.com'),
+    'password': os.environ.get('SMTP_PASSWORD', 'curahoyg mkxzkbwz'),
+}
+APP_URL = os.environ.get('APP_URL', 'https://inventario-ciego-5bdr.onrender.com')
+
+
+def _enviar_email_invitacion(email_destino, nombre, username, token):
+    """Envia email con link para establecer contrasena."""
+    link = f"{APP_URL}/establecer-clave?token={token}"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:30px;background:#f8fafc;border-radius:12px;">
+        <div style="text-align:center;margin-bottom:24px;">
+            <h1 style="color:#123450;font-size:22px;margin:0;">FOODIX - Inventario</h1>
+        </div>
+        <div style="background:#fff;padding:28px;border-radius:10px;border:1px solid #e2e8f0;">
+            <h2 style="color:#123450;font-size:18px;margin:0 0 12px;">Hola {nombre},</h2>
+            <p style="color:#475569;font-size:14px;line-height:1.6;">
+                Se ha creado tu cuenta en el sistema de inventario.
+                Tu usuario es: <strong style="color:#123450;">{username}</strong>
+            </p>
+            <p style="color:#475569;font-size:14px;line-height:1.6;">
+                Haz clic en el boton para establecer tu contrasena:
+            </p>
+            <div style="text-align:center;margin:24px 0;">
+                <a href="{link}" style="background:#123450;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;display:inline-block;">
+                    Crear mi contrasena
+                </a>
+            </div>
+            <p style="color:#94a3b8;font-size:12px;line-height:1.5;">
+                Este enlace es valido por 48 horas. Si no puedes hacer clic, copia y pega esta URL en tu navegador:<br>
+                <span style="color:#64748b;word-break:break-all;">{link}</span>
+            </p>
+        </div>
+        <p style="color:#94a3b8;font-size:11px;text-align:center;margin-top:16px;">
+            FOODIX S.A.S. — Sistema de Inventario Ciego
+        </p>
+    </div>
+    """
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f'FOODIX Inventario — Configura tu acceso'
+    msg['From'] = f'FOODIX Inventario <{SMTP_CONFIG["user"]}>'
+    msg['To'] = email_destino
+    msg.attach(MIMEText(html, 'html'))
+
+    server = smtplib.SMTP(SMTP_CONFIG['server'], SMTP_CONFIG['port'], timeout=15)
+    server.starttls()
+    server.login(SMTP_CONFIG['user'], SMTP_CONFIG['password'])
+    server.sendmail(SMTP_CONFIG['user'], email_destino, msg.as_string())
+    server.quit()
+
+
 def _require_admin(data):
     """Valida que quien llama sea admin (username + password en el body)."""
     if not data:
@@ -3143,11 +3200,11 @@ def admin_listar_usuarios():
         conn = get_db()
         cur = conn.cursor()
         cur.execute("""
-            SELECT u.id, u.username, u.nombre, u.rol, u.activo, u.created_at,
+            SELECT u.id, u.username, u.nombre, u.rol, u.activo, u.created_at, u.email,
                    COALESCE(array_agg(ub.bodega ORDER BY ub.bodega) FILTER (WHERE ub.bodega IS NOT NULL), '{}') AS bodegas
             FROM inventario_diario.usuarios u
             LEFT JOIN inventario_diario.usuario_bodegas ub ON ub.usuario_id = u.id
-            GROUP BY u.id, u.username, u.nombre, u.rol, u.activo, u.created_at
+            GROUP BY u.id, u.username, u.nombre, u.rol, u.activo, u.created_at, u.email
             ORDER BY u.id
         """)
         usuarios = cur.fetchall()
@@ -3170,20 +3227,31 @@ def admin_crear_usuario():
         username = data.get('username', '').strip().lower()
         nombre = data.get('nombre', '').strip()
         password = data.get('password', '').strip()
+        email = data.get('email', '').strip().lower()
         rol = data.get('rol', 'empleado')
         bodegas = data.get('bodegas', [])
+        enviar_invitacion = data.get('enviar_invitacion', False)
 
-        if not username or not nombre or not password:
-            return jsonify({'error': 'username, nombre y password son obligatorios'}), 400
+        if not username or not nombre:
+            return jsonify({'error': 'username y nombre son obligatorios'}), 400
+        if enviar_invitacion and not email:
+            return jsonify({'error': 'Email es obligatorio para enviar invitacion'}), 400
+        if not enviar_invitacion and not password:
+            return jsonify({'error': 'Debes asignar contrasena o enviar invitacion por email'}), 400
 
         cur.execute("SELECT id FROM inventario_diario.usuarios WHERE username = %s", (username,))
         if cur.fetchone():
             return jsonify({'error': f'El usuario "{username}" ya existe'}), 409
 
+        # Generar token si enviar invitacion
+        token = secrets.token_urlsafe(32) if enviar_invitacion else None
+        token_expires = (datetime.utcnow() + timedelta(hours=48)).isoformat() if token else None
+        pwd = password if password else '__pendiente__'
+
         cur.execute("""
-            INSERT INTO inventario_diario.usuarios (username, password, nombre, rol, activo)
-            VALUES (%s, %s, %s, %s, TRUE) RETURNING id
-        """, (username, password, nombre, rol))
+            INSERT INTO inventario_diario.usuarios (username, password, nombre, rol, activo, email, invite_token, invite_token_expires)
+            VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s) RETURNING id
+        """, (username, pwd, nombre, rol, email or None, token, token_expires))
         new_id = cur.fetchone()['id']
 
         for bod in bodegas:
@@ -3191,7 +3259,17 @@ def admin_crear_usuario():
                            VALUES (%s, %s) ON CONFLICT DO NOTHING""", (new_id, bod))
 
         conn.commit()
-        return jsonify({'success': True, 'id': new_id, 'message': f'Usuario {username} creado'})
+
+        # Enviar email
+        msg_extra = ''
+        if enviar_invitacion and token:
+            try:
+                _enviar_email_invitacion(email, nombre, username, token)
+                msg_extra = f' — Invitacion enviada a {email}'
+            except Exception as mail_err:
+                msg_extra = f' — ERROR enviando email: {str(mail_err)[:100]}'
+
+        return jsonify({'success': True, 'id': new_id, 'message': f'Usuario {username} creado{msg_extra}'})
     except Exception as e:
         conn.rollback()
         return jsonify({'error': str(e)}), 500
@@ -3214,28 +3292,22 @@ def admin_editar_usuario(uid):
         activo = data.get('activo', True)
         bodegas = data.get('bodegas', [])
 
+        email = data.get('email', '').strip().lower() or None
+
         # Verificar que el nuevo username no exista en otro usuario
         if username:
             cur.execute("SELECT id FROM inventario_diario.usuarios WHERE username = %s AND id != %s", (username, uid))
             if cur.fetchone():
                 return jsonify({'error': f'El usuario "{username}" ya existe'}), 409
 
-        if password and username:
+        if password:
             cur.execute("""UPDATE inventario_diario.usuarios
-                           SET username = %s, nombre = %s, password = %s, rol = %s, activo = %s
-                           WHERE id = %s""", (username, nombre, password, rol, activo, uid))
-        elif password:
-            cur.execute("""UPDATE inventario_diario.usuarios
-                           SET nombre = %s, password = %s, rol = %s, activo = %s
-                           WHERE id = %s""", (nombre, password, rol, activo, uid))
-        elif username:
-            cur.execute("""UPDATE inventario_diario.usuarios
-                           SET username = %s, nombre = %s, rol = %s, activo = %s
-                           WHERE id = %s""", (username, nombre, rol, activo, uid))
+                           SET username = %s, nombre = %s, password = %s, rol = %s, activo = %s, email = %s
+                           WHERE id = %s""", (username, nombre, password, rol, activo, email, uid))
         else:
             cur.execute("""UPDATE inventario_diario.usuarios
-                           SET nombre = %s, rol = %s, activo = %s
-                           WHERE id = %s""", (nombre, rol, activo, uid))
+                           SET username = %s, nombre = %s, rol = %s, activo = %s, email = %s
+                           WHERE id = %s""", (username, nombre, rol, activo, email, uid))
 
         if cur.rowcount == 0:
             return jsonify({'error': 'Usuario no encontrado'}), 404
@@ -3275,6 +3347,227 @@ def admin_eliminar_usuario(uid):
         return jsonify({'error': str(e)}), 500
     finally:
         release_db(conn)
+
+
+@app.route('/api/admin/usuarios/<int:uid>/reenviar', methods=['POST'])
+def admin_reenviar_invitacion(uid):
+    """Genera nuevo token y reenvia email de invitacion."""
+    data = request.json
+    conn, err, code = _require_admin(data)
+    if err:
+        return err, code
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT username, nombre, email FROM inventario_diario.usuarios WHERE id = %s", (uid,))
+        user = cur.fetchone()
+        if not user:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+        if not user['email']:
+            return jsonify({'error': 'El usuario no tiene email configurado'}), 400
+
+        token = secrets.token_urlsafe(32)
+        token_expires = (datetime.utcnow() + timedelta(hours=48)).isoformat()
+        cur.execute("""UPDATE inventario_diario.usuarios
+                       SET invite_token = %s, invite_token_expires = %s
+                       WHERE id = %s""", (token, token_expires, uid))
+        conn.commit()
+
+        _enviar_email_invitacion(user['email'], user['nombre'], user['username'], token)
+        return jsonify({'success': True, 'message': f'Invitacion reenviada a {user["email"]}'})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        release_db(conn)
+
+
+PAGINA_ESTABLECER_CLAVE = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Establecer Contrasena - FOODIX</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #F8FAFC; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .card { background: #fff; border-radius: 16px; box-shadow: 0 4px 24px rgba(15,23,42,0.08); max-width: 420px; width: 100%; padding: 40px 32px; }
+        .logo { text-align: center; margin-bottom: 28px; }
+        .logo h1 { color: #123450; font-size: 24px; }
+        .logo p { color: #64748B; font-size: 13px; margin-top: 4px; }
+        .info { background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; }
+        .info p { color: #1E40AF; font-size: 13px; line-height: 1.5; }
+        .info strong { color: #123450; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 12px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+        .form-group input { width: 100%; padding: 12px 14px; border: 1px solid #CBD5E1; border-radius: 10px; font-size: 14px; font-family: inherit; transition: border 0.2s; }
+        .form-group input:focus { outline: none; border-color: #123450; box-shadow: 0 0 0 3px rgba(18,52,80,0.1); }
+        .btn { width: 100%; padding: 14px; background: #123450; color: #fff; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .btn:hover { background: #1a4a6e; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .msg { text-align: center; padding: 12px; border-radius: 8px; margin-top: 16px; font-size: 13px; display: none; }
+        .msg.ok { display: block; background: #D1FAE5; color: #065F46; }
+        .msg.err { display: block; background: #FEE2E2; color: #991B1B; }
+        .success-card { text-align: center; }
+        .success-card .icon { font-size: 48px; margin-bottom: 16px; }
+        .success-card a { display: inline-block; margin-top: 20px; padding: 12px 28px; background: #123450; color: #fff; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 14px; }
+        .success-card a:hover { background: #1a4a6e; }
+    </style>
+</head>
+<body>
+    <div class="card" id="form-card">
+        <div class="logo">
+            <h1>FOODIX</h1>
+            <p>Sistema de Inventario</p>
+        </div>
+        <div class="info">
+            <p>Hola <strong>{{ nombre }}</strong>, establece la contrasena para tu usuario <strong>{{ username }}</strong></p>
+        </div>
+        <form id="set-pass-form" onsubmit="return guardar(event)">
+            <div class="form-group">
+                <label>Nueva contrasena</label>
+                <input type="password" id="pass1" placeholder="Minimo 4 caracteres" required minlength="4">
+            </div>
+            <div class="form-group">
+                <label>Confirmar contrasena</label>
+                <input type="password" id="pass2" placeholder="Repite la contrasena" required minlength="4">
+            </div>
+            <button type="submit" class="btn" id="btn-guardar">Establecer contrasena</button>
+        </form>
+        <div id="msg" class="msg"></div>
+    </div>
+    <div class="card success-card" id="success-card" style="display:none;">
+        <div class="icon">&#10004;</div>
+        <h2 style="color:#065F46;font-size:20px;">Contrasena establecida</h2>
+        <p style="color:#64748B;margin-top:8px;font-size:14px;">Ya puedes iniciar sesion con tu usuario y contrasena.</p>
+        <a href="/">Ir al sistema</a>
+    </div>
+    <script>
+    async function guardar(e) {
+        e.preventDefault();
+        const p1 = document.getElementById('pass1').value;
+        const p2 = document.getElementById('pass2').value;
+        const msg = document.getElementById('msg');
+        if (p1 !== p2) { msg.className = 'msg err'; msg.textContent = 'Las contrasenas no coinciden'; return false; }
+        document.getElementById('btn-guardar').disabled = true;
+        try {
+            const r = await fetch('/api/establecer-clave', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({token: '{{ token }}', password: p1})
+            });
+            const d = await r.json();
+            if (r.ok && d.success) {
+                document.getElementById('form-card').style.display = 'none';
+                document.getElementById('success-card').style.display = 'block';
+            } else {
+                msg.className = 'msg err'; msg.textContent = d.error || 'Error al guardar';
+                document.getElementById('btn-guardar').disabled = false;
+            }
+        } catch(err) {
+            msg.className = 'msg err'; msg.textContent = 'Error de conexion';
+            document.getElementById('btn-guardar').disabled = false;
+        }
+        return false;
+    }
+    </script>
+</body>
+</html>
+"""
+
+PAGINA_TOKEN_INVALIDO = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enlace invalido - FOODIX</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #F8FAFC; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .card { background: #fff; border-radius: 16px; box-shadow: 0 4px 24px rgba(15,23,42,0.08); max-width: 420px; width: 100%; padding: 40px 32px; text-align: center; }
+        .icon { font-size: 48px; margin-bottom: 16px; }
+        h2 { color: #991B1B; font-size: 20px; }
+        p { color: #64748B; margin-top: 8px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">&#10060;</div>
+        <h2>Enlace invalido o expirado</h2>
+        <p>Pide al administrador que te reenvie la invitacion.</p>
+    </div>
+</body>
+</html>
+"""
+
+
+@app.route('/establecer-clave')
+def pagina_establecer_clave():
+    """Pagina publica donde el usuario establece su contrasena."""
+    token = request.args.get('token', '')
+    if not token:
+        return PAGINA_TOKEN_INVALIDO, 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT username, nombre, invite_token_expires FROM inventario_diario.usuarios
+                       WHERE invite_token = %s AND activo = TRUE""", (token,))
+        user = cur.fetchone()
+        if not user:
+            return PAGINA_TOKEN_INVALIDO, 404
+        if user['invite_token_expires'] and user['invite_token_expires'] < datetime.utcnow():
+            return PAGINA_TOKEN_INVALIDO, 410
+
+        html = PAGINA_ESTABLECER_CLAVE.replace('{{ nombre }}', user['nombre']).replace('{{ username }}', user['username']).replace('{{ token }}', token)
+        return html
+    except Exception as e:
+        print(f"Error en /establecer-clave: {e}")
+        return PAGINA_TOKEN_INVALIDO, 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/establecer-clave', methods=['POST'])
+def api_establecer_clave():
+    """Endpoint para guardar la contrasena desde el formulario publico."""
+    data = request.json or {}
+    token = data.get('token', '')
+    password = data.get('password', '')
+
+    if not token or not password:
+        return jsonify({'error': 'Token y contrasena requeridos'}), 400
+    if len(password) < 4:
+        return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT id, invite_token_expires FROM inventario_diario.usuarios
+                       WHERE invite_token = %s AND activo = TRUE""", (token,))
+        user = cur.fetchone()
+        if not user:
+            return jsonify({'error': 'Enlace invalido'}), 404
+        if user['invite_token_expires'] and user['invite_token_expires'] < datetime.utcnow():
+            return jsonify({'error': 'Enlace expirado. Pide al administrador que lo reenvie.'}), 410
+
+        cur.execute("""UPDATE inventario_diario.usuarios
+                       SET password = %s, invite_token = NULL, invite_token_expires = NULL
+                       WHERE id = %s""", (password, user['id']))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
 
 
 if __name__ == '__main__':
