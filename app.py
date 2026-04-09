@@ -335,14 +335,25 @@ def login():
         user = cur.fetchone()
 
         if user:
-            bodega_asignada = USUARIO_BODEGA.get(user['username'])
+            # Cargar bodegas desde BD
+            cur.execute("""
+                SELECT ub.bodega FROM inventario_diario.usuario_bodegas ub
+                JOIN inventario_diario.usuarios u ON u.id = ub.usuario_id
+                WHERE u.username = %s
+                ORDER BY ub.bodega
+            """, (user['username'],))
+            bodegas_user = [r['bodega'] for r in cur.fetchall()]
+            # Compatibilidad: si tiene 1 sola bodega de ventas, enviar como string
+            bodegas_ventas = [b for b in bodegas_user if b not in ('bodega_principal', 'materia_prima', 'planta')]
+            bodega_asignada = bodegas_ventas[0] if len(bodegas_ventas) == 1 else None
             return jsonify({
                 'success': True,
                 'user': {
                     'username': user['username'],
                     'nombre': user['nombre'],
                     'rol': user['rol'],
-                    'bodega': bodega_asignada
+                    'bodega': bodega_asignada,
+                    'bodegas': bodegas_user
                 }
             })
 
@@ -3088,6 +3099,157 @@ def cruce_op_fechas():
     finally:
         if conn:
             release_db(conn)
+
+
+# ==================== ADMIN USUARIOS ====================
+
+def _require_admin(data):
+    """Valida que quien llama sea admin (username + password en el body)."""
+    if not data:
+        return None, jsonify({'error': 'Sin datos'}), 400
+    admin_user = data.get('admin_user', '')
+    admin_pass = data.get('admin_pass', '')
+    if not admin_user or not admin_pass:
+        return None, jsonify({'error': 'Credenciales de admin requeridas'}), 401
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""SELECT id FROM inventario_diario.usuarios
+                       WHERE username = %s AND password = %s AND rol = 'admin' AND activo = TRUE""",
+                    (admin_user, admin_pass))
+        row = cur.fetchone()
+        if not row:
+            return None, jsonify({'error': 'No autorizado'}), 403
+        return conn, None, None
+    except Exception:
+        release_db(conn)
+        raise
+
+
+@app.route('/api/admin/usuarios', methods=['GET'])
+def admin_listar_usuarios():
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT u.id, u.username, u.nombre, u.rol, u.activo, u.created_at,
+                   COALESCE(array_agg(ub.bodega ORDER BY ub.bodega) FILTER (WHERE ub.bodega IS NOT NULL), '{}') AS bodegas
+            FROM inventario_diario.usuarios u
+            LEFT JOIN inventario_diario.usuario_bodegas ub ON ub.usuario_id = u.id
+            GROUP BY u.id, u.username, u.nombre, u.rol, u.activo, u.created_at
+            ORDER BY u.id
+        """)
+        usuarios = cur.fetchall()
+        return jsonify(usuarios)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/admin/usuarios', methods=['POST'])
+def admin_crear_usuario():
+    data = request.json
+    conn, err, code = _require_admin(data)
+    if err:
+        return err, code
+    try:
+        cur = conn.cursor()
+        username = data.get('username', '').strip().lower()
+        nombre = data.get('nombre', '').strip()
+        password = data.get('password', '').strip()
+        rol = data.get('rol', 'empleado')
+        bodegas = data.get('bodegas', [])
+
+        if not username or not nombre or not password:
+            return jsonify({'error': 'username, nombre y password son obligatorios'}), 400
+
+        cur.execute("SELECT id FROM inventario_diario.usuarios WHERE username = %s", (username,))
+        if cur.fetchone():
+            return jsonify({'error': f'El usuario "{username}" ya existe'}), 409
+
+        cur.execute("""
+            INSERT INTO inventario_diario.usuarios (username, password, nombre, rol, activo)
+            VALUES (%s, %s, %s, %s, TRUE) RETURNING id
+        """, (username, password, nombre, rol))
+        new_id = cur.fetchone()['id']
+
+        for bod in bodegas:
+            cur.execute("""INSERT INTO inventario_diario.usuario_bodegas (usuario_id, bodega)
+                           VALUES (%s, %s) ON CONFLICT DO NOTHING""", (new_id, bod))
+
+        conn.commit()
+        return jsonify({'success': True, 'id': new_id, 'message': f'Usuario {username} creado'})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        release_db(conn)
+
+
+@app.route('/api/admin/usuarios/<int:uid>', methods=['PUT'])
+def admin_editar_usuario(uid):
+    data = request.json
+    conn, err, code = _require_admin(data)
+    if err:
+        return err, code
+    try:
+        cur = conn.cursor()
+        nombre = data.get('nombre', '').strip()
+        password = data.get('password', '').strip()
+        rol = data.get('rol', 'empleado')
+        activo = data.get('activo', True)
+        bodegas = data.get('bodegas', [])
+
+        if password:
+            cur.execute("""UPDATE inventario_diario.usuarios
+                           SET nombre = %s, password = %s, rol = %s, activo = %s
+                           WHERE id = %s""", (nombre, password, rol, activo, uid))
+        else:
+            cur.execute("""UPDATE inventario_diario.usuarios
+                           SET nombre = %s, rol = %s, activo = %s
+                           WHERE id = %s""", (nombre, rol, activo, uid))
+
+        if cur.rowcount == 0:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+
+        cur.execute("DELETE FROM inventario_diario.usuario_bodegas WHERE usuario_id = %s", (uid,))
+        for bod in bodegas:
+            cur.execute("""INSERT INTO inventario_diario.usuario_bodegas (usuario_id, bodega)
+                           VALUES (%s, %s) ON CONFLICT DO NOTHING""", (uid, bod))
+
+        conn.commit()
+        return jsonify({'success': True, 'message': 'Usuario actualizado'})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        release_db(conn)
+
+
+@app.route('/api/admin/usuarios/<int:uid>', methods=['DELETE'])
+def admin_eliminar_usuario(uid):
+    data = request.json
+    conn, err, code = _require_admin(data)
+    if err:
+        return err, code
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT username FROM inventario_diario.usuarios WHERE id = %s", (uid,))
+        row = cur.fetchone()
+        if row and row['username'] == 'admin':
+            return jsonify({'error': 'No se puede eliminar al administrador principal'}), 403
+
+        cur.execute("DELETE FROM inventario_diario.usuarios WHERE id = %s", (uid,))
+        conn.commit()
+        return jsonify({'success': True, 'message': 'Usuario eliminado'})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        release_db(conn)
 
 
 if __name__ == '__main__':

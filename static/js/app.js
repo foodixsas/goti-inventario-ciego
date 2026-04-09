@@ -469,8 +469,8 @@ function showMainScreen() {
     document.getElementById('main-screen').classList.add('active');
     document.getElementById('user-name').textContent = state.user.nombre;
 
-    // Mostrar/ocultar nav Cruce Op. segun admin
-    const isAdmin = state.user && state.user.username === 'admin';
+    // Mostrar/ocultar nav segun admin (rol admin o supervisor)
+    const isAdmin = state.user && (state.user.rol === 'admin' || state.user.username === 'admin');
     document.querySelectorAll('.nav-admin-only').forEach(el => {
         el.style.display = isAdmin ? '' : 'none';
     });
@@ -536,6 +536,11 @@ function cambiarVista(viewName) {
     // Auto-inicializar semanal al entrar
     if (viewName === 'semanal') {
         semanalInit();
+    }
+
+    // Auto-cargar usuarios al entrar
+    if (viewName === 'usuarios') {
+        usuariosCargar();
     }
 
     // Auto-cargar dashboard al entrar
@@ -5117,4 +5122,152 @@ async function cruceEliminar(ejecId, bodega, fecha) {
     } catch (e) {
         alert('Error eliminando: ' + e.message);
     }
+}
+
+// ==================== ADMIN USUARIOS ====================
+
+const BODEGAS_NOMBRES = {
+    'real_audiencia': 'Real Audiencia', 'floreana': 'Floreana', 'portugal': 'Portugal',
+    'santo_cachon_real': 'Santo Cachon Real', 'santo_cachon_portugal': 'Santo Cachon Portugal',
+    'simon_bolon': 'Simon Bolon', 'bodega_principal': 'Bodega Principal',
+    'materia_prima': 'Materia Prima', 'planta': 'Planta Produccion'
+};
+let _usuariosCache = [];
+
+async function usuariosCargar() {
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/admin/usuarios`);
+        if (!res.ok) throw new Error('Error cargando usuarios');
+        _usuariosCache = await res.json();
+        usuariosRenderTabla();
+    } catch (e) { showToast('Error cargando usuarios: ' + e.message, 'error'); }
+}
+
+function usuariosRenderTabla() {
+    const tbody = document.getElementById('usuarios-tbody');
+    if (!tbody) return;
+    if (!_usuariosCache.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748B;">Sin usuarios</td></tr>';
+        return;
+    }
+    tbody.innerHTML = _usuariosCache.map(u => {
+        const rolClass = u.rol === 'admin' ? 'badge-admin' : u.rol === 'supervisor' ? 'badge-supervisor' : 'badge-empleado';
+        const estadoClass = u.activo ? 'badge-activo' : 'badge-inactivo';
+        const bodegas = (u.bodegas || []).map(b => `<span class="badge-bodega">${BODEGAS_NOMBRES[b] || b}</span>`).join(' ');
+        return `<tr>
+            <td><strong>${escapeHtml(u.username)}</strong></td>
+            <td>${escapeHtml(u.nombre)}</td>
+            <td><span class="badge ${rolClass}">${u.rol}</span></td>
+            <td><span class="badge ${estadoClass}">${u.activo ? 'Activo' : 'Inactivo'}</span></td>
+            <td>${bodegas || '<span style="color:#475569;">Sin acceso</span>'}</td>
+            <td class="usuarios-acciones">
+                <button class="btn-editar-user" onclick="usuariosEditar(${u.id})" title="Editar"><i class="fas fa-pen"></i></button>
+                ${u.username !== 'admin' ? `<button class="btn-eliminar-user" onclick="usuariosEliminar(${u.id}, '${escapeHtml(u.username)}')" title="Eliminar"><i class="fas fa-trash"></i></button>` : ''}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function usuariosMostrarFormNuevo() {
+    document.getElementById('usuarios-form').classList.remove('hidden');
+    document.getElementById('usuarios-form-titulo').textContent = 'Nuevo Usuario';
+    document.getElementById('uform-id').value = '';
+    document.getElementById('uform-username').value = '';
+    document.getElementById('uform-username').disabled = false;
+    document.getElementById('uform-nombre').value = '';
+    document.getElementById('uform-password').value = '';
+    document.getElementById('uform-password').placeholder = 'Contrasena';
+    document.getElementById('uform-rol').value = 'empleado';
+    document.getElementById('uform-activo').value = 'true';
+    usuariosSelNinguna();
+}
+
+function usuariosEditar(id) {
+    const u = _usuariosCache.find(x => x.id === id);
+    if (!u) return;
+    document.getElementById('usuarios-form').classList.remove('hidden');
+    document.getElementById('usuarios-form-titulo').textContent = `Editar: ${u.username}`;
+    document.getElementById('uform-id').value = u.id;
+    document.getElementById('uform-username').value = u.username;
+    document.getElementById('uform-username').disabled = true;
+    document.getElementById('uform-nombre').value = u.nombre;
+    document.getElementById('uform-password').value = '';
+    document.getElementById('uform-password').placeholder = 'Dejar vacio para no cambiar';
+    document.getElementById('uform-rol').value = u.rol;
+    document.getElementById('uform-activo').value = u.activo ? 'true' : 'false';
+    document.querySelectorAll('#uform-bodegas input[type="checkbox"]').forEach(cb => {
+        cb.checked = (u.bodegas || []).includes(cb.value);
+    });
+    document.getElementById('usuarios-form').scrollIntoView({ behavior: 'smooth' });
+}
+
+function usuariosCancelarForm() {
+    document.getElementById('usuarios-form').classList.add('hidden');
+}
+
+async function usuariosGuardar() {
+    const id = document.getElementById('uform-id').value;
+    const username = document.getElementById('uform-username').value.trim().toLowerCase();
+    const nombre = document.getElementById('uform-nombre').value.trim();
+    const password = document.getElementById('uform-password').value.trim();
+    const rol = document.getElementById('uform-rol').value;
+    const activo = document.getElementById('uform-activo').value === 'true';
+    const bodegas = [];
+    document.querySelectorAll('#uform-bodegas input[type="checkbox"]:checked').forEach(cb => bodegas.push(cb.value));
+
+    if (!username || !nombre) { showToast('Usuario y nombre son obligatorios', 'error'); return; }
+    if (!id && !password) { showToast('La contrasena es obligatoria para nuevos usuarios', 'error'); return; }
+
+    let adminPass = localStorage.getItem('admin_pass');
+    if (!adminPass) {
+        adminPass = prompt('Ingresa tu contrasena de admin para confirmar:');
+        if (!adminPass) return;
+        localStorage.setItem('admin_pass', adminPass);
+    }
+
+    const body = { username, nombre, password, rol, activo, bodegas, admin_user: state.user.username, admin_pass: adminPass };
+    try {
+        const url = id ? `${CONFIG.API_URL}/api/admin/usuarios/${id}` : `${CONFIG.API_URL}/api/admin/usuarios`;
+        const method = id ? 'PUT' : 'POST';
+        const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast(data.message || 'Guardado', 'success');
+            usuariosCancelarForm();
+            usuariosCargar();
+        } else {
+            if (res.status === 403) localStorage.removeItem('admin_pass');
+            showToast(data.error || 'Error al guardar', 'error');
+        }
+    } catch (e) { showToast('Error de conexion', 'error'); }
+}
+
+async function usuariosEliminar(id, username) {
+    if (!confirm(`Eliminar usuario "${username}"? Esta accion no se puede deshacer.`)) return;
+    let adminPass = localStorage.getItem('admin_pass');
+    if (!adminPass) {
+        adminPass = prompt('Ingresa tu contrasena de admin para confirmar:');
+        if (!adminPass) return;
+        localStorage.setItem('admin_pass', adminPass);
+    }
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/admin/usuarios/${id}`, {
+            method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ admin_user: state.user.username, admin_pass: adminPass })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) { showToast(data.message || 'Eliminado', 'success'); usuariosCargar(); }
+        else { if (res.status === 403) localStorage.removeItem('admin_pass'); showToast(data.error || 'Error al eliminar', 'error'); }
+    } catch (e) { showToast('Error de conexion', 'error'); }
+}
+
+function usuariosSelTodas() { document.querySelectorAll('#uform-bodegas input[type="checkbox"]').forEach(cb => cb.checked = true); }
+function usuariosSelNinguna() { document.querySelectorAll('#uform-bodegas input[type="checkbox"]').forEach(cb => cb.checked = false); }
+function usuariosSelVentas() {
+    const v = ['real_audiencia','floreana','portugal','santo_cachon_real','santo_cachon_portugal','simon_bolon'];
+    document.querySelectorAll('#uform-bodegas input[type="checkbox"]').forEach(cb => cb.checked = v.includes(cb.value));
+}
+function usuariosSelOperativas() {
+    const o = ['bodega_principal','materia_prima','planta'];
+    document.querySelectorAll('#uform-bodegas input[type="checkbox"]').forEach(cb => cb.checked = o.includes(cb.value));
 }
