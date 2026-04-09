@@ -5308,35 +5308,176 @@ tr.cruce-solo-cont { background: #F1F5F9; }
 }
 
 /* ==================== ADMIN USUARIOS ==================== */
-#view-usuarios .view-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
-.usuarios-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 12px 0; }
-.usuarios-bodegas-section { padding: 12px 0; }
-.usuarios-bodegas-section > label { font-weight: 600; font-size: 0.85rem; color: #CBD5E1; display: block; margin-bottom: 8px; }
-.usuarios-bodegas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px 16px; }
-.cbx-bodega { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: #E2E8F0; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: background 0.15s; }
-.cbx-bodega:hover { background: rgba(99,102,241,0.1); }
-.cbx-bodega input[type="checkbox"] { accent-color: #6366F1; width: 16px; height: 16px; }
-.usuarios-bodegas-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-.usuarios-form-actions { padding: 12px 0 4px; display: flex; gap: 10px; }
-.usuarios-tabla { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.usuarios-tabla th { text-align: left; padding: 10px 12px; color: #94A3B8; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #334155; white-space: nowrap; }
-.usuarios-tabla td { padding: 10px 12px; border-bottom: 1px solid #1E293B; color: #E2E8F0; vertical-align: middle; }
-.usuarios-tabla tr:hover td { background: rgba(99,102,241,0.05); }
-.usuarios-tabla .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; }
-.badge-admin { background: #6366F1; color: #fff; }
-.badge-supervisor { background: #F59E0B; color: #1E293B; }
-.badge-empleado { background: #334155; color: #94A3B8; }
-.badge-activo { background: #059669; color: #fff; }
-.badge-inactivo { background: #E11D48; color: #fff; }
-.badge-bodega { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 0.7rem; background: #1E293B; color: #94A3B8; margin: 1px 2px; white-space: nowrap; }
-.usuarios-acciones { display: flex; gap: 6px; }
-.usuarios-acciones button { padding: 4px 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.78rem; transition: all 0.15s; }
-.btn-editar-user { background: #1E3A5F; color: #60A5FA; }
-.btn-editar-user:hover { background: #2563EB; color: #fff; }
-.btn-eliminar-user { background: #3B1A2A; color: #F87171; }
-.btn-eliminar-user:hover { background: #E11D48; color: #fff; }
+#view-usuarios .view-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.usuarios-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+    padding: 16px 0;
+}
+.usuarios-bodegas-section {
+    padding: 14px 0;
+    border-top: 1px solid var(--border-light);
+    margin-top: 4px;
+}
+.usuarios-bodegas-section > label {
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: var(--text-gray);
+    display: block;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.usuarios-bodegas-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+    gap: 4px 12px;
+}
+.cbx-bodega {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-dark);
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+}
+.cbx-bodega:hover {
+    background: rgba(18,52,80,0.06);
+}
+.cbx-bodega input[type="checkbox"] {
+    accent-color: var(--primary);
+    width: 16px;
+    height: 16px;
+}
+.usuarios-bodegas-btns {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+.usuarios-form-actions {
+    padding: 14px 0 4px;
+    display: flex;
+    gap: 10px;
+    border-top: 1px solid var(--border-light);
+    margin-top: 4px;
+}
+.usuarios-tabla {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.usuarios-tabla th {
+    text-align: left;
+    padding: 12px 14px;
+    color: var(--text-gray);
+    font-weight: 700;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+    background: var(--bg-alt);
+}
+.usuarios-tabla td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-dark);
+    vertical-align: middle;
+}
+.usuarios-tabla tr:hover td {
+    background: rgba(18,52,80,0.03);
+}
+.usuarios-tabla .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.badge-admin {
+    background: var(--primary);
+    color: #fff;
+}
+.badge-supervisor {
+    background: #FEF3C7;
+    color: #92400E;
+    border: 1px solid #FCD34D;
+}
+.badge-empleado {
+    background: var(--bg-alt);
+    color: var(--text-gray);
+    border: 1px solid var(--border);
+}
+.badge-activo {
+    background: #D1FAE5;
+    color: #065F46;
+    border: 1px solid #6EE7B7;
+}
+.badge-inactivo {
+    background: #FEE2E2;
+    color: #991B1B;
+    border: 1px solid #FCA5A5;
+}
+.badge-bodega {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    background: #EFF6FF;
+    color: var(--primary);
+    border: 1px solid #BFDBFE;
+    margin: 2px 3px;
+    white-space: nowrap;
+}
+.usuarios-acciones {
+    display: flex;
+    gap: 6px;
+}
+.usuarios-acciones button {
+    padding: 6px 12px;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 600;
+    transition: all 0.15s;
+}
+.btn-editar-user {
+    background: #EFF6FF;
+    color: var(--primary);
+    border: 1px solid #BFDBFE;
+}
+.btn-editar-user:hover {
+    background: var(--primary);
+    color: #fff;
+}
+.btn-eliminar-user {
+    background: #FEF2F2;
+    color: #DC2626;
+    border: 1px solid #FECACA;
+}
+.btn-eliminar-user:hover {
+    background: #DC2626;
+    color: #fff;
+}
+
 @media (max-width: 600px) {
     .usuarios-form-grid { grid-template-columns: 1fr; }
     .usuarios-bodegas-grid { grid-template-columns: 1fr 1fr; }
-    .usuarios-tabla th:nth-child(5), .usuarios-tabla td:nth-child(5) { display: none; }
+    .usuarios-tabla th:nth-child(5),
+    .usuarios-tabla td:nth-child(5) { display: none; }
 }
