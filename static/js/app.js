@@ -527,11 +527,13 @@ function initApp() {
         try { localStorage.setItem('personas_cache', JSON.stringify(state.personas)); } catch(e) {}
     }
 
-    // Verificar sesion guardada
+    // Verificar sesion guardada — refrescar permisos del servidor
     const savedUser = localStorage.getItem('user');
     if (savedUser) {
         state.user = JSON.parse(savedUser);
         showMainScreen();
+        // Refrescar permisos desde el servidor en background
+        _refrescarPermisos();
     }
 
     // Event listeners
@@ -5602,9 +5604,24 @@ async function rolGuardar(rol) {
 }
 
 // Helper global: verificar si el usuario puede hacer una accion en un modulo
+async function _refrescarPermisos() {
+    if (!state.user) return;
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/admin/roles`);
+        if (!res.ok) return;
+        const rolesData = await res.json();
+        const rol = state.user.rol || 'empleado';
+        const permsRol = rolesData[rol] || {};
+        state.user.permisos = permsRol;
+        state.user.modulos = Object.keys(permsRol).filter(m => permsRol[m] && permsRol[m].ver);
+        localStorage.setItem('user', JSON.stringify(state.user));
+        showMainScreen(); // Refrescar nav con permisos actualizados
+    } catch (e) { console.log('Error refrescando permisos:', e); }
+}
+
 function _puede(modulo, accion) {
     if (!state.user) return false;
-    if (state.user.rol === 'admin') return true;
+    if (state.user.rol === 'admin' || state.user.username === 'admin') return true;
     const perms = state.user.permisos;
     if (!perms || !perms[modulo]) return false;
     return perms[modulo][accion] === true;
