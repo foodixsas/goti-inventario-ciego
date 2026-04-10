@@ -299,13 +299,15 @@
                     </div>
 
                     <div id="dashboard-stats" class="dashboard-stats-grid">
-                        <!-- 4 tarjetas KPI -->
+                        <!-- KPIs gerenciales -->
                     </div>
+
+                    <div id="dashboard-valor-resumen" style="margin:12px 0;"></div>
 
                     <div class="dashboard-charts-grid">
                         <div class="chart-card">
                             <div class="chart-card-header">
-                                <i class="fas fa-exclamation-triangle"></i> Productos con Diferencia por Bodega
+                                <i class="fas fa-dollar-sign"></i> Valor Descuadre por Bodega ($)
                             </div>
                             <div class="chart-card-body">
                                 <canvas id="chart-diferencias-bodega"></canvas>
@@ -313,7 +315,7 @@
                         </div>
                         <div class="chart-card">
                             <div class="chart-card-header">
-                                <i class="fas fa-chart-pie"></i> Distribucion de Diferencias
+                                <i class="fas fa-chart-pie"></i> Cumplimiento por Bodega
                             </div>
                             <div class="chart-card-body">
                                 <canvas id="chart-distribucion"></canvas>
@@ -333,6 +335,29 @@
                             </div>
                             <div class="chart-card-body chart-card-body-line">
                                 <canvas id="chart-tendencia-temporal"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="chart-card chart-card-full" style="margin-top:12px;">
+                        <div class="chart-card-header">
+                            <i class="fas fa-exclamation-circle"></i> Top 10 Productos con Mayor Descuadre en Valor
+                        </div>
+                        <div class="chart-card-body" style="padding:0;">
+                            <div style="overflow-x:auto;">
+                                <table class="usuarios-tabla" id="dash-top-table" style="margin:0;width:100%;">
+                                    <thead>
+                                        <tr>
+                                            <th>Codigo</th>
+                                            <th>Producto</th>
+                                            <th>Bodega</th>
+                                            <th>Diferencia</th>
+                                            <th>Costo Unit.</th>
+                                            <th>Valor Descuadre</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="dash-top-tbody"></tbody>
+                                </table>
                             </div>
                         </div>
                     </div>

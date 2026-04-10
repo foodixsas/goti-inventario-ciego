@@ -1096,6 +1096,7 @@ def reporte_dashboard():
         conn = get_db()
         cur = conn.cursor()
 
+        # Resumen por bodega
         query = """
             SELECT
                 local,
@@ -1114,7 +1115,13 @@ def reporte_dashboard():
                     THEN 1 END) as total_faltantes,
                 COUNT(CASE WHEN COALESCE(cantidad_contada_2, cantidad_contada) IS NOT NULL
                     AND COALESCE(cantidad_contada_2, cantidad_contada) - cantidad > 0
-                    THEN 1 END) as total_sobrantes
+                    THEN 1 END) as total_sobrantes,
+                COALESCE(SUM(CASE WHEN COALESCE(cantidad_contada_2, cantidad_contada) IS NOT NULL
+                    AND COALESCE(cantidad_contada_2, cantidad_contada) - cantidad < 0
+                    THEN ABS(COALESCE(cantidad_contada_2, cantidad_contada) - cantidad) * COALESCE(costo_unitario, 0) END), 0) as valor_faltantes,
+                COALESCE(SUM(CASE WHEN COALESCE(cantidad_contada_2, cantidad_contada) IS NOT NULL
+                    AND COALESCE(cantidad_contada_2, cantidad_contada) - cantidad > 0
+                    THEN ABS(COALESCE(cantidad_contada_2, cantidad_contada) - cantidad) * COALESCE(costo_unitario, 0) END), 0) as valor_sobrantes
             FROM inventario_diario.inventario_ciego_conteos
             WHERE fecha >= %s AND fecha <= %s
         """
@@ -1127,9 +1134,9 @@ def reporte_dashboard():
 
         resultados = cur.fetchall()
 
-        datos = []
+        bodegas_data = []
         for r in resultados:
-            datos.append({
+            bodegas_data.append({
                 'local': r['local'],
                 'local_nombre': BODEGAS_NOMBRES.get(r['local'], r['local']),
                 'total_productos': r['total_productos'],
@@ -1137,10 +1144,58 @@ def reporte_dashboard():
                 'total_con_diferencia': r['total_con_diferencia'],
                 'promedio_diferencia_abs': float(r['promedio_diferencia_abs']),
                 'total_faltantes': r['total_faltantes'],
-                'total_sobrantes': r['total_sobrantes']
+                'total_sobrantes': r['total_sobrantes'],
+                'valor_faltantes': float(r['valor_faltantes']),
+                'valor_sobrantes': float(r['valor_sobrantes'])
             })
 
-        return jsonify(datos)
+        # Top 10 productos con mayor descuadre en valor
+        query_top = """
+            SELECT codigo, nombre, local, unidad,
+                   COALESCE(cantidad_contada_2, cantidad_contada) - cantidad as diferencia,
+                   COALESCE(costo_unitario, 0) as costo_unitario,
+                   ABS(COALESCE(cantidad_contada_2, cantidad_contada) - cantidad) * COALESCE(costo_unitario, 0) as valor_descuadre
+            FROM inventario_diario.inventario_ciego_conteos
+            WHERE fecha >= %s AND fecha <= %s
+              AND COALESCE(cantidad_contada_2, cantidad_contada) IS NOT NULL
+              AND COALESCE(cantidad_contada_2, cantidad_contada) - cantidad != 0
+        """
+        params_top = [fecha_desde, fecha_hasta]
+        if bodega:
+            query_top += " AND local = %s"
+            params_top.append(bodega)
+        query_top += " ORDER BY ABS(COALESCE(cantidad_contada_2, cantidad_contada) - cantidad) * COALESCE(costo_unitario, 0) DESC LIMIT 10"
+        cur.execute(query_top, params_top)
+        top_descuadre = []
+        for r in cur.fetchall():
+            top_descuadre.append({
+                'codigo': r['codigo'],
+                'nombre': r['nombre'],
+                'local': r['local'],
+                'local_nombre': BODEGAS_NOMBRES.get(r['local'], r['local']),
+                'unidad': r['unidad'],
+                'diferencia': float(r['diferencia']),
+                'costo_unitario': float(r['costo_unitario']),
+                'valor_descuadre': float(r['valor_descuadre'])
+            })
+
+        # % cumplimiento por bodega (contados / total)
+        cumplimiento = []
+        for b in bodegas_data:
+            pct = round(b['total_contados'] / b['total_productos'] * 100, 1) if b['total_productos'] > 0 else 0
+            cumplimiento.append({
+                'local': b['local'],
+                'local_nombre': b['local_nombre'],
+                'porcentaje': pct,
+                'exactos': b['total_contados'] - b['total_con_diferencia'],
+                'con_diferencia': b['total_con_diferencia']
+            })
+
+        return jsonify({
+            'bodegas': bodegas_data,
+            'top_descuadre': top_descuadre,
+            'cumplimiento': cumplimiento
+        })
     except Exception as e:
         print(f"Error en /api/reportes/dashboard: {e}")
         return jsonify({'error': 'Error interno del servidor'}), 500

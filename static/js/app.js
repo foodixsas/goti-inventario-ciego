@@ -72,11 +72,13 @@ async function cargarDashboard() {
             const datosDash = await resDash.json();
             const datosTend = await resTend.json();
 
-            renderDashboardStats(datosDash);
-            renderChartDiferenciasBodega(datosDash);
-            renderChartDistribucion(datosDash);
-            renderChartFaltantesSobrantes(datosDash);
+            renderDashboardStats(datosDash.bodegas);
+            renderDashboardValorResumen(datosDash.bodegas);
+            renderChartDiferenciasBodega(datosDash.bodegas);
+            renderChartCumplimiento(datosDash.cumplimiento);
+            renderChartFaltantesSobrantes(datosDash.bodegas);
             renderChartTendenciaTemporal(datosTend);
+            renderTopDescuadre(datosDash.top_descuadre);
         } else {
             showToast('Error al cargar datos del dashboard', 'error');
         }
@@ -85,6 +87,8 @@ async function cargarDashboard() {
         showToast('Error de conexion al cargar dashboard', 'error');
     }
 }
+
+function _fmtMoney(v) { return '$' + v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
 
 function renderDashboardStats(datos) {
     const container = document.getElementById('dashboard-stats');
@@ -97,40 +101,60 @@ function renderDashboardStats(datos) {
         acc.productos += d.total_productos;
         acc.contados += d.total_contados;
         acc.diferencias += d.total_con_diferencia;
-        acc.sumDesv += d.promedio_diferencia_abs;
+        acc.faltantes += d.valor_faltantes || 0;
+        acc.sobrantes += d.valor_sobrantes || 0;
         return acc;
-    }, { productos: 0, contados: 0, diferencias: 0, sumDesv: 0 });
+    }, { productos: 0, contados: 0, diferencias: 0, faltantes: 0, sobrantes: 0 });
 
-    const promDesv = datos.length > 0 ? (totales.sumDesv / datos.length).toFixed(2) : '0';
+    const pctConteo = totales.productos > 0 ? Math.round(totales.contados / totales.productos * 100) : 0;
+    const pctExacto = totales.contados > 0 ? Math.round((totales.contados - totales.diferencias) / totales.contados * 100) : 0;
 
     container.innerHTML = `
         <div class="dashboard-stat-card">
-            <div class="stat-icon icon-productos"><i class="fas fa-boxes-stacked"></i></div>
+            <div class="stat-icon icon-productos"><i class="fas fa-clipboard-check"></i></div>
             <div class="stat-info">
-                <div class="stat-valor">${totales.productos.toLocaleString()}</div>
-                <div class="stat-label">Total Productos</div>
+                <div class="stat-valor">${pctConteo}%</div>
+                <div class="stat-label">Cumplimiento Conteo</div>
+                <div style="font-size:11px;color:#64748B;">${totales.contados.toLocaleString()} / ${totales.productos.toLocaleString()}</div>
             </div>
         </div>
         <div class="dashboard-stat-card">
-            <div class="stat-icon icon-contados"><i class="fas fa-clipboard-check"></i></div>
+            <div class="stat-icon icon-contados"><i class="fas fa-check-circle"></i></div>
             <div class="stat-info">
-                <div class="stat-valor">${totales.contados.toLocaleString()}</div>
-                <div class="stat-label">Contados</div>
+                <div class="stat-valor">${pctExacto}%</div>
+                <div class="stat-label">Exactitud Inventario</div>
+                <div style="font-size:11px;color:#64748B;">${(totales.contados - totales.diferencias).toLocaleString()} exactos de ${totales.contados.toLocaleString()}</div>
             </div>
         </div>
         <div class="dashboard-stat-card">
-            <div class="stat-icon icon-diferencias"><i class="fas fa-exclamation-triangle"></i></div>
+            <div class="stat-icon icon-diferencias"><i class="fas fa-arrow-down"></i></div>
             <div class="stat-info">
-                <div class="stat-valor">${totales.diferencias.toLocaleString()}</div>
-                <div class="stat-label">Con Diferencia</div>
+                <div class="stat-valor" style="color:#B91C1C;">${_fmtMoney(totales.faltantes)}</div>
+                <div class="stat-label">Valor Faltantes</div>
             </div>
         </div>
         <div class="dashboard-stat-card">
-            <div class="stat-icon icon-desviacion"><i class="fas fa-chart-line"></i></div>
+            <div class="stat-icon icon-desviacion"><i class="fas fa-arrow-up"></i></div>
             <div class="stat-info">
-                <div class="stat-valor">${promDesv}</div>
-                <div class="stat-label">Prom. Desviacion</div>
+                <div class="stat-valor" style="color:#059669;">${_fmtMoney(totales.sobrantes)}</div>
+                <div class="stat-label">Valor Sobrantes</div>
             </div>
+        </div>
+    `;
+}
+
+function renderDashboardValorResumen(datos) {
+    const container = document.getElementById('dashboard-valor-resumen');
+    if (!container || !datos || datos.length === 0) { if (container) container.innerHTML = ''; return; }
+    const totalFalt = datos.reduce((s, d) => s + (d.valor_faltantes || 0), 0);
+    const totalSob = datos.reduce((s, d) => s + (d.valor_sobrantes || 0), 0);
+    const neto = totalSob - totalFalt;
+    const netoColor = neto < 0 ? '#B91C1C' : '#059669';
+    container.innerHTML = `
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+            <div style="font-weight:600;color:#123450;font-size:15px;"><i class="fas fa-balance-scale"></i> Descuadre Neto</div>
+            <div style="font-size:22px;font-weight:700;color:${netoColor};">${_fmtMoney(Math.abs(neto))} ${neto < 0 ? 'PERDIDA' : 'SOBRANTE'}</div>
+            <div style="font-size:12px;color:#64748B;">${datos.length} bodega(s) | Faltantes: ${_fmtMoney(totalFalt)} | Sobrantes: ${_fmtMoney(totalSob)}</div>
         </div>
     `;
 }
@@ -145,56 +169,80 @@ function renderChartDiferenciasBodega(datos) {
         type: 'bar',
         data: {
             labels: datos.map(d => d.local_nombre),
-            datasets: [{
-                label: 'Productos con diferencia',
-                data: datos.map(d => d.total_con_diferencia),
-                backgroundColor: CHART_COLORS_ALPHA.slice(0, datos.length),
-                borderColor: CHART_COLORS.slice(0, datos.length),
-                borderWidth: 2
-            }]
+            datasets: [
+                {
+                    label: 'Faltantes ($)',
+                    data: datos.map(d => d.valor_faltantes || 0),
+                    backgroundColor: 'rgba(185, 28, 28, 0.7)',
+                    borderColor: '#B91C1C',
+                    borderWidth: 2
+                },
+                {
+                    label: 'Sobrantes ($)',
+                    data: datos.map(d => d.valor_sobrantes || 0),
+                    backgroundColor: 'rgba(5, 150, 105, 0.7)',
+                    borderColor: '#059669',
+                    borderWidth: 2
+                }
+            ]
         },
         options: {
             indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: { display: false }
+                legend: { position: 'top' },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: $${ctx.parsed.x.toFixed(2)}` } }
             },
             scales: {
-                x: { beginAtZero: true, grid: { color: '#F1F5F9' } },
+                x: { beginAtZero: true, grid: { color: '#F1F5F9' }, ticks: { callback: v => '$' + v } },
                 y: { grid: { display: false } }
             }
         }
     });
 }
 
-function renderChartDistribucion(datos) {
+function renderChartCumplimiento(datos) {
     if (typeof Chart === 'undefined') return;
     destroyChart('distribucion');
     const ctx = document.getElementById('chart-distribucion');
     if (!ctx || !datos || datos.length === 0) return;
 
     chartInstances['distribucion'] = new Chart(ctx, {
-        type: 'doughnut',
+        type: 'bar',
         data: {
             labels: datos.map(d => d.local_nombre),
-            datasets: [{
-                data: datos.map(d => d.total_con_diferencia),
-                backgroundColor: CHART_COLORS.slice(0, datos.length),
-                borderWidth: 2,
-                borderColor: '#fff'
-            }]
+            datasets: [
+                {
+                    label: 'Exactos',
+                    data: datos.map(d => d.exactos),
+                    backgroundColor: 'rgba(5, 150, 105, 0.7)',
+                    borderColor: '#059669',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Con diferencia',
+                    data: datos.map(d => d.con_diferencia),
+                    backgroundColor: 'rgba(185, 28, 28, 0.7)',
+                    borderColor: '#B91C1C',
+                    borderWidth: 1
+                }
+            ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'right',
-                    labels: { font: { size: 11 } }
-                }
+                legend: { position: 'top' },
+                tooltip: { callbacks: { afterBody: (items) => {
+                    const idx = items[0].dataIndex;
+                    return `Cumplimiento: ${datos[idx].porcentaje}%`;
+                }}}
             },
-            cutout: '55%'
+            scales: {
+                x: { stacked: true, grid: { display: false } },
+                y: { stacked: true, beginAtZero: true, grid: { color: '#F1F5F9' } }
+            }
         }
     });
 }
@@ -238,6 +286,26 @@ function renderChartFaltantesSobrantes(datos) {
             }
         }
     });
+}
+
+function renderTopDescuadre(items) {
+    const tbody = document.getElementById('dash-top-tbody');
+    if (!tbody) return;
+    if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748B;padding:20px;">Sin datos</td></tr>';
+        return;
+    }
+    tbody.innerHTML = items.map(p => {
+        const difColor = p.diferencia < 0 ? 'color:#B91C1C;font-weight:600;' : 'color:#059669;font-weight:600;';
+        return `<tr>
+            <td>${escapeHtml(p.codigo)}</td>
+            <td>${escapeHtml(p.nombre)}</td>
+            <td>${escapeHtml(p.local_nombre)}</td>
+            <td style="${difColor}">${p.diferencia > 0 ? '+' : ''}${p.diferencia.toFixed(2)}</td>
+            <td>$${p.costo_unitario.toFixed(2)}</td>
+            <td style="font-weight:700;color:#B91C1C;">$${p.valor_descuadre.toFixed(2)}</td>
+        </tr>`;
+    }).join('');
 }
 
 function renderChartTendenciaTemporal(datos) {
