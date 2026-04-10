@@ -52,47 +52,49 @@
             </header>
 
             <nav class="main-nav">
-                <button class="nav-btn active" data-view="conteo">
+                <button class="nav-btn active" data-view="conteo" style="display:none;">
                     <i class="fas fa-clipboard-list"></i>
                     <span>Conteo</span>
                 </button>
-                <button class="nav-btn" data-view="observaciones">
+                <button class="nav-btn" data-view="observaciones" style="display:none;">
                     <i class="fas fa-comment-alt"></i>
                     <span>Observ.</span>
                 </button>
-                <button class="nav-btn" data-view="historico">
+                <button class="nav-btn" data-view="historico" style="display:none;">
                     <i class="fas fa-history"></i>
-                    <span>Histórico</span>
+                    <span>Historico</span>
                 </button>
-                <button class="nav-btn" data-view="reportes">
+                <!-- Reportes deshabilitado de la UI (endpoints siguen en backend) -->
+                <!--<button class="nav-btn" data-view="reportes" style="display:none;">
                     <i class="fas fa-chart-bar"></i>
                     <span>Reportes</span>
-                </button>
-                <button class="nav-btn" data-view="dashboard">
+                </button>-->
+                <button class="nav-btn" data-view="dashboard" style="display:none;">
                     <i class="fas fa-chart-pie"></i>
                     <span>Dashboard</span>
                 </button>
-                <button class="nav-btn nav-admin-only" data-view="cruce" style="display:none;">
+                <button class="nav-btn" data-view="cruce" style="display:none;">
                     <i class="fas fa-exchange-alt"></i>
                     <span>Cruce Op.</span>
                 </button>
-                <button class="nav-btn nav-admin-only" data-view="bajas" style="display:none;">
+                <button class="nav-btn" data-view="bajas" style="display:none;">
                     <i class="fas fa-arrow-down"></i>
                     <span>Bajas</span>
                 </button>
-                <button class="nav-btn nav-admin-only" data-view="semanal" style="display:none;">
+                <button class="nav-btn" data-view="semanal" style="display:none;">
                     <i class="fas fa-calendar-week"></i>
                     <span>Semanal</span>
                 </button>
-                <button class="nav-btn nav-admin-only" data-view="correccion" style="display:none;">
+                <button class="nav-btn" data-view="correccion" style="display:none;">
                     <i class="fas fa-edit"></i>
                     <span>Corregir</span>
                 </button>
-                <button class="nav-btn nav-admin-only" data-view="panel" style="display:none;">
+                <!-- Panel de control deshabilitado de la UI (endpoints siguen en backend) -->
+                <!--<button class="nav-btn" data-view="panel" style="display:none;">
                     <i class="fas fa-sliders-h"></i>
                     <span>Panel</span>
-                </button>
-                <button class="nav-btn nav-admin-only" data-view="usuarios" style="display:none;">
+                </button>-->
+                <button class="nav-btn" data-view="usuarios" style="display:none;">
                     <i class="fas fa-users-cog"></i>
                     <span>Usuarios</span>
                 </button>
@@ -188,11 +190,14 @@
                         <div class="form-group">
                             <label><i class="fas fa-warehouse"></i> Bodega</label>
                             <select id="filtro-bodega">
-                                <option value="">Todas</option>
+                                <option value="">-- Selecciona --</option>
                             </select>
                         </div>
                         <button id="btn-buscar-historico" class="btn-secondary">
                             <i class="fas fa-search"></i> Buscar
+                        </button>
+                        <button id="btn-exportar-historico" class="btn-secondary" onclick="exportarHistoricoExcel()" title="Descargar Excel">
+                            <i class="fas fa-file-excel"></i> Excel
                         </button>
                     </div>
 
@@ -270,7 +275,7 @@
                 <!-- Vista Dashboard -->
                 <div id="view-dashboard" class="view">
                     <div class="view-header">
-                        <h2><i class="fas fa-chart-pie"></i> Dashboard General</h2>
+                        <h2><i class="fas fa-chart-pie"></i> Dashboard Gerencial</h2>
                     </div>
 
                     <div class="filtros-dashboard">
@@ -281,6 +286,12 @@
                         <div class="form-group">
                             <label><i class="fas fa-calendar"></i> Hasta</label>
                             <input type="date" id="dash-fecha-hasta">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-warehouse"></i> Bodega</label>
+                            <select id="dash-bodega">
+                                <option value="">Todas las bodegas</option>
+                            </select>
                         </div>
                         <button id="btn-cargar-dashboard" class="btn-secondary">
                             <i class="fas fa-sync-alt"></i> Actualizar
@@ -900,6 +911,25 @@
                                 <button class="btn-sm btn-secondary" onclick="usuariosSelOperativas()">Solo Operativas</button>
                             </div>
                         </div>
+                        <div class="usuarios-bodegas-section">
+                            <label><i class="fas fa-th-large"></i> Acceso a Modulos</label>
+                            <div class="usuarios-bodegas-grid" id="uform-modulos">
+                                <label class="cbx-bodega"><input type="checkbox" value="conteo"> Conteo</label>
+                                <label class="cbx-bodega"><input type="checkbox" value="observaciones"> Observaciones</label>
+                                <label class="cbx-bodega"><input type="checkbox" value="historico"> Historico</label>
+                                <label class="cbx-bodega"><input type="checkbox" value="dashboard"> Dashboard</label>
+                                <label class="cbx-bodega"><input type="checkbox" value="cruce"> Cruce Operativo</label>
+                                <label class="cbx-bodega"><input type="checkbox" value="bajas"> Bajas</label>
+                                <label class="cbx-bodega"><input type="checkbox" value="semanal"> Semanal</label>
+                                <label class="cbx-bodega"><input type="checkbox" value="correccion"> Corregir Conteos</label>
+                                <label class="cbx-bodega"><input type="checkbox" value="usuarios"> Admin Usuarios</label>
+                            </div>
+                            <div class="usuarios-bodegas-btns">
+                                <button class="btn-sm btn-secondary" onclick="modulosSelTodos()">Todos</button>
+                                <button class="btn-sm btn-secondary" onclick="modulosSelNinguno()">Ninguno</button>
+                                <button class="btn-sm btn-secondary" onclick="modulosSelBasicos()">Basicos</button>
+                            </div>
+                        </div>
                         <div class="usuarios-form-actions">
                             <button class="btn-primary" onclick="usuariosGuardar()">
                                 <i class="fas fa-save"></i> Guardar
@@ -920,6 +950,7 @@
                                         <th>Rol</th>
                                         <th>Estado</th>
                                         <th>Bodegas</th>
+                                        <th>Modulos</th>
                                         <th>Acciones</th>
                                     </tr>
                                 </thead>

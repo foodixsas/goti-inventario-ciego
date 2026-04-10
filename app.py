@@ -235,6 +235,35 @@ def init_db():
                 monto NUMERIC(12,2) DEFAULT 0
             )
         """)
+        # ---- Tabla de permisos por modulo ----
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventario_diario.usuario_modulos (
+                id SERIAL PRIMARY KEY,
+                usuario_id INTEGER NOT NULL REFERENCES inventario_diario.usuarios(id) ON DELETE CASCADE,
+                modulo VARCHAR(30) NOT NULL,
+                UNIQUE(usuario_id, modulo)
+            )
+        """)
+        # Seed: usuarios sin modulos asignados reciben modulos por defecto
+        cur.execute("""
+            INSERT INTO inventario_diario.usuario_modulos (usuario_id, modulo)
+            SELECT u.id, m.modulo
+            FROM inventario_diario.usuarios u
+            CROSS JOIN (VALUES ('conteo'),('observaciones'),('historico'),('reportes'),('dashboard')) AS m(modulo)
+            WHERE u.rol NOT IN ('admin')
+            AND NOT EXISTS (SELECT 1 FROM inventario_diario.usuario_modulos um WHERE um.usuario_id = u.id)
+            ON CONFLICT DO NOTHING
+        """)
+        cur.execute("""
+            INSERT INTO inventario_diario.usuario_modulos (usuario_id, modulo)
+            SELECT u.id, m.modulo
+            FROM inventario_diario.usuarios u
+            CROSS JOIN (VALUES ('conteo'),('observaciones'),('historico'),('reportes'),('dashboard'),
+                               ('cruce'),('bajas'),('semanal'),('correccion'),('panel'),('usuarios')) AS m(modulo)
+            WHERE u.rol = 'admin'
+            AND NOT EXISTS (SELECT 1 FROM inventario_diario.usuario_modulos um WHERE um.usuario_id = u.id)
+            ON CONFLICT DO NOTHING
+        """)
         conn.commit()
         print('init_db: tablas OK')
     except Exception as e:
@@ -257,21 +286,7 @@ BODEGAS_NOMBRES = {
     'planta': 'Planta de Produccion'
 }
 
-# Mapeo de usuario a bodega asignada (None = acceso a todas)
-USUARIO_BODEGA = {
-    'admin': None,
-    'contador1': None,
-    'contador2': None,
-    'real': 'real_audiencia',
-    'floreana': 'floreana',
-    'portugal': 'portugal',
-    'santocachonreal': 'santo_cachon_real',
-    'santocachonportugal': 'santo_cachon_portugal',
-    'simonbolon': 'simon_bolon',
-    'bodegaprincipal': 'bodega_principal',
-    'materiaprima': 'materia_prima',
-    'planta': 'planta'
-}
+# (USUARIO_BODEGA eliminado — permisos de bodega ahora se manejan desde BD tabla usuario_bodegas)
 
 # ==================== RUTAS ESTATICAS ====================
 
@@ -376,6 +391,18 @@ def login():
             # Compatibilidad: si tiene 1 sola bodega de ventas, enviar como string
             bodegas_ventas = [b for b in bodegas_user if b not in ('bodega_principal', 'materia_prima', 'planta')]
             bodega_asignada = bodegas_ventas[0] if len(bodegas_ventas) == 1 else None
+            # Cargar modulos permitidos
+            ALL_MODULOS = ['conteo','observaciones','historico','reportes','dashboard','cruce','bajas','semanal','correccion','panel','usuarios']
+            if user['rol'] == 'admin':
+                modulos_user = ALL_MODULOS
+            else:
+                cur.execute("""
+                    SELECT um.modulo FROM inventario_diario.usuario_modulos um
+                    JOIN inventario_diario.usuarios u ON u.id = um.usuario_id
+                    WHERE u.username = %s
+                    ORDER BY um.modulo
+                """, (user['username'],))
+                modulos_user = [r['modulo'] for r in cur.fetchall()]
             return jsonify({
                 'success': True,
                 'user': {
@@ -383,7 +410,8 @@ def login():
                     'nombre': user['nombre'],
                     'rol': user['rol'],
                     'bodega': bodega_asignada,
-                    'bodegas': bodegas_user
+                    'bodegas': bodegas_user,
+                    'modulos': modulos_user
                 }
             })
 
@@ -1058,6 +1086,7 @@ def reporte_tendencias():
 def reporte_dashboard():
     fecha_desde = request.args.get('fecha_desde')
     fecha_hasta = request.args.get('fecha_hasta')
+    bodega = request.args.get('bodega')
 
     if not fecha_desde or not fecha_hasta:
         return jsonify({'error': 'fecha_desde y fecha_hasta son requeridos'}), 400
@@ -1067,7 +1096,7 @@ def reporte_dashboard():
         conn = get_db()
         cur = conn.cursor()
 
-        cur.execute("""
+        query = """
             SELECT
                 local,
                 COUNT(*) as total_productos,
@@ -1088,9 +1117,13 @@ def reporte_dashboard():
                     THEN 1 END) as total_sobrantes
             FROM inventario_diario.inventario_ciego_conteos
             WHERE fecha >= %s AND fecha <= %s
-            GROUP BY local
-            ORDER BY local
-        """, (fecha_desde, fecha_hasta))
+        """
+        params = [fecha_desde, fecha_hasta]
+        if bodega:
+            query += " AND local = %s"
+            params.append(bodega)
+        query += " GROUP BY local ORDER BY local"
+        cur.execute(query, params)
 
         resultados = cur.fetchall()
 
@@ -3260,9 +3293,11 @@ def admin_listar_usuarios():
         cur = conn.cursor()
         cur.execute("""
             SELECT u.id, u.username, u.nombre, u.rol, u.activo, u.created_at, u.email,
-                   COALESCE(array_agg(ub.bodega ORDER BY ub.bodega) FILTER (WHERE ub.bodega IS NOT NULL), '{}') AS bodegas
+                   COALESCE(array_agg(DISTINCT ub.bodega ORDER BY ub.bodega) FILTER (WHERE ub.bodega IS NOT NULL), '{}') AS bodegas,
+                   COALESCE(array_agg(DISTINCT um.modulo ORDER BY um.modulo) FILTER (WHERE um.modulo IS NOT NULL), '{}') AS modulos
             FROM inventario_diario.usuarios u
             LEFT JOIN inventario_diario.usuario_bodegas ub ON ub.usuario_id = u.id
+            LEFT JOIN inventario_diario.usuario_modulos um ON um.usuario_id = u.id
             GROUP BY u.id, u.username, u.nombre, u.rol, u.activo, u.created_at, u.email
             ORDER BY u.id
         """)
@@ -3316,6 +3351,11 @@ def admin_crear_usuario():
         for bod in bodegas:
             cur.execute("""INSERT INTO inventario_diario.usuario_bodegas (usuario_id, bodega)
                            VALUES (%s, %s) ON CONFLICT DO NOTHING""", (new_id, bod))
+
+        modulos = data.get('modulos', [])
+        for mod in modulos:
+            cur.execute("""INSERT INTO inventario_diario.usuario_modulos (usuario_id, modulo)
+                           VALUES (%s, %s) ON CONFLICT DO NOTHING""", (new_id, mod))
 
         conn.commit()
 
@@ -3375,6 +3415,12 @@ def admin_editar_usuario(uid):
         for bod in bodegas:
             cur.execute("""INSERT INTO inventario_diario.usuario_bodegas (usuario_id, bodega)
                            VALUES (%s, %s) ON CONFLICT DO NOTHING""", (uid, bod))
+
+        cur.execute("DELETE FROM inventario_diario.usuario_modulos WHERE usuario_id = %s", (uid,))
+        modulos = data.get('modulos', [])
+        for mod in modulos:
+            cur.execute("""INSERT INTO inventario_diario.usuario_modulos (usuario_id, modulo)
+                           VALUES (%s, %s) ON CONFLICT DO NOTHING""", (uid, mod))
 
         conn.commit()
         return jsonify({'success': True, 'message': 'Usuario actualizado'})

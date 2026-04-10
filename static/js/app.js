@@ -54,6 +54,7 @@ function destroyChart(id) {
 async function cargarDashboard() {
     const fechaDesde = document.getElementById('dash-fecha-desde').value;
     const fechaHasta = document.getElementById('dash-fecha-hasta').value;
+    const bodega = document.getElementById('dash-bodega') ? document.getElementById('dash-bodega').value : '';
 
     if (!fechaDesde || !fechaHasta) {
         showToast('Selecciona las fechas desde y hasta', 'error');
@@ -61,9 +62,10 @@ async function cargarDashboard() {
     }
 
     try {
+        const bodegaParam = bodega ? `&bodega=${bodega}` : '';
         const [resDash, resTend] = await Promise.all([
-            fetch(`${CONFIG.API_URL}/api/reportes/dashboard?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}`),
-            fetch(`${CONFIG.API_URL}/api/reportes/tendencias-temporal?dias=30`)
+            fetch(`${CONFIG.API_URL}/api/reportes/dashboard?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}${bodegaParam}`),
+            fetch(`${CONFIG.API_URL}/api/reportes/tendencias-temporal?dias=30${bodegaParam}`)
         ]);
 
         if (resDash.ok && resTend.ok) {
@@ -436,20 +438,15 @@ async function handleLogin(e) {
             return;
         }
     } catch (error) {
-        console.log('Servidor no disponible, usando autenticacion local');
+        console.log('Servidor no disponible:', error);
+        errorDiv.textContent = 'Servidor no disponible. Intenta de nuevo.';
+        errorDiv.classList.remove('hidden');
+        return;
     }
 
-    // Fallback: autenticacion local
-    const localUser = CONFIG.USUARIOS_LOCAL[username];
-    if (localUser && localUser.password === password) {
-        state.user = { username, nombre: localUser.nombre, rol: localUser.rol, bodega: localUser.bodega || null };
-        localStorage.setItem('user', JSON.stringify(state.user));
-        showMainScreen();
-        showToast(`Bienvenido, ${localUser.nombre}`, 'success');
-    } else {
-        errorDiv.textContent = 'Usuario o contraseña incorrectos';
-        errorDiv.classList.remove('hidden');
-    }
+    // Si el servidor respondio pero credenciales invalidas
+    errorDiv.textContent = 'Usuario o contrasena incorrectos';
+    errorDiv.classList.remove('hidden');
 }
 
 function handleLogout() {
@@ -469,10 +466,19 @@ function showMainScreen() {
     document.getElementById('main-screen').classList.add('active');
     document.getElementById('user-name').textContent = state.user.nombre;
 
-    // Mostrar/ocultar nav segun admin (rol admin o supervisor)
+    // Mostrar/ocultar nav segun modulos asignados al usuario
+    const userModulos = (state.user && state.user.modulos) || [];
     const isAdmin = state.user && (state.user.rol === 'admin' || state.user.username === 'admin');
-    document.querySelectorAll('.nav-admin-only').forEach(el => {
-        el.style.display = isAdmin ? '' : 'none';
+
+    document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
+        const mod = btn.dataset.view;
+        if (isAdmin) {
+            btn.style.display = '';  // Admin ve todo
+        } else if (mod === 'usuarios') {
+            btn.style.display = 'none';  // usuarios SIEMPRE requiere admin
+        } else {
+            btn.style.display = userModulos.includes(mod) ? '' : 'none';
+        }
     });
 
     // Recargar bodegas filtradas segun usuario
@@ -564,24 +570,31 @@ function cargarBodegas() {
     const selectBodega = document.getElementById('bodega-select');
     const filtroBodega = document.getElementById('filtro-bodega');
     const reporteBodega = document.getElementById('reporte-bodega');
+    const dashBodega = document.getElementById('dash-bodega');
 
     // Bodega asignada al usuario (null = ve todas)
     const bodegaUsuario = state.user ? state.user.bodega : null;
 
+    // Bodegas permitidas (filtrar por las asignadas si tiene varias)
+    const userBodegas = (state.user && state.user.bodegas) ? state.user.bodegas : [];
     const bodegas = bodegaUsuario
         ? CONFIG.BODEGAS.filter(b => b.id === bodegaUsuario)
-        : CONFIG.BODEGAS;
+        : userBodegas.length > 0
+            ? CONFIG.BODEGAS.filter(b => userBodegas.includes(b.id))
+            : CONFIG.BODEGAS;
 
     // Limpiar selects
     selectBodega.innerHTML = bodegaUsuario ? '' : '<option value="">Seleccionar bodega...</option>';
-    filtroBodega.innerHTML = bodegaUsuario ? '' : '<option value="">Todas las bodegas</option>';
+    filtroBodega.innerHTML = '<option value="">-- Selecciona --</option>';
     if (reporteBodega) reporteBodega.innerHTML = bodegaUsuario ? '' : '<option value="">Seleccionar bodega...</option>';
+    if (dashBodega) dashBodega.innerHTML = '<option value="">Todas las bodegas</option>';
 
     bodegas.forEach(bodega => {
         const opt = `<option value="${bodega.id}">${bodega.nombre}</option>`;
         selectBodega.innerHTML += opt;
         filtroBodega.innerHTML += opt;
         if (reporteBodega) reporteBodega.innerHTML += opt;
+        if (dashBodega) dashBodega.innerHTML += opt;
     });
 
     // Si tiene bodega asignada, seleccionarla automaticamente
@@ -589,6 +602,7 @@ function cargarBodegas() {
         selectBodega.value = bodegaUsuario;
         filtroBodega.value = bodegaUsuario;
         if (reporteBodega) reporteBodega.value = bodegaUsuario;
+        if (dashBodega) dashBodega.value = bodegaUsuario;
     }
 }
 
@@ -2142,6 +2156,10 @@ async function buscarHistorico() {
         showToast('Selecciona las fechas desde y hasta', 'error');
         return;
     }
+    if (!bodega) {
+        showToast('Selecciona una bodega', 'error');
+        return;
+    }
 
     container.innerHTML = `<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Cargando...</p></div>`;
 
@@ -2149,53 +2167,27 @@ async function buscarHistorico() {
         _histFiltroProducto = '';
         _histFiltroProductoRaw = '';
         _histFiltroPersona = '';
-        if (bodega) {
-            // ---- Vista PIVOTE por bodega ----
-            const url = `${CONFIG.API_URL}/api/historico/pivot?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}&bodega=${bodega}`;
-            const resp = await fetch(url);
-            const data = await resp.json();
-            if (data.error) { showToast(data.error, 'error'); return; }
-            _histPivotCache = data;
-            _renderHistPivot(data);
-        } else {
-            // ---- Vista RESUMEN (todas las bodegas) ----
-            _histPivotCache = null;
-            const url = `${CONFIG.API_URL}/api/historico?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}`;
-            const resp = await fetch(url);
-            const datos = await resp.json();
-            if (!datos.length) {
-                container.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>No se encontraron registros</p></div>`;
-                return;
-            }
-            const getNombreBodega = id => { const b = CONFIG.BODEGAS.find(b => b.id === id); return b ? b.nombre : id; };
-            container.innerHTML = datos.map(item => {
-                const badgeClass = item.estado === 'completo' ? 'badge-completo' : item.estado === 'en_proceso' ? 'badge-proceso' : 'badge-pendiente';
-                const badgeText  = item.estado === 'completo' ? 'Completo' : item.estado === 'en_proceso' ? 'En Proceso' : 'Pendiente';
-                const badgeIcon  = item.estado === 'completo' ? 'check-circle' : item.estado === 'en_proceso' ? 'clock' : 'hourglass-start';
-                return `<div class="historico-card">
-                    <div class="historico-card-header">
-                        <div class="historico-card-info">
-                            <div class="historico-bodega-nombre">${getNombreBodega(item.local)}</div>
-                            <div class="historico-card-fecha">${formatearFecha(item.fecha)}</div>
-                        </div>
-                        <span class="badge ${badgeClass}"><i class="fas fa-${badgeIcon}"></i> ${badgeText}</span>
-                    </div>
-                    <div class="historico-card-stats">
-                        <div class="historico-stat"><span class="stat-valor">${item.total_productos}</span><span class="stat-label">Productos</span></div>
-                        <div class="historico-stat"><span class="stat-valor">${item.total_contados}</span><span class="stat-label">Contados</span></div>
-                        <div class="historico-stat stat-diferencias"><span class="stat-valor">${item.total_con_diferencia}</span><span class="stat-label">Con Dif.</span></div>
-                    </div>
-                    <div class="historico-progress">
-                        <div class="progress-bar"><div class="progress-fill ${badgeClass}" style="width:${item.porcentaje}%"></div></div>
-                        <span class="progress-text">${item.porcentaje}%</span>
-                    </div>
-                </div>`;
-            }).join('');
-        }
+        // ---- Vista PIVOTE por bodega ----
+        const url = `${CONFIG.API_URL}/api/historico/pivot?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}&bodega=${bodega}`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (data.error) { showToast(data.error, 'error'); return; }
+        _histPivotCache = data;
+        _renderHistPivot(data);
     } catch (error) {
         console.error('Error buscando historico:', error);
         showToast('Error al buscar historico', 'error');
     }
+}
+
+function exportarHistoricoExcel() {
+    const fechaDesde = document.getElementById('fecha-desde').value;
+    const fechaHasta = document.getElementById('fecha-hasta').value;
+    const bodega = document.getElementById('filtro-bodega').value;
+    if (!fechaDesde || !fechaHasta) { showToast('Selecciona las fechas', 'error'); return; }
+    if (!bodega) { showToast('Selecciona una bodega', 'error'); return; }
+    const url = `${CONFIG.API_URL}/api/reportes/exportar-excel?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}&bodega=${bodega}`;
+    window.open(url, '_blank');
 }
 
 function _renderHistPivot(data) {
@@ -5174,23 +5166,33 @@ async function usuariosCargar() {
     } catch (e) { showToast('Error cargando usuarios: ' + e.message, 'error'); }
 }
 
+const MODULOS_NOMBRES = {
+    'conteo': 'Conteo', 'observaciones': 'Observ.', 'historico': 'Historico',
+    'reportes': 'Reportes', 'dashboard': 'Dashboard', 'cruce': 'Cruce Op.',
+    'bajas': 'Bajas', 'semanal': 'Semanal', 'correccion': 'Corregir',
+    'panel': 'Panel', 'usuarios': 'Usuarios'
+};
+
 function usuariosRenderTabla() {
     const tbody = document.getElementById('usuarios-tbody');
     if (!tbody) return;
     if (!_usuariosCache.length) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748B;">Sin usuarios</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748B;">Sin usuarios</td></tr>';
         return;
     }
     tbody.innerHTML = _usuariosCache.map(u => {
         const rolClass = u.rol === 'admin' ? 'badge-admin' : u.rol === 'supervisor' ? 'badge-supervisor' : 'badge-empleado';
         const estadoClass = u.activo ? 'badge-activo' : 'badge-inactivo';
         const bodegas = (u.bodegas || []).map(b => `<span class="badge-bodega">${BODEGAS_NOMBRES[b] || b}</span>`).join(' ');
+        const modulos = u.rol === 'admin' ? '<span style="color:#22C55E;font-weight:600;">Todos</span>' :
+            (u.modulos || []).map(m => `<span class="badge-bodega">${MODULOS_NOMBRES[m] || m}</span>`).join(' ') || '<span style="color:#475569;">Ninguno</span>';
         return `<tr>
             <td><strong>${escapeHtml(u.username)}</strong></td>
             <td>${escapeHtml(u.nombre)}</td>
             <td><span class="badge ${rolClass}">${u.rol}</span></td>
             <td><span class="badge ${estadoClass}">${u.activo ? 'Activo' : 'Inactivo'}</span></td>
             <td>${bodegas || '<span style="color:#475569;">Sin acceso</span>'}</td>
+            <td>${modulos}</td>
             <td class="usuarios-acciones">
                 <button class="btn-editar-user" onclick="usuariosEditar(${u.id})" title="Editar"><i class="fas fa-pen"></i></button>
                 ${u.email ? `<button class="btn-reenviar-user" onclick="usuariosReenviar(${u.id}, '${escapeHtml(u.email)}')" title="Reenviar invitacion"><i class="fas fa-envelope"></i></button>` : ''}
@@ -5215,6 +5217,7 @@ function usuariosMostrarFormNuevo() {
     document.getElementById('uform-activo').value = 'true';
     document.getElementById('uform-enviar-invitacion').checked = false;
     usuariosSelNinguna();
+    modulosSelBasicos();
 }
 
 function usuariosEditar(id) {
@@ -5236,6 +5239,9 @@ function usuariosEditar(id) {
     document.querySelectorAll('#uform-bodegas input[type="checkbox"]').forEach(cb => {
         cb.checked = (u.bodegas || []).includes(cb.value);
     });
+    document.querySelectorAll('#uform-modulos input[type="checkbox"]').forEach(cb => {
+        cb.checked = (u.modulos || []).includes(cb.value);
+    });
     document.getElementById('usuarios-form').scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -5252,6 +5258,8 @@ async function usuariosGuardar() {
     const activo = document.getElementById('uform-activo').value === 'true';
     const bodegas = [];
     document.querySelectorAll('#uform-bodegas input[type="checkbox"]:checked').forEach(cb => bodegas.push(cb.value));
+    const modulos = [];
+    document.querySelectorAll('#uform-modulos input[type="checkbox"]:checked').forEach(cb => modulos.push(cb.value));
 
     const email = document.getElementById('uform-email').value.trim();
     const enviar_invitacion = document.getElementById('uform-enviar-invitacion').checked;
@@ -5267,7 +5275,7 @@ async function usuariosGuardar() {
         localStorage.setItem('admin_pass', adminPass);
     }
 
-    const body = { username, nombre, password, rol, activo, bodegas, email, enviar_invitacion, admin_user: state.user.username, admin_pass: adminPass };
+    const body = { username, nombre, password, rol, activo, bodegas, modulos, email, enviar_invitacion, admin_user: state.user.username, admin_pass: adminPass };
     try {
         const url = id ? `${CONFIG.API_URL}/api/admin/usuarios/${id}` : `${CONFIG.API_URL}/api/admin/usuarios`;
         const method = id ? 'PUT' : 'POST';
@@ -5331,4 +5339,15 @@ function usuariosSelVentas() {
 function usuariosSelOperativas() {
     const o = ['bodega_principal','materia_prima','planta'];
     document.querySelectorAll('#uform-bodegas input[type="checkbox"]').forEach(cb => cb.checked = o.includes(cb.value));
+}
+
+function modulosSelTodos() {
+    document.querySelectorAll('#uform-modulos input[type="checkbox"]').forEach(cb => cb.checked = true);
+}
+function modulosSelNinguno() {
+    document.querySelectorAll('#uform-modulos input[type="checkbox"]').forEach(cb => cb.checked = false);
+}
+function modulosSelBasicos() {
+    const basicos = ['conteo','observaciones','historico','dashboard'];
+    document.querySelectorAll('#uform-modulos input[type="checkbox"]').forEach(cb => cb.checked = basicos.includes(cb.value));
 }
