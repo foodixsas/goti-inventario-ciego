@@ -1241,10 +1241,40 @@ def reporte_dashboard():
                 'con_diferencia': b['total_con_diferencia']
             })
 
+        # Promedio diario de exactitud (items contados sin error / items contados)
+        query_prom = """
+            SELECT AVG(exactitud_dia) as promedio_exactitud,
+                   AVG(cumplimiento_dia) as promedio_cumplimiento,
+                   COUNT(*) as total_dias
+            FROM (
+                SELECT fecha,
+                       CASE WHEN COUNT(cantidad_contada) > 0
+                            THEN (COUNT(cantidad_contada) - COUNT(CASE WHEN COALESCE(cantidad_contada_2, cantidad_contada) IS NOT NULL
+                                AND COALESCE(cantidad_contada_2, cantidad_contada) - cantidad != 0 THEN 1 END))::float
+                                / COUNT(cantidad_contada) * 100
+                            ELSE 0 END as exactitud_dia,
+                       CASE WHEN COUNT(*) > 0
+                            THEN COUNT(cantidad_contada)::float / COUNT(*) * 100
+                            ELSE 0 END as cumplimiento_dia
+                FROM inventario_diario.inventario_ciego_conteos
+                WHERE fecha >= %s AND fecha <= %s
+        """ + filtro_extra + """
+                GROUP BY fecha
+            ) dias
+        """
+        cur.execute(query_prom, params)
+        prom = cur.fetchone()
+        promedios = {
+            'exactitud_promedio': round(float(prom['promedio_exactitud'] or 0), 1),
+            'cumplimiento_promedio': round(float(prom['promedio_cumplimiento'] or 0), 1),
+            'total_dias': prom['total_dias'] or 0
+        }
+
         return jsonify({
             'bodegas': bodegas_data,
             'top_descuadre': top_descuadre,
-            'cumplimiento': cumplimiento
+            'cumplimiento': cumplimiento,
+            'promedios': promedios
         })
     except Exception as e:
         print(f"Error en /api/reportes/dashboard: {e}")

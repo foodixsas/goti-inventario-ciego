@@ -93,7 +93,7 @@ async function cargarDashboard() {
             const datosDash = await resDash.json();
             const datosTend = await resTend.json();
 
-            renderDashboardStats(datosDash.bodegas);
+            renderDashboardStats(datosDash.bodegas, datosDash.promedios);
             renderDashboardValorResumen(datosDash.bodegas);
             renderChartExactitud(datosDash.bodegas);
             renderChartProductosFallan(datosDash.top_descuadre);
@@ -112,7 +112,7 @@ async function cargarDashboard() {
 
 function _fmtMoney(v) { return '$' + v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
 
-function renderDashboardStats(datos) {
+function renderDashboardStats(datos, promedios) {
     const container = document.getElementById('dashboard-stats');
     if (!datos || datos.length === 0) {
         container.innerHTML = '<div class="empty-state"><i class="fas fa-chart-bar"></i><p>No hay datos para el rango seleccionado</p></div>';
@@ -128,8 +128,10 @@ function renderDashboardStats(datos) {
         return acc;
     }, { productos: 0, contados: 0, diferencias: 0, faltantes: 0, sobrantes: 0 });
 
-    const pctConteo = totales.productos > 0 ? Math.round(totales.contados / totales.productos * 100) : 0;
-    const pctExacto = totales.contados > 0 ? Math.round((totales.contados - totales.diferencias) / totales.contados * 100) : 0;
+    const prom = promedios || {};
+    const pctConteo = prom.cumplimiento_promedio || 0;
+    const pctExacto = prom.exactitud_promedio || 0;
+    const totalDias = prom.total_dias || 0;
 
     container.innerHTML = `
         <div class="dashboard-stat-card">
@@ -137,7 +139,7 @@ function renderDashboardStats(datos) {
             <div class="stat-info">
                 <div class="stat-valor">${pctConteo}%</div>
                 <div class="stat-label">Cumplimiento Conteo</div>
-                <div style="font-size:11px;color:#64748B;">${totales.contados.toLocaleString()} / ${totales.productos.toLocaleString()}</div>
+                <div style="font-size:11px;color:#64748B;">Promedio diario de ${totalDias} dia(s)</div>
             </div>
         </div>
         <div class="dashboard-stat-card">
@@ -145,7 +147,7 @@ function renderDashboardStats(datos) {
             <div class="stat-info">
                 <div class="stat-valor">${pctExacto}%</div>
                 <div class="stat-label">Exactitud Inventario</div>
-                <div style="font-size:11px;color:#64748B;">${(totales.contados - totales.diferencias).toLocaleString()} exactos de ${totales.contados.toLocaleString()}</div>
+                <div style="font-size:11px;color:#64748B;">Promedio diario de ${totalDias} dia(s)</div>
             </div>
         </div>
         <div class="dashboard-stat-card">
