@@ -4335,23 +4335,31 @@ def cruce_op_estado(ejec_id):
 def cruce_op_fechas():
     """Devuelve las fechas con toma fisica disponibles para una bodega."""
     bodega = request.args.get('bodega')
-    tablas = {
+    tablas_centrales = {
         'bodega_principal': 'public.toma_bodega',
         'materia_prima':    'public.toma_materiaprima',
         'planta':           'public.toma_planta',
     }
-    if bodega not in tablas:
+    if bodega not in BODEGAS_OPERATIVAS:
         return jsonify({'error': 'bodega invalida'}), 400
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute(f"""
-            SELECT fecha, COUNT(*) AS productos
-            FROM {tablas[bodega]}
-            WHERE fecha IS NOT NULL
-            GROUP BY fecha ORDER BY fecha DESC
-        """)
+        if bodega in tablas_centrales:
+            cur.execute(f"""
+                SELECT fecha, COUNT(*) AS productos
+                FROM {tablas_centrales[bodega]}
+                WHERE fecha IS NOT NULL
+                GROUP BY fecha ORDER BY fecha DESC
+            """)
+        else:
+            cur.execute("""
+                SELECT fecha, COUNT(*) AS productos
+                FROM goti.inventario_ciego_conteos
+                WHERE local = %s AND fecha IS NOT NULL
+                GROUP BY fecha ORDER BY fecha DESC
+            """, (bodega,))
         rows = cur.fetchall()
         return jsonify([{
             'fecha': r['fecha'].isoformat(),
