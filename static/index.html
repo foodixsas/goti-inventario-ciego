@@ -8,6 +8,72 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        /* ===== VOUCHER SCANNER MODULE ===== */
+        .vs-filtros-bar { background:white; border:1px solid #e2e8f0; border-radius:10px; padding:16px 20px; display:flex; align-items:flex-end; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+        .vs-filtro-group { display:flex; flex-direction:column; gap:4px; }
+        .vs-filtro-group label { font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
+        .vs-filtro-group select, .vs-filtro-group input { border:1.5px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:14px; color:#1e293b; background:white; outline:none; min-width:190px; }
+        .vs-filtro-group select:focus, .vs-filtro-group input:focus { border-color:#123450; }
+        .vs-btn-buscar { background:#123450; color:white; border:none; padding:9px 24px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; }
+        .vs-btn-buscar:hover { background:#1e4d7b; }
+        .vs-btn-buscar:disabled { background:#94a3b8; cursor:not-allowed; }
+        .vs-login-estado { display:flex; align-items:center; gap:6px; font-size:12px; margin-left:auto; }
+        .vs-dot { width:8px; height:8px; border-radius:50%; }
+        .vs-dot.vs-verde { background:#10b981; } .vs-dot.vs-rojo { background:#ef4444; } .vs-dot.vs-gris { background:#94a3b8; }
+        .vs-contenido { padding:4px 0 24px; }
+        .vs-resumen { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:16px; margin-bottom:20px; }
+        .vs-card { background:white; border-radius:12px; padding:16px 20px; border:1px solid #e2e8f0; }
+        .vs-card-label { font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
+        .vs-card-valor { font-size:26px; font-weight:700; margin-top:6px; }
+        .vs-card-sub { font-size:12px; color:#94a3b8; margin-top:2px; }
+        .vs-card.verde .vs-card-valor { color:#10b981; } .vs-card.rojo .vs-card-valor { color:#ef4444; }
+        .vs-card.azul .vs-card-valor { color:#123450; } .vs-card.amarillo .vs-card-valor { color:#f59e0b; } .vs-card.morado .vs-card-valor { color:#7c3aed; }
+        .vs-cierre-banner { background:#f0f4ff; border:1.5px solid #c7d7fe; border-radius:10px; padding:12px 18px; margin-bottom:20px; display:flex; flex-wrap:wrap; gap:20px; align-items:center; }
+        .vs-cierre-item { display:flex; flex-direction:column; gap:2px; }
+        .vs-cierre-item-label { font-size:10px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.5px; }
+        .vs-cierre-item-val { font-size:15px; font-weight:700; color:#1e3a5f; }
+        .vs-cierre-badge { padding:4px 12px; border-radius:20px; font-size:11px; font-weight:700; }
+        .vs-cierre-badge.completo { background:#d1fae5; color:#065f46; } .vs-cierre-badge.diferencias { background:#fee2e2; color:#991b1b; } .vs-cierre-badge.sin-cierre { background:#f3f4f6; color:#6b7280; }
+        .vs-tabla-wrapper { background:white; border-radius:12px; border:1px solid #e2e8f0; overflow:hidden; }
+        .vs-tabla-header { padding:16px 20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
+        .vs-tabla-titulo { font-size:15px; font-weight:700; color:#1e293b; }
+        .vs-tabla-count { font-size:13px; color:#64748b; }
+        #view-vouchers table { width:100%; border-collapse:collapse; font-size:13px; }
+        #view-vouchers thead th { background:#f8fafc; padding:10px 14px; text-align:left; font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid #e2e8f0; white-space:nowrap; }
+        #view-vouchers tbody tr { border-bottom:1px solid #f1f5f9; }
+        #view-vouchers tbody tr:hover { background:#f8fafc; }
+        #view-vouchers tbody td { padding:10px 14px; vertical-align:middle; }
+        .vs-badge { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; }
+        .vs-badge.cuadra { background:#d1fae5; color:#065f46; } .vs-badge.descuadra { background:#fee2e2; color:#991b1b; } .vs-badge.propina { background:#fef3c7; color:#92400e; }
+        .vs-diff-neg { color:#ef4444; font-weight:600; } .vs-diff-pos { color:#10b981; font-weight:600; }
+        .vs-hora { color:#64748b; font-size:12px; } .vs-factura { font-family:monospace; font-size:12px; color:#123450; } .vs-monto { font-weight:600; text-align:right; }
+        .vs-btn-ver-fotos { background:#e0f2fe; color:#0369a1; border:none; padding:4px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+        .vs-btn-ver-fotos:hover { background:#bae6fd; }
+        .vs-btn-sin-foto { color:#cbd5e1; font-size:12px; }
+        .vs-estado-msg { text-align:center; padding:60px 20px; color:#94a3b8; }
+        .vs-estado-msg .icono { font-size:48px; margin-bottom:12px; }
+        .vs-estado-msg p { font-size:15px; }
+        .vs-spinner { width:32px; height:32px; border:3px solid #e2e8f0; border-top-color:#123450; border-radius:50%; animation:spin 0.8s linear infinite; margin:0 auto 12px; }
+        .vs-filtro-estado { display:flex; gap:8px; flex-wrap:wrap; }
+        .vs-btn-estado { padding:5px 14px; border-radius:20px; font-size:12px; font-weight:600; border:1.5px solid #e2e8f0; background:white; cursor:pointer; }
+        .vs-btn-estado.activo.todos { border-color:#123450; background:#123450; color:white; }
+        .vs-btn-estado.activo.cuadra-f { background:#10b981; border-color:#10b981; color:white; }
+        .vs-btn-estado.activo.descuadra-f { background:#ef4444; border-color:#ef4444; color:white; }
+        .vs-btn-export { background:#f1f5f9; color:#334155; border:1.5px solid #e2e8f0; padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; }
+        .vs-btn-export:hover { background:#e2e8f0; }
+        .vs-modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:2000; justify-content:center; align-items:flex-start; padding:40px 20px; overflow-y:auto; }
+        .vs-modal-overlay.visible { display:flex; }
+        .vs-modal-contenido { width:100%; max-width:900px; display:flex; flex-direction:column; gap:16px; }
+        .vs-modal-header-bar { display:flex; justify-content:space-between; align-items:flex-start; }
+        .vs-modal-titulo { color:white; font-size:18px; font-weight:700; }
+        .vs-modal-subtitulo { color:#94a3b8; font-size:13px; margin-top:4px; }
+        .vs-modal-close { color:white; font-size:32px; cursor:pointer; font-weight:300; line-height:1; background:none; border:none; padding:0 4px; }
+        .vs-modal-fotos { display:flex; flex-wrap:wrap; gap:16px; justify-content:center; }
+        .vs-modal-foto-item { display:flex; flex-direction:column; align-items:center; gap:8px; }
+        .vs-modal-img { max-width:min(420px,90vw); border-radius:10px; box-shadow:0 8px 32px rgba(0,0,0,0.6); cursor:zoom-in; }
+        .vs-modal-foto-label { color:#e2e8f0; font-size:12px; font-weight:600; background:rgba(255,255,255,0.1); padding:4px 12px; border-radius:20px; }
+    </style>
 </head>
 <body>
     <div class="app-container">
@@ -206,6 +272,20 @@
                         </button>
                         <button class="nav-btn" data-view="fac-dashboard" style="display:none;">
                             <i class="fas fa-chart-bar"></i><span>Dashboard</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- MODULO: VOUCHER SCANNER -->
+                <div class="nav-module" data-module="vouchers">
+                    <button class="nav-module-header" onclick="toggleModule('vouchers')">
+                        <i class="fas fa-receipt"></i>
+                        <span>Voucher Scanner</span>
+                        <i class="fas fa-chevron-down nav-module-arrow"></i>
+                    </button>
+                    <div class="nav-module-items" style="display:none;">
+                        <button class="nav-btn" data-view="vouchers" style="display:none;">
+                            <i class="fas fa-search-dollar"></i><span>Consultar</span>
                         </button>
                     </div>
                 </div>
@@ -485,6 +565,10 @@
                                 </div>
                                 <div class="chart-card-body"><canvas id="chart-motivos"></canvas></div>
                                 <div id="motivos-leyenda" style="padding:8px 16px 12px;display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:center;"></div>
+                            </div>
+                            <div class="chart-card">
+                                <div class="chart-card-header"><i class="fas fa-user-times"></i> % Error por Persona (Top 10)</div>
+                                <div class="chart-card-body"><canvas id="chart-personas-errores"></canvas></div>
                             </div>
                             <div class="chart-card chart-card-full">
                                 <div class="chart-card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
@@ -1974,7 +2058,155 @@
                     </div>
                 </div>
 
+                <!-- Vista Voucher Scanner -->
+                <div id="view-vouchers" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-receipt"></i> Voucher Scanner</h2>
+                    </div>
+
+                    <div class="vs-filtros-bar">
+                        <div class="vs-filtro-group">
+                            <label>Fecha</label>
+                            <input type="date" id="vs-filtro-fecha">
+                        </div>
+                        <div class="vs-filtro-group">
+                            <label>Local</label>
+                            <select id="vs-filtro-local">
+                                <option value="">— Todos los locales —</option>
+                                <option value="vj6e98Ao7UrAEdWB">CHIOS PORTUGAL</option>
+                                <option value="gDGe76ymMCn21dn2">CHIOS REAL AUDIENCIA</option>
+                                <option value="pXKdwmJWZcgk3agW">SANTO CACHON PORTUGAL</option>
+                                <option value="4pzb864o4uBWpeEw">SANTO CACHON REAL AUDIENCIA</option>
+                                <option value="rQzaOyDP4cElmdp4">SIMON BOLON REAL AUDIENCIA</option>
+                            </select>
+                        </div>
+                        <div class="vs-filtro-group" id="vs-grupo-lote" style="display:none">
+                            <label>Lote</label>
+                            <select id="vs-filtro-lote" onchange="vs_filtrarLote()">
+                                <option value="">— Todos los lotes —</option>
+                            </select>
+                        </div>
+                        <div class="vs-filtro-group" id="vs-grupo-caja" style="display:none">
+                            <label>Caja / Cajero</label>
+                            <select id="vs-filtro-caja" onchange="vs_filtrarCaja()">
+                                <option value="">— Todas las cajas —</option>
+                            </select>
+                        </div>
+                        <button class="vs-btn-buscar" id="vs-btn-buscar" onclick="vs_buscar()">Buscar</button>
+                        <div class="vs-login-estado">
+                            <div class="vs-dot vs-gris" id="vs-dot-estado"></div>
+                            <span id="vs-txt-estado">Conectando...</span>
+                        </div>
+                    </div>
+
+                    <div class="vs-contenido">
+                        <div class="vs-cierre-banner" id="vs-cierre-banner" style="display:none">
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Lote</div>
+                                <div class="vs-cierre-item-val" id="vs-c-lote">—</div>
+                            </div>
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Terminal</div>
+                                <div class="vs-cierre-item-val" id="vs-c-terminal">—</div>
+                            </div>
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Red</div>
+                                <div class="vs-cierre-item-val" id="vs-c-red">—</div>
+                            </div>
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Total cierre</div>
+                                <div class="vs-cierre-item-val" id="vs-c-total">—</div>
+                            </div>
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Transacciones</div>
+                                <div class="vs-cierre-item-val" id="vs-c-txn">—</div>
+                            </div>
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Coinciden / Faltantes / Errores</div>
+                                <div class="vs-cierre-item-val" id="vs-c-match">—</div>
+                            </div>
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Hora cierre</div>
+                                <div class="vs-cierre-item-val" id="vs-c-hora">—</div>
+                            </div>
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Verificado por</div>
+                                <div class="vs-cierre-item-val" id="vs-c-verificado">—</div>
+                            </div>
+                            <div class="vs-cierre-item">
+                                <div class="vs-cierre-item-label">Estado</div>
+                                <div id="vs-c-estado-badge"></div>
+                            </div>
+                        </div>
+
+                        <div class="vs-resumen" id="vs-resumen" style="display:none">
+                            <div class="vs-card azul">
+                                <div class="vs-card-label">Total cobrado</div>
+                                <div class="vs-card-valor" id="vs-r-total">$0.00</div>
+                                <div class="vs-card-sub" id="vs-r-facturas">0 facturas</div>
+                            </div>
+                            <div class="vs-card verde">
+                                <div class="vs-card-label">Cuadran</div>
+                                <div class="vs-card-valor" id="vs-r-cuadran">0</div>
+                                <div class="vs-card-sub" id="vs-r-pct-cuadra">0%</div>
+                            </div>
+                            <div class="vs-card rojo">
+                                <div class="vs-card-label">Descuadran</div>
+                                <div class="vs-card-valor" id="vs-r-descuadran">0</div>
+                                <div class="vs-card-sub" id="vs-r-pct-descuadra">0%</div>
+                            </div>
+                            <div class="vs-card amarillo">
+                                <div class="vs-card-label">Monto diferencia</div>
+                                <div class="vs-card-valor" id="vs-r-diferencia">$0.00</div>
+                                <div class="vs-card-sub">entre facturas y vouchers</div>
+                            </div>
+                            <div class="vs-card morado">
+                                <div class="vs-card-label">Con foto</div>
+                                <div class="vs-card-valor" id="vs-r-fotos">0</div>
+                                <div class="vs-card-sub">vouchers con imagen</div>
+                            </div>
+                        </div>
+
+                        <div class="vs-tabla-wrapper">
+                            <div class="vs-tabla-header">
+                                <div>
+                                    <div class="vs-tabla-titulo">Transacciones del dia</div>
+                                    <div class="vs-tabla-count" id="vs-tabla-count"></div>
+                                </div>
+                                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+                                    <div class="vs-filtro-estado" id="vs-filtro-estado" style="display:none">
+                                        <button class="vs-btn-estado todos activo" onclick="vs_filtrarEstado('todos',this)">Todos</button>
+                                        <button class="vs-btn-estado cuadra-f" onclick="vs_filtrarEstado('cuadra',this)">Cuadran</button>
+                                        <button class="vs-btn-estado descuadra-f" onclick="vs_filtrarEstado('descuadra',this)">Descuadran</button>
+                                    </div>
+                                    <button class="vs-btn-export" id="vs-btn-export" onclick="vs_exportarCSV()" style="display:none">Exportar CSV</button>
+                                </div>
+                            </div>
+                            <div id="vs-tabla-contenido">
+                                <div class="vs-estado-msg">
+                                    <div class="icono">&#128269;</div>
+                                    <p>Selecciona una fecha y local, luego presiona <strong>Buscar</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </main>
+        </div>
+    </div>
+
+    <!-- Modal fotos Voucher Scanner -->
+    <div class="vs-modal-overlay" id="vs-modal-foto" onclick="vs_cerrarModal(event)">
+        <div class="vs-modal-contenido">
+            <div class="vs-modal-header-bar">
+                <div>
+                    <div class="vs-modal-titulo" id="vs-modal-titulo"></div>
+                    <div class="vs-modal-subtitulo" id="vs-modal-subtitulo"></div>
+                </div>
+                <button class="vs-modal-close" onclick="document.getElementById('vs-modal-foto').classList.remove('visible')">&times;</button>
+            </div>
+            <div class="vs-modal-fotos" id="vs-modal-fotos"></div>
         </div>
     </div>
 

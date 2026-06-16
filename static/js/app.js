@@ -239,6 +239,13 @@ async function cargarDashboard() {
                 renderChartMotivos(datosMotivos);
             } catch(e) { console.log('Error cargando motivos:', e); }
 
+            // Cargar % error por persona
+            try {
+                const resPersonas = await fetch(`${CONFIG.API_URL}/api/reportes/personas-errores?fecha_desde=${fechaDesde}&fecha_hasta=${fechaHasta}${bodegaParam}`);
+                const datosPersonas = resPersonas.ok ? await resPersonas.json() : [];
+                renderChartPersonasErrores(datosPersonas);
+            } catch(e) { console.log('Error cargando personas-errores:', e); }
+
             showToast('Dashboard actualizado', 'success');
         } else {
             showToast('Error al cargar datos del dashboard', 'error');
@@ -858,6 +865,71 @@ function renderChartMotivos(datos) {
     ctx.oncontextmenu = null;
 }
 
+function renderChartPersonasErrores(datos) {
+    if (typeof Chart === 'undefined') return;
+    destroyChart('personas-errores');
+    const ctx = document.getElementById('chart-personas-errores');
+    if (!ctx) return;
+
+    if (!datos || datos.length === 0) {
+        ctx.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#94A3B8;font-size:13px;">Sin datos suficientes (min. 5 conteos por persona)</div>';
+        return;
+    }
+
+    // Orden ascendente para que el mayor quede arriba en barra horizontal
+    const sorted = [...datos].reverse();
+    const labels = sorted.map(d => d.persona.length > 25 ? d.persona.substring(0, 23) + '...' : d.persona);
+    const valores = sorted.map(d => d.porcentaje_error);
+
+    // Color según % de error: verde < 5%, amarillo 5-15%, rojo > 15%
+    const colores = valores.map(v => v > 15 ? 'rgba(239,68,68,0.7)' : v > 5 ? 'rgba(251,191,36,0.7)' : 'rgba(34,197,94,0.7)');
+    const bordes  = valores.map(v => v > 15 ? 'rgb(239,68,68)' : v > 5 ? 'rgb(251,191,36)' : 'rgb(34,197,94)');
+
+    chartInstances['personas-errores'] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '% Error',
+                data: valores,
+                backgroundColor: colores,
+                borderColor: bordes,
+                borderWidth: 1.5,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (c) => {
+                            const d = sorted[c.dataIndex];
+                            return `${c.parsed.x}% error — ${d.total_errores} errores de ${d.total_conteos} conteos`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    max: 100,
+                    grid: { color: '#F1F5F9', drawBorder: false },
+                    ticks: { color: '#94A3B8', callback: v => v + '%' },
+                    title: { display: true, text: '% de Error', color: '#64748B', font: { size: 11 } }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { color: '#123450', font: { size: 11, weight: '500' } }
+                }
+            }
+        }
+    });
+}
+
 async function abrirDetalleMotivo(motivo) {
     const modal = document.getElementById('modal-motivo');
     const titulo = document.getElementById('modal-motivo-titulo');
@@ -1315,6 +1387,11 @@ function cambiarVista(viewName) {
     // Auto-inicializar semanal al entrar
     if (viewName === 'semanal') {
         semanalInit();
+    }
+
+    // Auto-inicializar voucher scanner al entrar
+    if (viewName === 'vouchers') {
+        vs_initVouchers();
     }
 
     // Auto-inicializar depositos al entrar
@@ -9701,4 +9778,383 @@ function salirImpersonacion() {
     document.getElementById('btn-impersonar').value = '';
     document.getElementById('user-name').textContent = state.user.nombre;
     showMainScreen();
+}
+
+// ==================== VOUCHER SCANNER MODULE ====================
+
+const VS_ANON = 'sb_publishable_Dn4ehqDrb56ayi08Gt5ReA_WJ3y-rWY';
+const VS_BASE = 'https://oufzmiklqcwbabaxhyjy.supabase.co';
+const VS_STORAGE = 'https://oufzmiklqcwbabaxhyjy.supabase.co/storage/v1/object/public/gfc_finanzas/';
+let vsToken = null;
+let vsTokenExpira = 0;
+let vsDatosActuales = [];
+let vsFotosMap = {};
+let vsCierresActuales = [];
+let vsInicializado = false;
+
+function vs_initVouchers() {
+    if (!vsInicializado) {
+        vsInicializado = true;
+        document.getElementById('vs-filtro-fecha').value = new Date().toISOString().split('T')[0];
+        vs_getToken();
+    }
+}
+
+async function vs_login() {
+    try {
+        const res = await fetch(`${VS_BASE}/auth/v1/token?grant_type=password`, {
+            method: 'POST',
+            headers: { 'apikey': VS_ANON, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: 'contabilidad@chiosburger.com', password: 'mZAPXjaf6RhNotNZWlk4Nrso' })
+        });
+        const d = await res.json();
+        if (d.access_token) {
+            vsToken = d.access_token;
+            vsTokenExpira = Date.now() + (d.expires_in - 60) * 1000;
+            document.getElementById('vs-dot-estado').className = 'vs-dot vs-verde';
+            document.getElementById('vs-txt-estado').textContent = 'Conectado';
+            return true;
+        }
+    } catch(e) {}
+    document.getElementById('vs-dot-estado').className = 'vs-dot vs-rojo';
+    document.getElementById('vs-txt-estado').textContent = 'Sin conexion';
+    return false;
+}
+
+async function vs_getToken() {
+    if (!vsToken || Date.now() > vsTokenExpira) await vs_login();
+    return vsToken;
+}
+
+function vs_apiHeaders(tk) {
+    return { 'apikey': VS_ANON, 'Authorization': `Bearer ${tk}`, 'Accept-Profile': 'gfc_finanzas' };
+}
+
+async function vs_buscar() {
+    const fecha = document.getElementById('vs-filtro-fecha').value;
+    const local = document.getElementById('vs-filtro-local').value;
+    if (!fecha) { alert('Selecciona una fecha'); return; }
+
+    document.getElementById('vs-btn-buscar').disabled = true;
+    document.getElementById('vs-tabla-contenido').innerHTML = `<div class="vs-estado-msg"><div class="vs-spinner"></div><p>Cargando datos...</p></div>`;
+    document.getElementById('vs-resumen').style.display = 'none';
+    document.getElementById('vs-cierre-banner').style.display = 'none';
+    document.getElementById('vs-filtro-estado').style.display = 'none';
+    document.getElementById('vs-btn-export').style.display = 'none';
+
+    const tk = await vs_getToken();
+    if (!tk) {
+        document.getElementById('vs-tabla-contenido').innerHTML = `<div class="vs-estado-msg"><div class="icono">&#10060;</div><p>Error de conexion. Intenta de nuevo.</p></div>`;
+        document.getElementById('vs-btn-buscar').disabled = false;
+        return;
+    }
+
+    let urlReg = `${VS_BASE}/rest/v1/gfc_ing_voucher_registros?fecha_registro=eq.${fecha}&order=hora_registro.asc&limit=500`;
+    if (local) urlReg += `&centro_costo_id=eq.${local}`;
+    let urlCierre = `${VS_BASE}/rest/v1/gfc_ing_voucher_cierre_lote?fecha_cierre=eq.${fecha}&order=lote_numero.asc`;
+    if (local) urlCierre += `&centro_costo_id=eq.${local}`;
+
+    try {
+        const [resReg, resCierre] = await Promise.all([
+            fetch(urlReg, { headers: vs_apiHeaders(tk) }),
+            fetch(urlCierre, { headers: vs_apiHeaders(tk) })
+        ]);
+        const registros = await resReg.json();
+        const cierres = await resCierre.json();
+        vsDatosActuales = registros;
+        vsCierresActuales = cierres;
+
+        vsFotosMap = {};
+        if (registros.length > 0) {
+            const ids = registros.map(r => r.id).join(',');
+            const urlPagos = `${VS_BASE}/rest/v1/gfc_ing_voucher_pagos?registro_id=in.(${ids})&select=registro_id,foto_url,tarjeta_tipo,red,numero_transaccion,total`;
+            try {
+                const resPagos = await fetch(urlPagos, { headers: vs_apiHeaders(tk) });
+                const pagos = await resPagos.json();
+                for (const p of pagos) {
+                    if (!vsFotosMap[p.registro_id]) vsFotosMap[p.registro_id] = [];
+                    vsFotosMap[p.registro_id].push(p);
+                }
+            } catch(e) {}
+        }
+
+        vs_renderCierre(cierres);
+        vs_renderResumen(registros);
+        vs_renderTabla(registros);
+        vs_renderFiltroCaja(registros);
+        vs_renderFiltroLote(cierres);
+
+        document.getElementById('vs-filtro-estado').style.display = registros.length > 0 ? 'flex' : 'none';
+        document.getElementById('vs-btn-export').style.display = registros.length > 0 ? 'inline-block' : 'none';
+        document.querySelectorAll('.vs-btn-estado').forEach(b => b.classList.remove('activo'));
+        document.querySelector('.vs-btn-estado.todos').classList.add('activo');
+    } catch(e) {
+        document.getElementById('vs-tabla-contenido').innerHTML = `<div class="vs-estado-msg"><div class="icono">&#10060;</div><p>Error al cargar datos.</p></div>`;
+    }
+    document.getElementById('vs-btn-buscar').disabled = false;
+}
+
+function vs_renderFiltroLote(cierres) {
+    const sel = document.getElementById('vs-filtro-lote');
+    const grupo = document.getElementById('vs-grupo-lote');
+    sel.innerHTML = '<option value="">— Todos los lotes —</option>';
+    if (!cierres || cierres.length === 0) { grupo.style.display = 'none'; return; }
+    cierres.forEach((c, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        const estado = c.estado === 'completo' ? '\u2713' : c.estado === 'con_diferencias' ? '\u26A0' : '';
+        opt.textContent = `Lote ${c.lote_numero || '\u2014'} \u00B7 cierre ${c.hora_cierre ? c.hora_cierre.substring(0,5) : '\u2014'} \u00B7 $${Number(c.total_cierre||0).toFixed(2)} ${estado}`;
+        sel.appendChild(opt);
+    });
+    grupo.style.display = 'flex';
+    sel.value = '';
+}
+
+function vs_filtrarLote() {
+    const idx = document.getElementById('vs-filtro-lote').value;
+    if (idx === '') {
+        vs_renderCierre(vsCierresActuales);
+        vs_renderResumen(vsDatosActuales);
+        vs_renderTabla(vsDatosActuales);
+        document.getElementById('vs-tabla-count').textContent = vsDatosActuales.length + ' registros';
+        document.getElementById('vs-filtro-caja').value = '';
+        vs_renderFiltroCaja(vsDatosActuales);
+        document.querySelectorAll('.vs-btn-estado').forEach(b => b.classList.remove('activo'));
+        document.querySelector('.vs-btn-estado.todos').classList.add('activo');
+        return;
+    }
+    const cierre = vsCierresActuales[parseInt(idx)];
+    const prevCierre = parseInt(idx) > 0 ? vsCierresActuales[parseInt(idx) - 1] : null;
+    vs_renderCierre([cierre]);
+    const horaFin = cierre.hora_cierre || '23:59:59';
+    const horaInicio = prevCierre ? (prevCierre.hora_cierre || '00:00:00') : '00:00:00';
+    const datos = vsDatosActuales.filter(r => {
+        const h = r.hora_registro || '00:00:00';
+        return h > horaInicio && h <= horaFin;
+    });
+    vs_renderResumen(datos);
+    vs_renderTabla(datos);
+    vs_renderFiltroCaja(datos);
+    document.getElementById('vs-tabla-count').textContent = datos.length + ' registros';
+    document.getElementById('vs-filtro-caja').value = '';
+    document.querySelectorAll('.vs-btn-estado').forEach(b => b.classList.remove('activo'));
+    document.querySelector('.vs-btn-estado.todos').classList.add('activo');
+}
+
+function vs_renderFiltroCaja(registros) {
+    const sel = document.getElementById('vs-filtro-caja');
+    const grupo = document.getElementById('vs-grupo-caja');
+    const cajeros = [...new Set(registros.map(r => r.cajero_nombre || r.registrado_por_nombre || '').filter(Boolean))].sort();
+    sel.innerHTML = '<option value="">— Todas las cajas —</option>';
+    cajeros.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c; opt.textContent = c;
+        sel.appendChild(opt);
+    });
+    grupo.style.display = cajeros.length > 0 ? 'flex' : 'none';
+    sel.value = '';
+}
+
+function vs_filtrarCaja() {
+    const cajero = document.getElementById('vs-filtro-caja').value;
+    const datos = cajero
+        ? vsDatosActuales.filter(r => (r.cajero_nombre || r.registrado_por_nombre || '') === cajero)
+        : vsDatosActuales;
+    vs_renderResumen(datos);
+    vs_renderTabla(datos);
+    document.getElementById('vs-tabla-count').textContent = datos.length + ' registros';
+    document.querySelectorAll('.vs-btn-estado').forEach(b => b.classList.remove('activo'));
+    document.querySelector('.vs-btn-estado.todos').classList.add('activo');
+}
+
+function vs_renderCierre(cierres) {
+    const banner = document.getElementById('vs-cierre-banner');
+    if (!cierres || cierres.length === 0) {
+        banner.style.display = 'flex';
+        document.getElementById('vs-c-lote').textContent = 'Sin registro';
+        ['vs-c-terminal','vs-c-red','vs-c-total','vs-c-txn','vs-c-match','vs-c-hora','vs-c-verificado'].forEach(id => {
+            document.getElementById(id).textContent = '\u2014';
+        });
+        document.getElementById('vs-c-estado-badge').innerHTML = '<span class="vs-cierre-badge sin-cierre">Sin cierre registrado</span>';
+        return;
+    }
+    const c = cierres[0];
+    const extras = cierres.length > 1 ? ` (+${cierres.length - 1} mas)` : '';
+    banner.style.display = 'flex';
+    document.getElementById('vs-c-lote').textContent = (c.lote_numero || '\u2014') + extras;
+    document.getElementById('vs-c-terminal').textContent = c.terminal_id || '\u2014';
+    document.getElementById('vs-c-red').textContent = c.red || '\u2014';
+    document.getElementById('vs-c-total').textContent = c.total_cierre != null ? '$' + Number(c.total_cierre).toFixed(2) : '\u2014';
+    document.getElementById('vs-c-txn').textContent = c.cantidad_transacciones ?? '\u2014';
+    document.getElementById('vs-c-match').textContent = `${c.total_coinciden ?? '\u2014'} / ${c.total_faltantes ?? '\u2014'} / ${c.total_errores ?? '\u2014'}`;
+    document.getElementById('vs-c-hora').textContent = c.hora_cierre ? c.hora_cierre.substring(0,5) : '\u2014';
+    document.getElementById('vs-c-verificado').textContent = c.verificado_por_nombre || '\u2014';
+    let badgeClass = 'sin-cierre', badgeText = c.estado || '\u2014';
+    if (c.estado === 'completo') { badgeClass = 'completo'; badgeText = 'Completo'; }
+    else if (c.estado === 'con_diferencias') { badgeClass = 'diferencias'; badgeText = 'Con diferencias'; }
+    document.getElementById('vs-c-estado-badge').innerHTML = `<span class="vs-cierre-badge ${badgeClass}">${badgeText}</span>`;
+}
+
+function vs_renderResumen(datos) {
+    if (datos.length === 0) { document.getElementById('vs-resumen').style.display = 'none'; return; }
+    const total = datos.reduce((s, r) => s + (r.factura_total || 0), 0);
+    const cuadran = datos.filter(r => Math.round((r.factura_total||0)*100) === Math.round((r.vouchers_total||0)*100)).length;
+    const descuadran = datos.length - cuadran;
+    const difTotal = datos.reduce((s, r) => s + Math.abs(Math.round(((r.factura_total||0)-(r.vouchers_total||0))*100)/100), 0);
+    const conFoto = Object.values(vsFotosMap).reduce((s, arr) => s + arr.filter(p => p.foto_url).length, 0);
+    document.getElementById('vs-r-total').textContent = '$' + total.toFixed(2);
+    document.getElementById('vs-r-facturas').textContent = datos.length + ' facturas';
+    document.getElementById('vs-r-cuadran').textContent = cuadran;
+    document.getElementById('vs-r-pct-cuadra').textContent = ((cuadran / datos.length) * 100).toFixed(1) + '% del total';
+    document.getElementById('vs-r-descuadran').textContent = descuadran;
+    document.getElementById('vs-r-pct-descuadra').textContent = descuadran > 0 ? ((descuadran / datos.length) * 100).toFixed(1) + '% del total' : 'Sin diferencias';
+    document.getElementById('vs-r-diferencia').textContent = '$' + difTotal.toFixed(2);
+    document.getElementById('vs-r-fotos').textContent = conFoto;
+    document.getElementById('vs-resumen').style.display = 'grid';
+}
+
+function vs_renderTabla(datos) {
+    if (datos.length === 0) {
+        document.getElementById('vs-tabla-contenido').innerHTML = `<div class="vs-estado-msg"><div class="icono">&#128205;</div><p>No se encontraron transacciones para esta busqueda.</p></div>`;
+        document.getElementById('vs-tabla-count').textContent = '';
+        return;
+    }
+    document.getElementById('vs-tabla-count').textContent = datos.length + ' registros';
+    let html = `<table><thead><tr>
+        <th>Fotos</th><th>Hora</th><th># Factura</th><th>Cajero</th>
+        <th>Tarjeta</th><th>Red</th>
+        <th style="text-align:right">Monto Factura</th>
+        <th style="text-align:right">Monto Vouchers</th>
+        <th style="text-align:right">Diferencia Real</th>
+        <th>Estado</th><th>Motivo</th><th>Local</th>
+    </tr></thead><tbody>`;
+    for (const r of datos) {
+        const facTotal = Math.round((r.factura_total || 0) * 100);
+        const vchTotal = Math.round((r.vouchers_total || 0) * 100);
+        const diffReal = (facTotal - vchTotal) / 100;
+        const cuadra = diffReal === 0;
+        const propina = (r.propina || 0) > 0;
+        let badge, motivo;
+        if (cuadra) {
+            badge = '<span class="vs-badge cuadra">&#10003; Cuadra</span>';
+            motivo = '&mdash;';
+        } else if (propina && Math.abs(diffReal) === Math.round(r.propina * 100) / 100) {
+            badge = '<span class="vs-badge propina">Propina</span>';
+            motivo = `Propina $${r.propina.toFixed(2)}`;
+        } else {
+            badge = '<span class="vs-badge descuadra">&#9888; Descuadra</span>';
+            motivo = escapeHtml(r.motivo_diferencia || r.comentario_diferencia || '') || '&mdash;';
+        }
+        const diffStr = cuadra
+            ? '<span class="vs-diff-pos">$0.00</span>'
+            : `<span class="vs-diff-neg">${diffReal > 0 ? '+' : ''}$${diffReal.toFixed(2)}</span>`;
+        const pagos = vsFotosMap[r.id] || [];
+        const nFotos = pagos.filter(p => p.foto_url).length || (r.foto_storage_path ? 1 : 0);
+        let fotoCell;
+        if (nFotos > 0) {
+            const label = nFotos === 1 ? '1 foto' : `${nFotos} fotos`;
+            fotoCell = `<button class="vs-btn-ver-fotos" onclick="vs_verFotos(${r.id})">&#128247; ${label}</button>`;
+        } else {
+            fotoCell = '<span class="vs-btn-sin-foto">Sin foto</span>';
+        }
+        const tarjetas = pagos.length > 0 ? pagos.map(p => escapeHtml(p.tarjeta_tipo || '\u2014')).join('<br>') : '\u2014';
+        const redes    = pagos.length > 0 ? pagos.map(p => escapeHtml(p.red || '\u2014')).join('<br>') : '\u2014';
+        html += `<tr>
+            <td>${fotoCell}</td>
+            <td class="vs-hora">${r.hora_registro ? r.hora_registro.substring(0,5) : '\u2014'}</td>
+            <td class="vs-factura">${escapeHtml(r.numero_factura || '\u2014')}</td>
+            <td>${escapeHtml(r.cajero_nombre || r.registrado_por_nombre || '\u2014')}</td>
+            <td style="font-size:12px">${tarjetas}</td>
+            <td style="font-size:12px">${redes}</td>
+            <td class="vs-monto">$${(r.factura_total || 0).toFixed(2)}</td>
+            <td class="vs-monto">$${(r.vouchers_total || 0).toFixed(2)}</td>
+            <td style="text-align:right">${diffStr}</td>
+            <td>${badge}</td>
+            <td style="font-size:12px;color:#64748b">${motivo}</td>
+            <td style="font-size:12px;color:#64748b">${escapeHtml(r.sucursal_nombre || '\u2014')}</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('vs-tabla-contenido').innerHTML = html;
+}
+
+function vs_limpiarUrl(url) {
+    return url ? url.replace(/\s+/g, '') : null;
+}
+
+function vs_verFotos(registroId) {
+    const r = vsDatosActuales.find(x => x.id === registroId);
+    if (!r) return;
+    const pagos = vsFotosMap[registroId] || [];
+    document.getElementById('vs-modal-titulo').textContent = r.numero_factura || 'Factura';
+    document.getElementById('vs-modal-subtitulo').textContent =
+        `${r.sucursal_nombre || ''} \u00B7 ${r.fecha_registro || ''} \u00B7 Cajero: ${r.cajero_nombre || r.registrado_por_nombre || '\u2014'} \u00B7 Total: $${(r.factura_total||0).toFixed(2)}`;
+    let fotosHtml = '';
+    if (pagos.length > 0 && pagos.some(p => p.foto_url)) {
+        pagos.filter(p => p.foto_url).forEach((p, idx) => {
+            const url = vs_limpiarUrl(p.foto_url);
+            const label = `Voucher ${idx+1}: ${escapeHtml(p.tarjeta_tipo || '\u2014')} \u00B7 $${(p.total||0).toFixed(2)}${p.red ? ' \u00B7 ' + escapeHtml(p.red) : ''}`;
+            fotosHtml += `<div class="vs-modal-foto-item">
+                <img class="vs-modal-img" src="${url}" alt="Voucher ${idx+1}" onerror="this.parentElement.style.display='none'">
+                <div class="vs-modal-foto-label">${label}</div>
+            </div>`;
+        });
+    } else if (r.foto_storage_path) {
+        fotosHtml = `<div class="vs-modal-foto-item">
+            <img class="vs-modal-img" src="${VS_STORAGE + r.foto_storage_path}" alt="Voucher" onerror="this.parentElement.style.display='none'">
+            <div class="vs-modal-foto-label">Voucher escaneado</div>
+        </div>`;
+    } else {
+        fotosHtml = '<p style="color:#94a3b8">No hay fotos disponibles</p>';
+    }
+    document.getElementById('vs-modal-fotos').innerHTML = fotosHtml;
+    document.getElementById('vs-modal-foto').classList.add('visible');
+}
+
+function vs_cerrarModal(e) {
+    if (e.target === document.getElementById('vs-modal-foto')) {
+        document.getElementById('vs-modal-foto').classList.remove('visible');
+    }
+}
+
+function vs_filtrarEstado(estado, btn) {
+    document.querySelectorAll('.vs-btn-estado').forEach(b => b.classList.remove('activo'));
+    btn.classList.add('activo');
+    let datos = vsDatosActuales;
+    if (estado === 'cuadra') datos = vsDatosActuales.filter(r => Math.round((r.factura_total||0)*100) === Math.round((r.vouchers_total||0)*100));
+    if (estado === 'descuadra') datos = vsDatosActuales.filter(r => Math.round((r.factura_total||0)*100) !== Math.round((r.vouchers_total||0)*100));
+    vs_renderTabla(datos);
+    document.getElementById('vs-tabla-count').textContent = datos.length + ' registros';
+}
+
+function vs_exportarCSV() {
+    const fecha = document.getElementById('vs-filtro-fecha').value;
+    const localEl = document.getElementById('vs-filtro-local');
+    const localNombre = localEl.options[localEl.selectedIndex].text.replace(/— ?| ?—/g, '').trim();
+    let csv = 'Hora,Factura,Cajero,Tarjeta,Red,Monto Factura,Monto Vouchers,Diferencia Real,Estado,Motivo,Local\n';
+    for (const r of vsDatosActuales) {
+        const facTotal = Math.round((r.factura_total||0)*100);
+        const vchTotal = Math.round((r.vouchers_total||0)*100);
+        const diffReal = (facTotal - vchTotal) / 100;
+        const pagos = vsFotosMap[r.id] || [];
+        const estado = diffReal === 0 ? 'Cuadra' : ((r.propina || 0) > 0 ? 'Propina' : 'Descuadra');
+        const motivo = (r.propina || 0) > 0 ? `Propina $${r.propina.toFixed(2)}` : (r.motivo_diferencia || '');
+        csv += [
+            r.hora_registro ? r.hora_registro.substring(0,5) : '',
+            r.numero_factura || '',
+            r.cajero_nombre || r.registrado_por_nombre || '',
+            pagos.map(p => p.tarjeta_tipo || '').join(';'),
+            pagos.map(p => p.red || '').join(';'),
+            (r.factura_total || 0).toFixed(2),
+            (r.vouchers_total || 0).toFixed(2),
+            diffReal.toFixed(2),
+            estado, motivo,
+            r.sucursal_nombre || ''
+        ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',') + '\n';
+    }
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `vouchers_${fecha}_${localNombre.replace(/ /g,'_')}.csv`;
+    a.click();
 }
