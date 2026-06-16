@@ -10022,9 +10022,10 @@ function vs_renderTabla(datos) {
     document.getElementById('vs-tabla-count').textContent = datos.length + ' registros';
     let html = `<table><thead><tr>
         <th>Fotos</th><th>Hora</th><th># Factura</th><th>Cajero</th>
-        <th>Tarjeta</th><th>Red</th>
+        <th>Tarjeta</th><th>Red</th><th>Num. Transaccion</th>
         <th style="text-align:right">Monto Factura</th>
         <th style="text-align:right">Monto Vouchers</th>
+        <th style="text-align:right">Propina</th>
         <th style="text-align:right">Diferencia Real</th>
         <th>Estado</th><th>Motivo</th><th>Local</th>
     </tr></thead><tbody>`;
@@ -10059,6 +10060,8 @@ function vs_renderTabla(datos) {
         }
         const tarjetas = pagos.length > 0 ? pagos.map(p => escapeHtml(p.tarjeta_tipo || '\u2014')).join('<br>') : '\u2014';
         const redes    = pagos.length > 0 ? pagos.map(p => escapeHtml(p.red || '\u2014')).join('<br>') : '\u2014';
+        const numTxns  = pagos.length > 0 ? pagos.map(p => escapeHtml(p.numero_transaccion || '\u2014')).join('<br>') : '\u2014';
+        const propinaTxt = (r.propina || 0) > 0 ? `<span style="color:#92400e;font-weight:600">$${Number(r.propina).toFixed(2)}</span>` : '\u2014';
         html += `<tr>
             <td>${fotoCell}</td>
             <td class="vs-hora">${r.hora_registro ? r.hora_registro.substring(0,5) : '\u2014'}</td>
@@ -10066,8 +10069,10 @@ function vs_renderTabla(datos) {
             <td>${escapeHtml(r.cajero_nombre || r.registrado_por_nombre || '\u2014')}</td>
             <td style="font-size:12px">${tarjetas}</td>
             <td style="font-size:12px">${redes}</td>
+            <td style="font-size:12px;font-family:monospace">${numTxns}</td>
             <td class="vs-monto">$${(r.factura_total || 0).toFixed(2)}</td>
             <td class="vs-monto">$${(r.vouchers_total || 0).toFixed(2)}</td>
+            <td style="text-align:right">${propinaTxt}</td>
             <td style="text-align:right">${diffStr}</td>
             <td>${badge}</td>
             <td style="font-size:12px;color:#64748b">${motivo}</td>
