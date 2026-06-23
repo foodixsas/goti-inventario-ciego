@@ -1281,12 +1281,16 @@ function showMainScreen() {
         const mod = btn.dataset.view;
         if (isAdmin) {
             btn.style.display = '';  // Admin ve todo
-        } else if (mod === 'usuarios' || mod === 'config-productos') {
+        } else if (mod === 'usuarios' || mod === 'config-productos' || mod === 'flujo-caja') {
             btn.style.display = 'none';  // admin-only views
         } else {
             btn.style.display = userModulos.includes(mod) ? '' : 'none';
         }
     });
+
+    // Ocultar modulos admin-only completos para no-admins
+    const moduloFlujoCaja = document.querySelector('.nav-module[data-module="flujocaja"]');
+    if (moduloFlujoCaja) moduloFlujoCaja.style.display = isAdmin ? '' : 'none';
 
     // Recargar bodegas filtradas segun usuario
     cargarBodegas();
