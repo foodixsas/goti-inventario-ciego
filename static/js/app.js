@@ -1394,6 +1394,11 @@ function cambiarVista(viewName) {
         vs_initVouchers();
     }
 
+    // Auto-inicializar flujo de caja al entrar
+    if (viewName === 'flujo-caja') {
+        if (typeof fc_init === 'function') fc_init();
+    }
+
     // Auto-inicializar depositos al entrar
     if (viewName === 'dep-pendientes') { depCargarPendientes(); }
     if (viewName === 'dep-historial' || viewName === 'dep-descuadres' || viewName === 'dep-dashboard') {

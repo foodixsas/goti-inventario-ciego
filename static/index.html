@@ -73,6 +73,56 @@
         .vs-modal-foto-item { display:flex; flex-direction:column; align-items:center; gap:8px; }
         .vs-modal-img { max-width:min(420px,90vw); border-radius:10px; box-shadow:0 8px 32px rgba(0,0,0,0.6); cursor:zoom-in; }
         .vs-modal-foto-label { color:#e2e8f0; font-size:12px; font-weight:600; background:rgba(255,255,255,0.1); padding:4px 12px; border-radius:20px; }
+
+        /* ===== FLUJO DE CAJA MODULE ===== */
+        .fc-container { background:white; border-radius:10px; border:1px solid #e2e8f0; overflow-x:auto; }
+        .fc-header { padding:16px 20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+        .fc-titulo { font-size:16px; font-weight:700; color:#1e293b; }
+        .fc-toolbar { display:flex; gap:8px; }
+        .fc-btn { padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; border:none; transition:all 0.15s; }
+        .fc-btn-expand { background:#4caf50; color:white; }
+        .fc-btn-expand:hover { background:#43a047; }
+        .fc-btn-collapse { background:#607d8b; color:white; }
+        .fc-btn-collapse:hover { background:#546e7a; }
+        .fc-info { font-size:11px; color:#64748b; padding:8px 20px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
+        .fc-tabla { width:max-content; min-width:100%; border-collapse:collapse; font-size:11px; }
+        .fc-tabla th, .fc-tabla td { border:1px solid #e2e8f0; padding:6px 10px; white-space:nowrap; }
+        .fc-tabla .col-concepto { min-width:220px; text-align:left; position:sticky; left:0; background:white; z-index:10; font-weight:500; }
+        .fc-tabla .col-semana { min-width:90px; text-align:center; cursor:pointer; }
+        .fc-tabla .dia-col { min-width:75px; text-align:center; font-size:10px; display:none; }
+        .fc-tabla .dia-col.visible { display:table-cell; }
+        .fc-tabla .total-col { background:#e8eaf6 !important; font-weight:bold; }
+        .fc-tabla .header-semana { background:#1565c0; color:white; font-weight:bold; }
+        .fc-tabla .header-semana:hover { background:#1976d2; }
+        .fc-tabla .header-dias { background:#e3f2fd; font-size:9px; }
+        .fc-tabla .row-section td { background:#123450; color:white; font-weight:bold; }
+        .fc-tabla .row-subsection td { background:#e8f5e9; font-weight:bold; }
+        .fc-tabla .row-banco td { background:#bbdefb; font-weight:bold; }
+        .fc-tabla .row-banco-item td { background:#fafafa; }
+        .fc-tabla .row-banco-total td { background:#e3f2fd; font-weight:bold; font-style:italic; }
+        .fc-tabla .row-total td { background:#c8e6c9; font-weight:bold; }
+        .fc-tabla .monto { text-align:right; font-family:'JetBrains Mono',monospace; }
+        .fc-tabla .dia-sab, .fc-tabla .dia-dom { background:#fff8e1 !important; }
+        .fc-tabla .indent-1 { padding-left:20px !important; }
+        .fc-tabla .indent-2 { padding-left:35px !important; }
+        .fc-tabla .indent-3 { padding-left:50px !important; }
+        .fc-input { width:70px; padding:3px 6px; border:1px solid #ddd; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:10px; text-align:right; background:#fafafa; }
+        .fc-input:focus { outline:none; border-color:#1565c0; background:white; }
+        .fc-input-nombre { width:110px; padding:3px 6px; border:1px solid #ddd; border-radius:4px; font-size:10px; }
+        .fc-btn-add { background:linear-gradient(to bottom,#4caf50,#388e3c); color:white; border:none; border-radius:4px; width:20px; height:18px; font-size:14px; font-weight:bold; cursor:pointer; margin-left:6px; box-shadow:0 1px 3px rgba(0,0,0,0.2); }
+        .fc-btn-add:hover { background:linear-gradient(to bottom,#66bb6a,#43a047); }
+        .fc-btn-del { background:linear-gradient(to bottom,#e57373,#ef5350); color:white; border:none; border-radius:4px; width:18px; height:16px; font-size:12px; font-weight:bold; cursor:pointer; margin-left:4px; }
+        .fc-btn-del:hover { background:linear-gradient(to bottom,#f44336,#d32f2f); }
+        .fc-loading { text-align:center; padding:60px 20px; color:#94a3b8; }
+        .fc-loading .spinner { width:40px; height:40px; border:4px solid #e2e8f0; border-top-color:#123450; border-radius:50%; animation:spin 0.8s linear infinite; margin:0 auto 16px; }
+        .fc-resumen { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:20px; }
+        .fc-card { background:white; border-radius:12px; padding:16px 20px; border:1px solid #e2e8f0; }
+        .fc-card-label { font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; }
+        .fc-card-valor { font-size:28px; font-weight:700; margin-top:6px; }
+        .fc-card.azul .fc-card-valor { color:#123450; }
+        .fc-card.verde .fc-card-valor { color:#10b981; }
+        .fc-card.rojo .fc-card-valor { color:#ef4444; }
+        @keyframes spin { to { transform:rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -286,6 +336,20 @@
                     <div class="nav-module-items">
                         <button class="nav-btn" data-view="vouchers" style="display:none;">
                             <i class="fas fa-search-dollar"></i><span>Consultar</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- MODULO: FLUJO DE CAJA -->
+                <div class="nav-module" data-module="flujocaja">
+                    <button class="nav-module-header" onclick="toggleModule('flujocaja')">
+                        <i class="fas fa-chart-line"></i>
+                        <span>Flujo de Caja</span>
+                        <i class="fas fa-chevron-down nav-module-arrow"></i>
+                    </button>
+                    <div class="nav-module-items" style="display:none;">
+                        <button class="nav-btn" data-view="flujo-caja" style="display:none;">
+                            <i class="fas fa-coins"></i><span>Proyeccion</span>
                         </button>
                     </div>
                 </div>
@@ -2192,6 +2256,45 @@
                     </div>
                 </div>
 
+                <!-- Vista Flujo de Caja -->
+                <div id="view-flujo-caja" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-chart-line"></i> Flujo de Caja Proyectado</h2>
+                    </div>
+
+                    <div class="fc-resumen" id="fc-resumen" style="display:none">
+                        <div class="fc-card azul">
+                            <div class="fc-card-label">Total Ingresos (4 sem)</div>
+                            <div class="fc-card-valor" id="fc-total-ingresos">$0</div>
+                        </div>
+                        <div class="fc-card verde">
+                            <div class="fc-card-label">Saldo Produbanco</div>
+                            <div class="fc-card-valor" id="fc-saldo-produbanco">$0</div>
+                        </div>
+                        <div class="fc-card rojo">
+                            <div class="fc-card-label">Total Egresos</div>
+                            <div class="fc-card-valor" id="fc-total-egresos">$0</div>
+                        </div>
+                    </div>
+
+                    <div class="fc-container">
+                        <div class="fc-header">
+                            <div class="fc-titulo">Proyeccion de Ingresos y Egresos</div>
+                            <div class="fc-toolbar">
+                                <button class="fc-btn fc-btn-expand" onclick="fc_expandirTodo()"><i class="fas fa-expand"></i> Expandir</button>
+                                <button class="fc-btn fc-btn-collapse" onclick="fc_colapsarTodo()"><i class="fas fa-compress"></i> Colapsar</button>
+                            </div>
+                        </div>
+                        <div class="fc-info" id="fc-info">Cargando datos desde Azure...</div>
+                        <div id="fc-tabla-container">
+                            <div class="fc-loading">
+                                <div class="spinner"></div>
+                                <p>Calculando proyecciones...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </main>
         </div>
     </div>
@@ -2260,5 +2363,6 @@
 
     <script src="js/config.js?v=20260317a"></script>
     <script src="js/app.js?v=20260317a"></script>
+    <script src="js/flujo-caja.js?v=20260623a"></script>
 </body>
 </html>

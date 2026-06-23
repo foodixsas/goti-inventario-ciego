@@ -904,6 +904,90 @@ def reporte_motivos():
         if conn:
             release_db(conn)
 
+@app.route('/api/reportes/personas-errores', methods=['GET'])
+def reporte_personas_errores():
+    fecha_desde = request.args.get('fecha_desde')
+    fecha_hasta = request.args.get('fecha_hasta')
+    bodegas = request.args.getlist('bodega')
+    bodegas = [b for b in bodegas if b]
+
+    if not fecha_desde or not fecha_hasta:
+        return jsonify({'error': 'fecha_desde y fecha_hasta requeridos'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        query = """
+            SELECT
+                contado_por,
+                COUNT(*) as total_conteos,
+                SUM(CASE
+                    WHEN cantidad_contada IS NOT NULL
+                     AND cantidad_contada != cantidad
+                     AND COALESCE(justificado, FALSE) = FALSE
+                    THEN 1 ELSE 0
+                END) as total_errores
+            FROM goti.inventario_ciego_conteos
+            WHERE fecha >= %s AND fecha <= %s
+              AND contado_por IS NOT NULL AND contado_por != ''
+              AND cantidad_contada IS NOT NULL
+        """
+        params = [fecha_desde, fecha_hasta]
+
+        if len(bodegas) == 1:
+            query += " AND local = %s"
+            params.append(bodegas[0])
+        elif len(bodegas) > 1:
+            query += " AND local IN (" + ",".join(["%s"] * len(bodegas)) + ")"
+            params.extend(bodegas)
+
+        query += """
+            GROUP BY contado_por
+            HAVING COUNT(*) >= 5
+            ORDER BY (SUM(CASE
+                WHEN cantidad_contada IS NOT NULL
+                 AND cantidad_contada != cantidad
+                 AND COALESCE(justificado, FALSE) = FALSE
+                THEN 1 ELSE 0
+            END) * 100.0 / COUNT(*)) DESC
+            LIMIT 10
+        """
+
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+        # Obtener nombres reales si existen
+        nombres_query = "SELECT username, nombre FROM goti.usuarios WHERE username = ANY(%s)"
+        usernames = [r['contado_por'] for r in rows]
+        nombres_map = {}
+        if usernames:
+            cur.execute(nombres_query, (usernames,))
+            for u in cur.fetchall():
+                nombres_map[u['username']] = u['nombre']
+
+        resultado = []
+        for r in rows:
+            total = r['total_conteos']
+            errores = r['total_errores']
+            pct = round(errores * 100.0 / total, 1) if total > 0 else 0
+            resultado.append({
+                'persona': nombres_map.get(r['contado_por'], r['contado_por']),
+                'username': r['contado_por'],
+                'total_conteos': total,
+                'total_errores': errores,
+                'porcentaje_error': pct
+            })
+
+        return jsonify(resultado)
+    except Exception as e:
+        print(f"Error en /api/reportes/personas-errores: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
 @app.route('/api/reportes/diferencias-fecha', methods=['GET'])
 def reporte_diferencias_fecha():
     """Productos con diferencia para una fecha y bodega específica"""
@@ -6380,6 +6464,199 @@ def carga_inicial_productos():
         return jsonify({'error': str(e)}), 500
     finally:
         if conn: release_db(conn)
+
+
+# ============================================================
+# MODULO FLUJO DE CAJA
+# ============================================================
+
+def fc_get_movimientos_db():
+    """Conexion a BD movimientos (diferente de InventariosLocales)"""
+    return psycopg2.connect(
+        host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
+        database='movimientos',
+        user=os.environ.get('DB_USER', 'adminChios'),
+        password=os.environ.get('DB_PASSWORD', 'Burger2023'),
+        port=os.environ.get('DB_PORT', '5432'),
+        sslmode='require'
+    )
+
+def fc_dia_deposito_tc(fecha_venta):
+    """Calcula dia de deposito TC (2 dias habiles)"""
+    dia = fecha_venta.weekday()
+    if dia == 0: return fecha_venta + timedelta(days=2)  # Lun->Mie
+    elif dia == 1: return fecha_venta + timedelta(days=2)  # Mar->Jue
+    elif dia == 2: return fecha_venta + timedelta(days=2)  # Mie->Vie
+    elif dia == 3: return fecha_venta + timedelta(days=4)  # Jue->Lun
+    elif dia == 4: return fecha_venta + timedelta(days=3)  # Vie->Lun
+    elif dia == 5: return fecha_venta + timedelta(days=3)  # Sab->Mar
+    else: return fecha_venta + timedelta(days=2)  # Dom->Mar
+
+def fc_dia_deposito_efectivo_g1(fecha_cobro):
+    """Grupo 1 efectivo: libran Dom/Lun"""
+    dia = fecha_cobro.weekday()
+    if dia == 0: return fecha_cobro + timedelta(days=1)  # Lun->Mar
+    elif dia == 1: return fecha_cobro + timedelta(days=1)  # Mar->Mie
+    elif dia == 2: return fecha_cobro + timedelta(days=1)
+    elif dia == 3: return fecha_cobro + timedelta(days=1)
+    elif dia == 4: return fecha_cobro + timedelta(days=1)
+    elif dia == 5: return fecha_cobro + timedelta(days=3)  # Sab->Mar
+    else: return fecha_cobro + timedelta(days=2)  # Dom->Mar
+
+def fc_dia_deposito_efectivo_g2(fecha_cobro):
+    """Grupo 2 efectivo: libran Lun/Mar"""
+    dia = fecha_cobro.weekday()
+    if dia == 0: return fecha_cobro + timedelta(days=2)  # Lun->Mie
+    elif dia == 1: return fecha_cobro + timedelta(days=1)  # Mar->Mie
+    elif dia == 2: return fecha_cobro + timedelta(days=1)
+    elif dia == 3: return fecha_cobro + timedelta(days=1)
+    elif dia == 4: return fecha_cobro + timedelta(days=1)
+    elif dia == 5: return fecha_cobro + timedelta(days=4)  # Sab->Mie
+    else: return fecha_cobro + timedelta(days=3)  # Dom->Mie
+
+def fc_dia_deposito_deuna(fecha_cobro):
+    """DEUNA deposita en Pichincha dia siguiente (o martes si fin de semana)"""
+    dia = fecha_cobro.weekday()
+    if dia <= 3: return fecha_cobro + timedelta(days=1)  # Lun-Jue -> dia siguiente
+    elif dia == 4: return fecha_cobro + timedelta(days=3)  # Vie->Lun
+    elif dia == 5: return fecha_cobro + timedelta(days=3)  # Sab->Mar
+    else: return fecha_cobro + timedelta(days=2)  # Dom->Mar
+
+GRUPO1_EFECTIVO = ['REAL', 'FLOREANA', 'PORTUGAL', 'SANTO CACHON PORTUGAL']
+GRUPO2_EFECTIVO = ['SIMON BOLON', 'SANTO CACHON REAL']
+
+@app.route('/api/flujo-caja/datos', methods=['GET'])
+def flujo_caja_datos():
+    """Endpoint para obtener datos de flujo de caja"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+
+        # Fechas: 5 semanas desde inicio de semana actual
+        hoy = datetime.now().date()
+        dias_hasta_lunes = hoy.weekday()
+        lunes = hoy - timedelta(days=dias_hasta_lunes)
+        fecha_inicio_datos = lunes - timedelta(days=7)
+
+        # Generar semanas
+        semanas = []
+        for i in range(5):
+            inicio = lunes + timedelta(weeks=i)
+            fin = inicio + timedelta(days=6)
+            num = inicio.isocalendar()[1]
+            dias = [str(inicio + timedelta(days=j)) for j in range(7)]
+            semanas.append({'num': num, 'inicio': str(inicio), 'fin': str(fin), 'dias': dias})
+
+        # Obtener ventas TC
+        cur.execute('''
+            WITH unicos AS (
+                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, valor
+                FROM contifico_cobrospagos
+                WHERE tipo_registro = 'CLI' AND forma_cobro_pago ILIKE '%tarjeta%' AND fecha >= %s
+            )
+            SELECT fecha, SUM(valor) as total FROM unicos GROUP BY fecha ORDER BY fecha
+        ''', (fecha_inicio_datos,))
+        ventas_tc = {str(r[0]): float(r[1]) for r in cur.fetchall()}
+
+        # Calcular depositos TC (86% neto)
+        depositos_tc = {}
+        for fecha_str, total in ventas_tc.items():
+            fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+            fecha_dep = fc_dia_deposito_tc(fecha)
+            dep_str = str(fecha_dep)
+            if dep_str not in depositos_tc:
+                depositos_tc[dep_str] = {'bruto': 0, 'neto': 0}
+            depositos_tc[dep_str]['bruto'] += total
+            depositos_tc[dep_str]['neto'] += total * 0.86
+
+        # Obtener cobros efectivo
+        cur.execute('''
+            WITH unicos AS (
+                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, centro_costo, valor
+                FROM contifico_cobrospagos
+                WHERE tipo_registro = 'CLI' AND forma_cobro_pago = 'Efectivo' AND fecha >= %s
+            )
+            SELECT fecha, centro_costo, SUM(valor) as total FROM unicos GROUP BY fecha, centro_costo ORDER BY fecha
+        ''', (fecha_inicio_datos,))
+        cobros_efectivo = {}
+        for r in cur.fetchall():
+            fecha = str(r[0])
+            local = r[1]
+            total = float(r[2])
+            if fecha not in cobros_efectivo:
+                cobros_efectivo[fecha] = {'G1': 0, 'G2': 0}
+            if local in GRUPO1_EFECTIVO:
+                cobros_efectivo[fecha]['G1'] += total
+            elif local in GRUPO2_EFECTIVO:
+                cobros_efectivo[fecha]['G2'] += total
+
+        # Calcular depositos efectivo
+        depositos_efectivo = {}
+        for fecha_str, grupos in cobros_efectivo.items():
+            fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+            if grupos['G1'] > 0:
+                dep = str(fc_dia_deposito_efectivo_g1(fecha))
+                if dep not in depositos_efectivo:
+                    depositos_efectivo[dep] = {'total': 0}
+                depositos_efectivo[dep]['total'] += grupos['G1']
+            if grupos['G2'] > 0:
+                dep = str(fc_dia_deposito_efectivo_g2(fecha))
+                if dep not in depositos_efectivo:
+                    depositos_efectivo[dep] = {'total': 0}
+                depositos_efectivo[dep]['total'] += grupos['G2']
+
+        # Obtener cobros DEUNA
+        cur.execute('''
+            WITH unicos AS (
+                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, valor
+                FROM contifico_cobrospagos
+                WHERE tipo_registro = 'CLI' AND forma_cobro_pago = 'Transferencia'
+                AND cta_afectada = 'BANCO DEUNA' AND fecha >= %s
+            )
+            SELECT fecha, SUM(valor) as total FROM unicos GROUP BY fecha ORDER BY fecha
+        ''', (fecha_inicio_datos,))
+        cobros_deuna = {str(r[0]): float(r[1]) for r in cur.fetchall()}
+
+        # Calcular depositos DEUNA
+        depositos_deuna = {}
+        for fecha_str, total in cobros_deuna.items():
+            fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+            dep = str(fc_dia_deposito_deuna(fecha))
+            if dep not in depositos_deuna:
+                depositos_deuna[dep] = {'total': 0}
+            depositos_deuna[dep]['total'] += total
+
+        # Calcular totales por semana
+        totales_produbanco = {}
+        totales_pichincha = {}
+        for sem in semanas:
+            total_prod = 0
+            total_pich = 0
+            for dia in sem['dias']:
+                total_prod += depositos_tc.get(dia, {}).get('neto', 0)
+                total_prod += depositos_efectivo.get(dia, {}).get('total', 0)
+                total_pich += depositos_deuna.get(dia, {}).get('total', 0)
+            totales_produbanco[sem['num']] = total_prod
+            totales_pichincha[sem['num']] = total_pich
+
+        return jsonify({
+            'ok': True,
+            'semanas': semanas,
+            'depositos_tc': depositos_tc,
+            'depositos_efectivo': depositos_efectivo,
+            'depositos_deuna': depositos_deuna,
+            'totales_produbanco': totales_produbanco,
+            'totales_pichincha': totales_pichincha
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 if __name__ == '__main__':
