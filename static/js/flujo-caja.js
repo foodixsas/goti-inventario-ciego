@@ -583,12 +583,18 @@ function fc_recalcularEgresos() {
             }
         });
 
-        document.querySelector(`.fc-total-pagos-fijos-sem[data-semana="${sem}"]`).textContent = fc_formatMonto(totalPagosFijos);
-        document.querySelector(`.fc-total-pagos-fijos-total[data-semana="${sem}"]`).textContent = fc_formatMonto(totalPagosFijos);
-        document.querySelector(`.fc-total-proveedores-sem[data-semana="${sem}"]`).textContent = fc_formatMonto(totalProveedores);
-        document.querySelector(`.fc-total-proveedores-total[data-semana="${sem}"]`).textContent = fc_formatMonto(totalProveedores);
-        document.querySelector(`.fc-total-egresos-sem[data-semana="${sem}"]`).textContent = fc_formatMonto(totalPagosFijos + totalProveedores);
-        document.querySelector(`.fc-total-egresos-total[data-semana="${sem}"]`).textContent = fc_formatMonto(totalPagosFijos + totalProveedores);
+        const pfSem = document.querySelector(`.fc-total-pagos-fijos-sem[data-semana="${sem}"]`);
+        const pfTotal = document.querySelector(`.fc-total-pagos-fijos-total[data-semana="${sem}"]`);
+        const ppSem = document.querySelector(`.fc-total-proveedores-sem[data-semana="${sem}"]`);
+        const ppTotal = document.querySelector(`.fc-total-proveedores-total[data-semana="${sem}"]`);
+        const teSem = document.querySelector(`.fc-total-egresos-sem[data-semana="${sem}"]`);
+        const teTotal = document.querySelector(`.fc-total-egresos-total[data-semana="${sem}"]`);
+        if (pfSem) pfSem.textContent = fc_formatMonto(totalPagosFijos);
+        if (pfTotal) pfTotal.textContent = fc_formatMonto(totalPagosFijos);
+        if (ppSem) ppSem.textContent = fc_formatMonto(totalProveedores);
+        if (ppTotal) ppTotal.textContent = fc_formatMonto(totalProveedores);
+        if (teSem) teSem.textContent = fc_formatMonto(totalPagosFijos + totalProveedores);
+        if (teTotal) teTotal.textContent = fc_formatMonto(totalPagosFijos + totalProveedores);
     });
 
     // Actualizar totales por fila
@@ -732,15 +738,18 @@ function fc_actualizarResumen() {
         }
     });
 
-    document.getElementById('fc-total-ingresos').textContent = '$' + fc_formatMonto(totalIngresos);
-    document.getElementById('fc-total-egresos').textContent = '$' + fc_formatMonto(totalEgresos);
+    const totalIngEl = document.getElementById('fc-total-ingresos');
+    const totalEgrEl = document.getElementById('fc-total-egresos');
+    if (totalIngEl) totalIngEl.textContent = '$' + fc_formatMonto(totalIngresos);
+    if (totalEgrEl) totalEgrEl.textContent = '$' + fc_formatMonto(totalEgresos);
 
     // Saldo final de la ultima semana
     const ultimaSem = fc_semanas[fc_semanas.length - 1];
     if (ultimaSem) {
         const sfCell = document.querySelector(`.fc-saldo-final-sem[data-semana="${ultimaSem.num}"]`);
         if (sfCell && sfCell.textContent !== '-') {
-            document.getElementById('fc-saldo-produbanco').textContent = '$' + sfCell.textContent;
+            const saldoEl = document.getElementById('fc-saldo-produbanco');
+            if (saldoEl) saldoEl.textContent = '$' + sfCell.textContent;
         }
     }
 }
