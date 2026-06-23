@@ -63,21 +63,6 @@ def _get_pool():
         )
     return _connection_pool
 
-def _get_movimientos_pool():
-    """Pool separado para BD movimientos"""
-    global _movimientos_pool
-    if _movimientos_pool is None:
-        _movimientos_pool = SimpleConnectionPool(
-            minconn=1, maxconn=3,
-            host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
-            database='movimientos',
-            user=os.environ.get('DB_USER', 'adminChios'),
-            password=os.environ.get('DB_PASSWORD', 'Burger2023'),
-            port=os.environ.get('DB_PORT', '5432'),
-            sslmode='require',
-            connect_timeout=10
-        )
-    return _movimientos_pool
 
 def get_db():
     """Obtiene conexion del pool, validando que este viva"""
@@ -6488,21 +6473,11 @@ def carga_inicial_productos():
 # ============================================================
 
 def fc_get_movimientos_db():
-    """Conexion a BD movimientos con reintentos"""
+    """Conexion directa a BD movimientos (sin pool, se cierra al terminar)"""
     import time
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Intentar pool primero
-            try:
-                conn = _get_movimientos_pool().getconn()
-                conn.cursor().execute("SELECT 1")
-                conn.rollback()
-                return conn
-            except Exception:
-                pass
-
-            # Fallback a conexion directa
             conn = psycopg2.connect(
                 host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
                 database='movimientos',
@@ -6516,29 +6491,17 @@ def fc_get_movimientos_db():
         except Exception as e:
             print(f"fc_get_movimientos_db intento {attempt+1}/{max_retries}: {e}")
             if attempt < max_retries - 1:
-                time.sleep(1)
+                time.sleep(2)
 
-    # Ultimo intento
-    return psycopg2.connect(
-        host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
-        database='movimientos',
-        user=os.environ.get('DB_USER', 'adminChios'),
-        password=os.environ.get('DB_PASSWORD', 'Burger2023'),
-        port=os.environ.get('DB_PORT', '5432'),
-        sslmode='require',
-        connect_timeout=20
-    )
+    raise Exception("No se pudo conectar a la base de datos despues de 3 intentos")
 
 def fc_release_movimientos_db(conn):
-    """Libera conexion de movimientos al pool"""
+    """Cierra conexion de movimientos"""
     try:
         if conn and not conn.closed:
-            _get_movimientos_pool().putconn(conn)
-    except Exception:
-        try:
             conn.close()
-        except Exception:
-            pass
+    except Exception:
+        pass
 
 def fc_dia_deposito_tc(fecha_venta):
     """Calcula dia de deposito TC (2 dias habiles)"""
