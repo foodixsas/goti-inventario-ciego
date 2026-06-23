@@ -6530,18 +6530,32 @@ def flujo_caja_datos():
     """Endpoint para obtener datos de flujo de caja"""
     conn = None
     try:
+        # Leer parametros de query
+        fecha_param = request.args.get('fecha', '')
+        num_semanas = int(request.args.get('semanas', '5'))
+
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
 
-        # Fechas: 5 semanas desde inicio de semana actual
-        hoy = datetime.now().date()
-        dias_hasta_lunes = hoy.weekday()
-        lunes = hoy - timedelta(days=dias_hasta_lunes)
+        # Determinar fecha de inicio (lunes)
+        if fecha_param:
+            try:
+                lunes = datetime.strptime(fecha_param, '%Y-%m-%d').date()
+                # Asegurar que sea lunes
+                if lunes.weekday() != 0:
+                    lunes = lunes - timedelta(days=lunes.weekday())
+            except:
+                hoy = datetime.now().date()
+                lunes = hoy - timedelta(days=hoy.weekday())
+        else:
+            hoy = datetime.now().date()
+            lunes = hoy - timedelta(days=hoy.weekday())
+
         fecha_inicio_datos = lunes - timedelta(days=7)
 
         # Generar semanas
         semanas = []
-        for i in range(5):
+        for i in range(num_semanas):
             inicio = lunes + timedelta(weeks=i)
             fin = inicio + timedelta(days=6)
             num = inicio.isocalendar()[1]

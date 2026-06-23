@@ -2262,13 +2262,30 @@
                         <h2><i class="fas fa-chart-line"></i> Flujo de Caja Proyectado</h2>
                     </div>
 
+                    <div class="fc-filtros" style="background:white; border:1px solid #e2e8f0; border-radius:10px; padding:16px 20px; margin-bottom:16px; display:flex; align-items:flex-end; gap:16px; flex-wrap:wrap;">
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <label style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Fecha de Corte (Lunes)</label>
+                            <input type="date" id="fc-fecha-corte" style="border:1.5px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:14px;">
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <label style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Semanas a mostrar</label>
+                            <select id="fc-num-semanas" style="border:1.5px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:14px;">
+                                <option value="4">4 semanas</option>
+                                <option value="5" selected>5 semanas</option>
+                                <option value="6">6 semanas</option>
+                                <option value="8">8 semanas</option>
+                            </select>
+                        </div>
+                        <button class="fc-btn" style="background:#1565c0;" onclick="fc_cargarDatos()"><i class="fas fa-search"></i> Consultar</button>
+                    </div>
+
                     <div class="fc-resumen" id="fc-resumen" style="display:none">
                         <div class="fc-card azul">
-                            <div class="fc-card-label">Total Ingresos (4 sem)</div>
+                            <div class="fc-card-label">Total Ingresos</div>
                             <div class="fc-card-valor" id="fc-total-ingresos">$0</div>
                         </div>
                         <div class="fc-card verde">
-                            <div class="fc-card-label">Saldo Produbanco</div>
+                            <div class="fc-card-label">Saldo Final Proyectado</div>
                             <div class="fc-card-valor" id="fc-saldo-produbanco">$0</div>
                         </div>
                         <div class="fc-card rojo">

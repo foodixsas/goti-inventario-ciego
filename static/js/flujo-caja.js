@@ -12,6 +12,16 @@ let fc_todasFechas = []; // Todas las fechas en orden
 
 // Inicializar cuando se carga la vista
 function fc_init() {
+    // Establecer fecha de corte por defecto (lunes de esta semana)
+    const fechaInput = document.getElementById('fc-fecha-corte');
+    if (fechaInput && !fechaInput.value) {
+        const hoy = new Date();
+        const dia = hoy.getDay();
+        const diff = dia === 0 ? -6 : 1 - dia; // Ajustar al lunes
+        const lunes = new Date(hoy);
+        lunes.setDate(hoy.getDate() + diff);
+        fechaInput.value = lunes.toISOString().split('T')[0];
+    }
     fc_cargarDatos();
 }
 
@@ -21,10 +31,24 @@ async function fc_cargarDatos() {
     container.innerHTML = '<div class="fc-loading"><div class="spinner"></div><p>Calculando proyecciones...</p></div>';
 
     try {
-        const response = await fetch('/api/flujo-caja/datos');
-        if (!response.ok) throw new Error('Error al cargar datos');
+        // Obtener parametros de filtro
+        const fechaCorte = document.getElementById('fc-fecha-corte')?.value || '';
+        const numSemanas = document.getElementById('fc-num-semanas')?.value || '5';
+
+        const url = `/api/flujo-caja/datos?fecha=${fechaCorte}&semanas=${numSemanas}`;
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || 'Error al cargar datos');
+        }
 
         fc_datos = await response.json();
+
+        if (!fc_datos.ok) {
+            throw new Error(fc_datos.error || 'Error en respuesta del servidor');
+        }
+
         fc_semanas = fc_datos.semanas;
         fc_semanasNums = fc_semanas.map(s => s.num);
 
@@ -40,7 +64,7 @@ async function fc_cargarDatos() {
 
     } catch (error) {
         console.error('Error flujo caja:', error);
-        container.innerHTML = '<div class="fc-loading"><p style="color:#ef4444;">Error al cargar datos. Intente nuevamente.</p></div>';
+        container.innerHTML = `<div class="fc-loading"><p style="color:#ef4444;">Error: ${error.message}</p><p style="font-size:12px;color:#666;margin-top:8px;">Verifique la conexion e intente nuevamente.</p></div>`;
     }
 }
 
