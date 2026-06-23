@@ -2270,13 +2270,16 @@
                         <div style="display:flex; flex-direction:column; gap:4px;">
                             <label style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Semanas a mostrar</label>
                             <select id="fc-num-semanas" style="border:1.5px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:14px;">
+                                <option value="2" selected>2 semanas</option>
+                                <option value="3">3 semanas</option>
                                 <option value="4">4 semanas</option>
-                                <option value="5" selected>5 semanas</option>
+                                <option value="5">5 semanas</option>
                                 <option value="6">6 semanas</option>
                                 <option value="8">8 semanas</option>
                             </select>
                         </div>
                         <button class="fc-btn" style="background:#1565c0;" onclick="fc_cargarDatos()"><i class="fas fa-search"></i> Consultar</button>
+                        <button class="fc-btn" style="background:#2e7d32;" onclick="fc_guardarDatos()"><i class="fas fa-save"></i> Guardar</button>
                     </div>
 
                     <div class="fc-resumen" id="fc-resumen" style="display:none">
@@ -2381,6 +2384,6 @@
 
     <script src="js/config.js?v=20260317a"></script>
     <script src="js/app.js?v=20260317a"></script>
-    <script src="js/flujo-caja.js?v=20260623a"></script>
+    <script src="js/flujo-caja.js?v=20260623t"></script>
 </body>
 </html>

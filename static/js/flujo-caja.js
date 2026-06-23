@@ -51,6 +51,8 @@ async function fc_cargarDatos() {
 
         fc_semanas = fc_datos.semanas;
         fc_semanasNums = fc_semanas.map(s => s.num);
+        console.log('fc_semanas asignado:', fc_semanas.length, 'semanas');
+        window._fc_semanas = fc_semanas; // Guardar referencia global para debug
 
         // Construir lista ordenada de todas las fechas
         fc_todasFechas = [];
@@ -60,6 +62,10 @@ async function fc_cargarDatos() {
 
         fc_renderTabla();
         fc_actualizarInfo();
+
+        // Cargar datos guardados y aplicarlos
+        await fc_cargarDatosGuardados();
+
         fc_recalcularTodo();
 
     } catch (error) {
@@ -100,19 +106,19 @@ function fc_renderTabla() {
     // Header semanas
     html += '<tr><th class="col-concepto" rowspan="3">FLUJO DE CAJA</th>';
     fc_semanas.forEach(sem => {
-        html += `<th class="col-semana header-semana sem-${sem.num}-header" onclick="fc_toggleSemana(${sem.num})" colspan="1">Sem ${sem.num}</th>`;
-        html += `<th class="dia-col sem-${sem.num} header-semana" colspan="8" style="display:none;">Semana ${sem.num}</th>`;
+        html += `<th class="col-semana header-semana sem-${sem.num}-header" onclick="fc_toggleSemana(${sem.num})" colspan="1" style="cursor:pointer;">▶ Sem ${sem.num}</th>`;
+        html += `<th class="dia-col sem-${sem.num} header-semana" onclick="fc_toggleSemana(${sem.num})" colspan="8" style="display:none; cursor:pointer;">▼ Semana ${sem.num}</th>`;
     });
     html += '</tr>';
 
-    // Header fechas
+    // Header fechas (T12:00 evita problemas de zona horaria)
     html += '<tr class="header-dias">';
     fc_semanas.forEach(sem => {
-        const inicio = new Date(sem.inicio);
-        const fin = new Date(sem.fin);
+        const inicio = new Date(sem.inicio + 'T12:00:00');
+        const fin = new Date(sem.fin + 'T12:00:00');
         html += `<td class="col-semana sem-${sem.num}-header">${inicio.getDate()}-${meses[inicio.getMonth()+1]} al ${fin.getDate()}-${meses[fin.getMonth()+1]}</td>`;
         sem.dias.forEach((dia, i) => {
-            const d = new Date(dia);
+            const d = new Date(dia + 'T12:00:00');
             const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
             html += `<td class="dia-col sem-${sem.num}${sab}">${d.getDate()}-${meses[d.getMonth()+1]}</td>`;
         });
@@ -316,9 +322,20 @@ function fc_renderEgresos() {
 
     const subgrupos = [
         { id: 'inst-pub', nombre: 'INSTITUCIONES PUBLICAS', items: ['SRI', 'IESS'] },
-        { id: 'arriendos', nombre: 'ARRIENDOS', items: ['Arriendo Local'] },
-        { id: 'nomina', nombre: 'PAGO DE NOMINA', items: ['Nomina Quincena'] },
-        { id: 'cajas', nombre: 'CAJAS CHICAS', items: ['Reposicion Cajas'] }
+        { id: 'arriendos', nombre: 'ARRIENDOS', items: ['Chios Real', 'Chios Floreana', 'Chios Portugal', 'SC Portugal', 'SC Real', 'Simon Bolon', 'Planta', 'Pulmon'] },
+        { id: 'prestamos', nombre: 'PRESTAMOS', items: ['Produbanco', 'Bolivariano'] },
+        { id: 'nomina', nombre: 'PAGO DE NOMINA', items: ['Prim Quincena', 'Seg Quincena'] },
+        { id: 'colaboradores', nombre: 'COLABORADORES', items: ['Asesoria Legal', 'Asesoria Financiera', 'Servicios de SSO', 'Servicios Limpieza'] },
+        { id: 'cajas', nombre: 'CAJAS CHICAS', items: ['Chios Real', 'Chios Floreana', 'Chios Portugal', 'SC Portugal', 'SC Real', 'Simon Bolon', 'Compras', 'Marketing', 'RRHH'] },
+        { id: 'entrenamiento', nombre: 'ENTRENAMIENTO Y APOYO', items: ['Apoyo Locales', 'Entrenamiento Locales'] },
+        { id: 'tasas', nombre: 'TASAS Y CONTRIBUCIONES', items: ['Tasa de Turismo', 'Patente', 'Supercias', '1.5 Sobre Ingresos', 'ARCSA'] },
+        { id: 'debitos', nombre: 'DEBITOS AUTOMATICOS', items: ['Celular', 'TV Pagada', 'Seguros Locales', 'Fiduciaria Vehiculo', 'Seguros Personal', 'Internet'] },
+        { id: 'servicios', nombre: 'SERVICIOS BASICOS', items: ['Energia Electrica', 'Agua Potable'] },
+        { id: 'tarjetas', nombre: 'TARJETAS DE CREDITO', items: ['Diners', 'Titanium', 'Produbanco Corporativa', 'Produbanco Pyme', 'Banco Internacional'] },
+        { id: 'liquidaciones', nombre: 'FONDOS LIQUIDACIONES EMPLEADOS', items: ['Item 1'] },
+        { id: 'agasajo', nombre: 'FONDO AGASAJO EMPLEADOS', items: ['Item 1'] },
+        { id: 'legales', nombre: 'FONDOS DE GASTOS LEGALES', items: ['Item 1'] },
+        { id: 'fortuitos', nombre: 'FONDOS EVENTOS FORTUITOS', items: ['Item 1'] }
     ];
 
     subgrupos.forEach(sg => {
@@ -498,7 +515,23 @@ function fc_recalcularIngresos() {
 }
 
 function fc_recalcularEgresos() {
-    const grupos = ['inst-pub', 'arriendos', 'nomina', 'cajas', 'prov-principales'];
+    // Todos los subgrupos de pagos fijos + proveedores
+    const gruposFijos = ['inst-pub', 'arriendos', 'prestamos', 'nomina', 'colaboradores', 'cajas', 'entrenamiento', 'tasas', 'debitos', 'servicios', 'tarjetas', 'liquidaciones', 'agasajo', 'legales', 'fortuitos'];
+    const gruposProveedores = ['prov-principales'];
+
+    // Agregar subgrupos dinamicos creados por el usuario
+    document.querySelectorAll('[id^="fc-grupo-"]').forEach(el => {
+        const id = el.id.replace('fc-grupo-', '');
+        if (!gruposFijos.includes(id) && !gruposProveedores.includes(id)) {
+            if (id.startsWith('prov')) {
+                gruposProveedores.push(id);
+            } else {
+                gruposFijos.push(id);
+            }
+        }
+    });
+
+    const grupos = [...gruposFijos, ...gruposProveedores];
 
     // Por dia
     fc_todasFechas.forEach(fecha => {
@@ -513,7 +546,7 @@ function fc_recalcularEgresos() {
             const cell = document.querySelector(`.fc-total-${grupo}-dia[data-fecha="${fecha}"]`);
             if (cell) cell.textContent = fc_formatMonto(totalGrupoDia);
 
-            if (grupo.startsWith('prov')) {
+            if (gruposProveedores.includes(grupo)) {
                 totalProveedores += totalGrupoDia;
             } else {
                 totalPagosFijos += totalGrupoDia;
@@ -543,7 +576,7 @@ function fc_recalcularEgresos() {
             const totalCell = document.querySelector(`.fc-total-${grupo}-total[data-semana="${sem}"]`);
             if (totalCell) totalCell.textContent = fc_formatMonto(totalGrupo);
 
-            if (grupo.startsWith('prov')) {
+            if (gruposProveedores.includes(grupo)) {
                 totalProveedores += totalGrupo;
             } else {
                 totalPagosFijos += totalGrupo;
@@ -742,25 +775,121 @@ function fc_colapsarTodo() {
 }
 
 // ============ EGRESOS DINAMICOS ============
+
+// Obtener estructura de semanas desde el DOM (mas robusto que variables)
+function fc_getSemanasFromDOM() {
+    const semanas = [];
+
+    // Buscar todas las celdas de semanas en el header (tienen clase sem-X-header)
+    const headerCells = document.querySelectorAll('th.header-semana[class*="sem-"][class*="-header"]');
+    const semanaNums = new Set();
+
+    headerCells.forEach(cell => {
+        const match = cell.className.match(/sem-(\d+)-header/);
+        if (match) semanaNums.add(parseInt(match[1]));
+    });
+
+    // Para cada semana, obtener sus dias
+    semanaNums.forEach(num => {
+        const diasCells = document.querySelectorAll(`.fc-ingreso-tc-dia[data-fecha]`);
+        const dias = [];
+
+        diasCells.forEach(cell => {
+            const fecha = cell.dataset.fecha;
+            // Verificar que esta celda pertenece a esta semana
+            if (cell.classList.contains(`sem-${num}`) ||
+                cell.closest(`td.sem-${num}`) ||
+                cell.closest('tr')?.querySelector(`td.sem-${num}`)) {
+                // Verificar por semana usando inputs cercanos
+            }
+        });
+    });
+
+    // Metodo mas directo: leer de inputs existentes que tienen data-fecha y data-semana
+    const inputsConFecha = document.querySelectorAll('.fc-input[data-fecha][data-semana]');
+    const semanaMap = new Map();
+
+    inputsConFecha.forEach(input => {
+        const fecha = input.dataset.fecha;
+        const semNum = parseInt(input.dataset.semana);
+        if (!semanaMap.has(semNum)) {
+            semanaMap.set(semNum, { num: semNum, dias: [] });
+        }
+        if (!semanaMap.get(semNum).dias.includes(fecha)) {
+            semanaMap.get(semNum).dias.push(fecha);
+        }
+    });
+
+    // Convertir a array ordenado
+    const result = Array.from(semanaMap.values()).sort((a, b) => a.num - b.num);
+
+    // Ordenar dias dentro de cada semana
+    result.forEach(sem => {
+        sem.dias.sort();
+    });
+
+    return result;
+}
+
 function fc_agregarItem(grupo) {
     const totalRow = document.getElementById(`fc-total-${grupo}-row`);
-    if (!totalRow) return;
+    if (!totalRow) {
+        console.error('fc_agregarItem: No se encontró totalRow para grupo:', grupo);
+        return;
+    }
+
+    // Obtener semanas: primero intentar variables, luego DOM
+    let semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
+
+    // Si aun esta vacio, extraer del DOM
+    if (!semanas || semanas.length === 0) {
+        semanas = fc_getSemanasFromDOM();
+        console.log('fc_agregarItem: Semanas extraidas del DOM:', semanas.length);
+    }
+
+    if (!semanas || semanas.length === 0) {
+        alert('Error: No hay datos de semanas. Recargue la pagina.');
+        return;
+    }
 
     const newRow = document.createElement('tr');
     newRow.className = `row-banco-item fc-egreso-item-${grupo}`;
 
     let celdas = `<td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="Nuevo Item"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
-    fc_semanasNums.forEach(sem => {
-        celdas += `<td class="col-semana sem-${sem}-header monto fc-item-sem" data-semana="${sem}">-</td>`;
-        for (let i = 0; i < 7; i++) {
+
+    semanas.forEach(sem => {
+        celdas += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
+        sem.dias.forEach((dia, i) => {
             const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
-            celdas += `<td class="dia-col sem-${sem}${sab} monto"><input type="text" class="fc-input fc-input-egreso-${grupo}" data-semana="${sem}" placeholder="0" onchange="fc_recalcularTodo()"></td>`;
-        }
-        celdas += `<td class="dia-col sem-${sem} total-col monto fc-item-total" data-semana="${sem}">-</td>`;
+            celdas += `<td class="dia-col sem-${sem.num}${sab} monto"><input type="text" class="fc-input fc-input-egreso-${grupo}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()"></td>`;
+        });
+        celdas += `<td class="dia-col sem-${sem.num} total-col monto fc-item-total" data-semana="${sem.num}">-</td>`;
     });
 
     newRow.innerHTML = celdas;
     totalRow.parentNode.insertBefore(newRow, totalRow);
+
+    // Aplicar visibilidad correcta segun estado actual de las semanas
+    fc_aplicarVisibilidadNuevoItem(newRow);
+}
+
+// Aplicar visibilidad correcta a nuevo item basado en estado actual de semanas
+function fc_aplicarVisibilidadNuevoItem(row) {
+    fc_semanasNums.forEach(num => {
+        const diasVisibles = document.querySelector(`.sem-${num}.visible`);
+        const celdas = row.querySelectorAll(`.sem-${num}`);
+        const headers = row.querySelectorAll(`.sem-${num}-header`);
+
+        if (diasVisibles) {
+            // Semana expandida
+            celdas.forEach(c => { c.classList.add('visible'); c.style.display = ''; });
+            headers.forEach(h => h.style.display = 'none');
+        } else {
+            // Semana colapsada
+            celdas.forEach(c => { c.classList.remove('visible'); c.style.display = 'none'; });
+            headers.forEach(h => h.style.display = '');
+        }
+    });
 }
 
 function fc_eliminarItem(btn) {
@@ -773,6 +902,19 @@ function fc_eliminarItem(btn) {
 
 let fc_subgrupoCounter = 0;
 function fc_agregarSubgrupo(tipo) {
+    // Obtener semanas: primero variables, luego DOM
+    let semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
+
+    // Si aun esta vacio, extraer del DOM
+    if (!semanas || semanas.length === 0) {
+        semanas = fc_getSemanasFromDOM();
+    }
+
+    if (!semanas || semanas.length === 0) {
+        alert('Error: No hay datos de semanas. Recargue la pagina.');
+        return;
+    }
+
     fc_subgrupoCounter++;
     const grupoId = tipo === 'proveedores' ? `prov${fc_subgrupoCounter}` : `nuevo${fc_subgrupoCounter}`;
 
@@ -784,42 +926,49 @@ function fc_agregarSubgrupo(tipo) {
     headerRow.className = 'row-banco';
     headerRow.id = `fc-grupo-${grupoId}`;
     let headerCeldas = `<td class="col-concepto indent-2"><input type="text" class="fc-input-nombre" value="NUEVO SUBGRUPO" style="font-weight:bold;text-transform:uppercase;width:140px;"> <button class="fc-btn-add" onclick="fc_agregarItem('${grupoId}')">+</button> <button class="fc-btn-del" onclick="fc_eliminarSubgrupo(this)">x</button></td>`;
-    fc_semanasNums.forEach(sem => {
-        headerCeldas += `<td class="col-semana sem-${sem}-header"></td>`;
-        for (let i = 0; i < 8; i++) headerCeldas += `<td class="dia-col sem-${sem}"></td>`;
+    semanas.forEach(sem => {
+        headerCeldas += `<td class="col-semana sem-${sem.num}-header"></td>`;
+        for (let i = 0; i < 8; i++) headerCeldas += `<td class="dia-col sem-${sem.num}"></td>`;
     });
     headerRow.innerHTML = headerCeldas;
 
+    // Crear item row
     const itemRow = document.createElement('tr');
     itemRow.className = `row-banco-item fc-egreso-item-${grupoId}`;
-    let itemCeldas = `<td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="Item 1"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
-    fc_semanasNums.forEach(sem => {
-        itemCeldas += `<td class="col-semana sem-${sem}-header monto fc-item-sem" data-semana="${sem}">-</td>`;
-        for (let i = 0; i < 7; i++) {
+
+    let itemHtml = `<td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="Item 1"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
+    semanas.forEach(sem => {
+        itemHtml += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
+        sem.dias.forEach((dia, i) => {
             const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
-            itemCeldas += `<td class="dia-col sem-${sem}${sab} monto"><input type="text" class="fc-input fc-input-egreso-${grupoId}" data-semana="${sem}" placeholder="0" onchange="fc_recalcularTodo()"></td>`;
-        }
-        itemCeldas += `<td class="dia-col sem-${sem} total-col monto fc-item-total" data-semana="${sem}">-</td>`;
+            itemHtml += `<td class="dia-col sem-${sem.num}${sab} monto"><input type="text" class="fc-input fc-input-egreso-${grupoId}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()"></td>`;
+        });
+        itemHtml += `<td class="dia-col sem-${sem.num} total-col monto fc-item-total" data-semana="${sem.num}">-</td>`;
     });
-    itemRow.innerHTML = itemCeldas;
+    itemRow.innerHTML = itemHtml;
 
     const subTotalRow = document.createElement('tr');
     subTotalRow.className = 'row-banco-total';
     subTotalRow.id = `fc-total-${grupoId}-row`;
     let totalCeldas = `<td class="col-concepto indent-2">Total Subgrupo</td>`;
-    fc_semanasNums.forEach(sem => {
-        totalCeldas += `<td class="col-semana sem-${sem}-header monto fc-total-${grupoId}-sem" data-semana="${sem}">-</td>`;
-        for (let i = 0; i < 7; i++) {
+    semanas.forEach(sem => {
+        totalCeldas += `<td class="col-semana sem-${sem.num}-header monto fc-total-${grupoId}-sem" data-semana="${sem.num}">-</td>`;
+        sem.dias.forEach((dia, i) => {
             const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
-            totalCeldas += `<td class="dia-col sem-${sem}${sab} monto fc-total-${grupoId}-dia">-</td>`;
-        }
-        totalCeldas += `<td class="dia-col sem-${sem} total-col monto fc-total-${grupoId}-total" data-semana="${sem}">-</td>`;
+            totalCeldas += `<td class="dia-col sem-${sem.num}${sab} monto fc-total-${grupoId}-dia" data-fecha="${dia}">-</td>`;
+        });
+        totalCeldas += `<td class="dia-col sem-${sem.num} total-col monto fc-total-${grupoId}-total" data-semana="${sem.num}">-</td>`;
     });
     subTotalRow.innerHTML = totalCeldas;
 
     totalRow.parentNode.insertBefore(headerRow, totalRow);
     totalRow.parentNode.insertBefore(itemRow, totalRow);
     totalRow.parentNode.insertBefore(subTotalRow, totalRow);
+
+    // Aplicar visibilidad correcta a todas las filas nuevas
+    fc_aplicarVisibilidadNuevoItem(headerRow);
+    fc_aplicarVisibilidadNuevoItem(itemRow);
+    fc_aplicarVisibilidadNuevoItem(subTotalRow);
 }
 
 function fc_eliminarSubgrupo(btn) {
@@ -833,6 +982,171 @@ function fc_eliminarSubgrupo(btn) {
     headerRow.remove();
 
     fc_recalcularTodo();
+}
+
+// ============ CARGAR DATOS GUARDADOS ============
+async function fc_cargarDatosGuardados() {
+    try {
+        const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
+        if (!semanas || semanas.length === 0) return;
+
+        const fechas = semanas.map(s => s.inicio).join(',');
+        const response = await fetch(`/api/flujo-caja/cargar-guardado?fechas=${fechas}`);
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (!data.ok || !data.guardados) return;
+
+        // Aplicar datos guardados
+        for (const [fechaSemana, guardado] of Object.entries(data.guardados)) {
+            // Aplicar saldo inicial (solo primera semana)
+            if (guardado.saldo_inicial && semanas[0].inicio === fechaSemana) {
+                const inputSaldo = document.querySelector('.fc-saldo-inicial-input');
+                if (inputSaldo) inputSaldo.value = guardado.saldo_inicial;
+            }
+
+            // Aplicar ajustes
+            if (guardado.ajustes_tc) {
+                for (const [dia, valor] of Object.entries(guardado.ajustes_tc)) {
+                    const input = document.querySelector(`.fc-ajuste-tc[data-fecha="${dia}"]`);
+                    if (input && valor) input.value = valor;
+                }
+            }
+            if (guardado.ajustes_efectivo) {
+                for (const [dia, valor] of Object.entries(guardado.ajustes_efectivo)) {
+                    const input = document.querySelector(`.fc-ajuste-efectivo[data-fecha="${dia}"]`);
+                    if (input && valor) input.value = valor;
+                }
+            }
+            if (guardado.ajustes_deuna) {
+                for (const [dia, valor] of Object.entries(guardado.ajustes_deuna)) {
+                    const input = document.querySelector(`.fc-ajuste-deuna[data-fecha="${dia}"]`);
+                    if (input && valor) input.value = valor;
+                }
+            }
+
+            // Aplicar traspasos
+            if (guardado.traspasos) {
+                for (const [dia, valor] of Object.entries(guardado.traspasos)) {
+                    const input = document.querySelector(`.fc-input-traspaso[data-fecha="${dia}"]`);
+                    if (input && valor) input.value = valor;
+                }
+            }
+
+            // Aplicar egresos
+            if (guardado.egresos) {
+                for (const [grupo, items] of Object.entries(guardado.egresos)) {
+                    items.forEach((item, idx) => {
+                        // Buscar o crear el input correspondiente
+                        const rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
+                        if (rows[idx]) {
+                            const nombreInput = rows[idx].querySelector('.fc-input-nombre');
+                            if (nombreInput && item.nombre) nombreInput.value = item.nombre;
+
+                            for (const [dia, valor] of Object.entries(item.valores || {})) {
+                                const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
+                                if (input && valor) input.value = valor;
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error cargando datos guardados:', error);
+    }
+}
+
+// ============ GUARDAR DATOS ============
+async function fc_guardarDatos() {
+    const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
+    if (!semanas || semanas.length === 0) {
+        alert('No hay datos para guardar');
+        return;
+    }
+
+    try {
+        // Guardar cada semana por separado
+        for (const sem of semanas) {
+            const fechaSemana = sem.inicio;
+            const semanaNum = sem.num;
+
+            // Recoger saldo inicial (solo para primera semana)
+            let saldoInicial = 0;
+            const inputSaldo = document.querySelector('.fc-saldo-inicial-input');
+            if (inputSaldo && sem === semanas[0]) {
+                saldoInicial = parseFloat(inputSaldo.value.replace(/,/g, '')) || 0;
+            }
+
+            // Recoger ajustes
+            const ajustes_tc = {};
+            const ajustes_efectivo = {};
+            const ajustes_deuna = {};
+            const traspasos = {};
+
+            sem.dias.forEach(dia => {
+                const ajTc = document.querySelector(`.fc-ajuste-tc[data-fecha="${dia}"]`);
+                if (ajTc && ajTc.value) ajustes_tc[dia] = parseFloat(ajTc.value.replace(/,/g, '')) || 0;
+
+                const ajEf = document.querySelector(`.fc-ajuste-efectivo[data-fecha="${dia}"]`);
+                if (ajEf && ajEf.value) ajustes_efectivo[dia] = parseFloat(ajEf.value.replace(/,/g, '')) || 0;
+
+                const ajDeuna = document.querySelector(`.fc-ajuste-deuna[data-fecha="${dia}"]`);
+                if (ajDeuna && ajDeuna.value) ajustes_deuna[dia] = parseFloat(ajDeuna.value.replace(/,/g, '')) || 0;
+
+                const traspaso = document.querySelector(`.fc-input-traspaso[data-fecha="${dia}"]`);
+                if (traspaso && traspaso.value) traspasos[dia] = parseFloat(traspaso.value.replace(/,/g, '')) || 0;
+            });
+
+            // Recoger egresos (todos los items con sus valores)
+            const egresos = {};
+            document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
+                const nombreInput = row.querySelector('.fc-input-nombre');
+                const nombre = nombreInput ? nombreInput.value : 'Item';
+                const clase = Array.from(row.classList).find(c => c.startsWith('fc-egreso-item-'));
+                const grupo = clase ? clase.replace('fc-egreso-item-', '') : 'otros';
+
+                if (!egresos[grupo]) egresos[grupo] = [];
+
+                const itemData = { nombre, valores: {} };
+                sem.dias.forEach(dia => {
+                    const input = row.querySelector(`[data-fecha="${dia}"].fc-input`);
+                    if (input && input.value) {
+                        itemData.valores[dia] = parseFloat(input.value.replace(/,/g, '')) || 0;
+                    }
+                });
+                egresos[grupo].push(itemData);
+            });
+
+            // Enviar al servidor
+            const response = await fetch('/api/flujo-caja/guardar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fecha_semana: fechaSemana,
+                    semana_num: semanaNum,
+                    saldo_inicial: saldoInicial,
+                    ajustes_tc,
+                    ajustes_efectivo,
+                    ajustes_deuna,
+                    traspasos,
+                    egresos,
+                    usuario: 'admin'
+                })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || 'Error al guardar');
+            }
+        }
+
+        alert('Datos guardados correctamente');
+
+    } catch (error) {
+        console.error('Error guardando:', error);
+        alert('Error al guardar: ' + error.message);
+    }
 }
 
 // Registrar en el sistema de vistas

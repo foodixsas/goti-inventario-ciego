@@ -52,15 +52,32 @@ DB_CONFIG = {
 }
 
 _connection_pool = None
+_movimientos_pool = None
 
 def _get_pool():
     global _connection_pool
     if _connection_pool is None:
         _connection_pool = SimpleConnectionPool(
-            minconn=2, maxconn=15,
+            minconn=1, maxconn=5,
             **DB_CONFIG, cursor_factory=RealDictCursor
         )
     return _connection_pool
+
+def _get_movimientos_pool():
+    """Pool separado para BD movimientos"""
+    global _movimientos_pool
+    if _movimientos_pool is None:
+        _movimientos_pool = SimpleConnectionPool(
+            minconn=1, maxconn=3,
+            host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
+            database='movimientos',
+            user=os.environ.get('DB_USER', 'adminChios'),
+            password=os.environ.get('DB_PASSWORD', 'Burger2023'),
+            port=os.environ.get('DB_PORT', '5432'),
+            sslmode='require',
+            connect_timeout=10
+        )
+    return _movimientos_pool
 
 def get_db():
     """Obtiene conexion del pool, validando que este viva"""
@@ -6471,15 +6488,36 @@ def carga_inicial_productos():
 # ============================================================
 
 def fc_get_movimientos_db():
-    """Conexion a BD movimientos (diferente de InventariosLocales)"""
-    return psycopg2.connect(
-        host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
-        database='movimientos',
-        user=os.environ.get('DB_USER', 'adminChios'),
-        password=os.environ.get('DB_PASSWORD', 'Burger2023'),
-        port=os.environ.get('DB_PORT', '5432'),
-        sslmode='require'
-    )
+    """Conexion a BD movimientos usando pool"""
+    try:
+        conn = _get_movimientos_pool().getconn()
+        # Validar conexion
+        conn.cursor().execute("SELECT 1")
+        conn.rollback()
+        return conn
+    except Exception as e:
+        print(f"fc_get_movimientos_db error: {e}")
+        # Fallback a conexion directa si pool falla
+        return psycopg2.connect(
+            host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
+            database='movimientos',
+            user=os.environ.get('DB_USER', 'adminChios'),
+            password=os.environ.get('DB_PASSWORD', 'Burger2023'),
+            port=os.environ.get('DB_PORT', '5432'),
+            sslmode='require',
+            connect_timeout=10
+        )
+
+def fc_release_movimientos_db(conn):
+    """Libera conexion de movimientos al pool"""
+    try:
+        if conn and not conn.closed:
+            _get_movimientos_pool().putconn(conn)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def fc_dia_deposito_tc(fecha_venta):
     """Calcula dia de deposito TC (2 dias habiles)"""
@@ -6567,7 +6605,7 @@ def flujo_caja_datos():
             WITH unicos AS (
                 SELECT DISTINCT ON (documento_id, fecha, valor) fecha, valor
                 FROM contifico_cobrospagos
-                WHERE tipo_registro = 'CLI' AND forma_cobro_pago ILIKE '%tarjeta%' AND fecha >= %s
+                WHERE tipo_registro = 'CLI' AND forma_cobro_pago ILIKE '%%tarjeta%%' AND fecha >= %s
             )
             SELECT fecha, SUM(valor) as total FROM unicos GROUP BY fecha ORDER BY fecha
         ''', (fecha_inicio_datos,))
@@ -6670,7 +6708,105 @@ def flujo_caja_datos():
         return jsonify({'error': str(e)}), 500
     finally:
         if conn:
-            conn.close()
+            fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/guardar', methods=['POST'])
+def flujo_caja_guardar():
+    """Guardar datos de flujo de caja trabajados"""
+    conn = None
+    try:
+        data = request.get_json()
+        fecha_semana = data.get('fecha_semana')
+        semana_num = data.get('semana_num')
+        saldo_inicial = data.get('saldo_inicial', 0)
+        ajustes_tc = json.dumps(data.get('ajustes_tc', {}))
+        ajustes_efectivo = json.dumps(data.get('ajustes_efectivo', {}))
+        ajustes_deuna = json.dumps(data.get('ajustes_deuna', {}))
+        traspasos = json.dumps(data.get('traspasos', {}))
+        egresos = json.dumps(data.get('egresos', {}))
+        usuario = data.get('usuario', 'admin')
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+
+        # Upsert: insertar o actualizar si ya existe
+        cur.execute('''
+            INSERT INTO flujo_caja_guardado
+                (fecha_semana, semana_num, saldo_inicial, ajustes_tc, ajustes_efectivo,
+                 ajustes_deuna, traspasos, egresos, created_by, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (fecha_semana) DO UPDATE SET
+                semana_num = EXCLUDED.semana_num,
+                saldo_inicial = EXCLUDED.saldo_inicial,
+                ajustes_tc = EXCLUDED.ajustes_tc,
+                ajustes_efectivo = EXCLUDED.ajustes_efectivo,
+                ajustes_deuna = EXCLUDED.ajustes_deuna,
+                traspasos = EXCLUDED.traspasos,
+                egresos = EXCLUDED.egresos,
+                updated_at = NOW()
+            RETURNING id
+        ''', (fecha_semana, semana_num, saldo_inicial, ajustes_tc, ajustes_efectivo,
+              ajustes_deuna, traspasos, egresos, usuario))
+
+        row_id = cur.fetchone()[0]
+        conn.commit()
+
+        return jsonify({'ok': True, 'id': row_id, 'mensaje': f'Semana {semana_num} guardada'})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/cargar-guardado', methods=['GET'])
+def flujo_caja_cargar_guardado():
+    """Cargar datos guardados de flujo de caja para las semanas solicitadas"""
+    conn = None
+    try:
+        fechas = request.args.get('fechas', '')  # Comma-separated list of dates
+        if not fechas:
+            return jsonify({'ok': True, 'guardados': {}})
+
+        lista_fechas = [f.strip() for f in fechas.split(',')]
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+
+        cur.execute('''
+            SELECT fecha_semana, semana_num, saldo_inicial, ajustes_tc, ajustes_efectivo,
+                   ajustes_deuna, traspasos, egresos, updated_at
+            FROM flujo_caja_guardado
+            WHERE fecha_semana = ANY(%s)
+        ''', (lista_fechas,))
+
+        guardados = {}
+        for row in cur.fetchall():
+            fecha_str = str(row[0])
+            guardados[fecha_str] = {
+                'semana_num': row[1],
+                'saldo_inicial': float(row[2]) if row[2] else 0,
+                'ajustes_tc': row[3] or {},
+                'ajustes_efectivo': row[4] or {},
+                'ajustes_deuna': row[5] or {},
+                'traspasos': row[6] or {},
+                'egresos': row[7] or {},
+                'updated_at': row[8].isoformat() if row[8] else None
+            }
+
+        return jsonify({'ok': True, 'guardados': guardados})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
 
 
 if __name__ == '__main__':
