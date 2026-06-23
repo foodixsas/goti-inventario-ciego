@@ -7,7 +7,7 @@ from flask_cors import CORS
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
-import os, secrets, smtplib
+import os, secrets, smtplib, json
 from decimal import Decimal
 from datetime import datetime, timedelta
 from io import BytesIO
