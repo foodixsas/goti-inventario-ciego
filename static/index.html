@@ -2270,12 +2270,10 @@
                         <div style="display:flex; flex-direction:column; gap:4px;">
                             <label style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Semanas a mostrar</label>
                             <select id="fc-num-semanas" style="border:1.5px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:14px;">
+                                <option value="1">1 semana</option>
                                 <option value="2" selected>2 semanas</option>
                                 <option value="3">3 semanas</option>
                                 <option value="4">4 semanas</option>
-                                <option value="5">5 semanas</option>
-                                <option value="6">6 semanas</option>
-                                <option value="8">8 semanas</option>
                             </select>
                         </div>
                         <button class="fc-btn" style="background:#1565c0;" onclick="fc_cargarDatos()"><i class="fas fa-search"></i> Consultar</button>
@@ -2303,8 +2301,12 @@
                             <div class="fc-titulo">Proyeccion de Ingresos y Egresos</div>
                             <div class="fc-toolbar">
                                 <button class="fc-btn" style="background:#1565c0;" onclick="fc_cargarDatos()"><i class="fas fa-sync-alt"></i> Actualizar</button>
-                                <button class="fc-btn fc-btn-expand" onclick="fc_expandirTodo()"><i class="fas fa-expand"></i> Expandir</button>
-                                <button class="fc-btn fc-btn-collapse" onclick="fc_colapsarTodo()"><i class="fas fa-compress"></i> Colapsar</button>
+                                <span style="border-left:1px solid #e2e8f0; height:24px; margin:0 4px;"></span>
+                                <button class="fc-btn fc-btn-expand" onclick="fc_expandirTodo()" title="Expandir columnas"><i class="fas fa-arrows-alt-h"></i> Col</button>
+                                <button class="fc-btn fc-btn-collapse" onclick="fc_colapsarTodo()" title="Colapsar columnas"><i class="fas fa-compress-alt"></i> Col</button>
+                                <span style="border-left:1px solid #e2e8f0; height:24px; margin:0 4px;"></span>
+                                <button class="fc-btn" style="background:#7c3aed;" onclick="fc_expandirFilas()" title="Expandir filas"><i class="fas fa-arrows-alt-v"></i> Filas</button>
+                                <button class="fc-btn" style="background:#9333ea;" onclick="fc_colapsarFilas()" title="Colapsar filas"><i class="fas fa-minus"></i> Filas</button>
                             </div>
                         </div>
                         <div class="fc-info" id="fc-info">Cargando datos desde Azure...</div>
@@ -2386,6 +2388,6 @@
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="js/config.js?v=20260317a"></script>
     <script src="js/app.js?v=20260317a"></script>
-    <script src="js/flujo-caja.js?v=20260623w"></script>
+    <script src="js/flujo-caja.js?v=20260623z"></script>
 </body>
 </html>

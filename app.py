@@ -6547,6 +6547,9 @@ def fc_dia_deposito_deuna(fecha_cobro):
 GRUPO1_EFECTIVO = ['REAL', 'FLOREANA', 'PORTUGAL', 'SANTO CACHON PORTUGAL']
 GRUPO2_EFECTIVO = ['SIMON BOLON', 'SANTO CACHON REAL']
 
+# Cache para promedios historicos (no cambian durante el dia)
+_fc_promedios_cache = {'fecha': None, 'tc': {}, 'ef': {}, 'de': {}}
+
 @app.route('/api/flujo-caja/datos', methods=['GET'])
 def flujo_caja_datos():
     """Endpoint para obtener datos de flujo de caja"""
@@ -6586,90 +6589,131 @@ def flujo_caja_datos():
             semanas.append({'num': num, 'inicio': str(inicio), 'fin': str(fin), 'dias': dias})
 
         hoy = datetime.now().date()
+        hoy_str = str(hoy)
 
-        # ============ PROMEDIOS HISTORICOS (ultimas 8 semanas) ============
-        fecha_hist_inicio = hoy - timedelta(weeks=8)
+        # ============ PROMEDIOS HISTORICOS (con cache del dia) ============
+        global _fc_promedios_cache
+        if _fc_promedios_cache['fecha'] == hoy_str:
+            # Usar cache
+            promedios_tc = _fc_promedios_cache['tc']
+            promedios_efectivo = _fc_promedios_cache['ef']
+            promedios_deuna = _fc_promedios_cache['de']
+        else:
+            # Calcular y guardar en cache
+            fecha_hist_inicio = hoy - timedelta(weeks=4)
+            cur.execute('''
+                WITH base AS (
+                    SELECT DISTINCT ON (documento_id, fecha, valor)
+                        fecha, valor, forma_cobro_pago, cta_afectada
+                    FROM contifico_cobrospagos
+                    WHERE tipo_registro = 'CLI' AND fecha >= %s AND fecha < %s
+                ),
+                tc AS (
+                    SELECT EXTRACT(DOW FROM fecha) as dow, AVG(total) as prom
+                    FROM (SELECT fecha, SUM(valor) as total FROM base WHERE forma_cobro_pago ILIKE '%%tarjeta%%' GROUP BY fecha) s
+                    GROUP BY dow
+                ),
+                ef AS (
+                    SELECT EXTRACT(DOW FROM fecha) as dow, AVG(total) as prom
+                    FROM (SELECT fecha, SUM(valor) as total FROM base WHERE forma_cobro_pago = 'Efectivo' GROUP BY fecha) s
+                    GROUP BY dow
+                ),
+                de AS (
+                    SELECT EXTRACT(DOW FROM fecha) as dow, AVG(total) as prom
+                    FROM (SELECT fecha, SUM(valor) as total FROM base WHERE forma_cobro_pago = 'Transferencia' AND cta_afectada = 'BANCO DEUNA' GROUP BY fecha) s
+                    GROUP BY dow
+                )
+                SELECT 'TC' as tipo, dow, prom FROM tc
+                UNION ALL SELECT 'EF' as tipo, dow, prom FROM ef
+                UNION ALL SELECT 'DE' as tipo, dow, prom FROM de
+            ''', (fecha_hist_inicio, hoy))
 
-        # Promedio TC por dia de semana
-        cur.execute('''
-            WITH unicos AS (
-                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, valor
-                FROM contifico_cobrospagos
-                WHERE tipo_registro = 'CLI' AND forma_cobro_pago ILIKE '%%tarjeta%%'
-                AND fecha >= %s AND fecha < %s
-            )
-            SELECT EXTRACT(DOW FROM fecha) as dia_semana, AVG(total) as promedio
-            FROM (SELECT fecha, SUM(valor) as total FROM unicos GROUP BY fecha) sub
-            GROUP BY dia_semana
-        ''', (fecha_hist_inicio, hoy))
-        promedios_tc = {int(r[0]): float(r[1]) for r in cur.fetchall()}
+            promedios_tc = {}
+            promedios_efectivo = {}
+            promedios_deuna = {}
+            for r in cur.fetchall():
+                tipo, dow, prom = r[0], int(r[1]), float(r[2])
+                if tipo == 'TC':
+                    promedios_tc[dow] = prom
+                elif tipo == 'EF':
+                    promedios_efectivo[dow] = prom
+                else:
+                    promedios_deuna[dow] = prom
 
-        # Promedio Efectivo por dia de semana
-        cur.execute('''
-            WITH unicos AS (
-                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, valor
-                FROM contifico_cobrospagos
-                WHERE tipo_registro = 'CLI' AND forma_cobro_pago = 'Efectivo'
-                AND fecha >= %s AND fecha < %s
-            )
-            SELECT EXTRACT(DOW FROM fecha) as dia_semana, AVG(total) as promedio
-            FROM (SELECT fecha, SUM(valor) as total FROM unicos GROUP BY fecha) sub
-            GROUP BY dia_semana
-        ''', (fecha_hist_inicio, hoy))
-        promedios_efectivo = {int(r[0]): float(r[1]) for r in cur.fetchall()}
+            # Guardar en cache
+            _fc_promedios_cache = {'fecha': hoy_str, 'tc': promedios_tc, 'ef': promedios_efectivo, 'de': promedios_deuna}
 
-        # Promedio DEUNA por dia de semana
-        cur.execute('''
-            WITH unicos AS (
-                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, valor
-                FROM contifico_cobrospagos
-                WHERE tipo_registro = 'CLI' AND forma_cobro_pago = 'Transferencia'
-                AND cta_afectada = 'BANCO DEUNA' AND fecha >= %s AND fecha < %s
-            )
-            SELECT EXTRACT(DOW FROM fecha) as dia_semana, AVG(total) as promedio
-            FROM (SELECT fecha, SUM(valor) as total FROM unicos GROUP BY fecha) sub
-            GROUP BY dia_semana
-        ''', (fecha_hist_inicio, hoy))
-        promedios_deuna = {int(r[0]): float(r[1]) for r in cur.fetchall()}
-
-        # ============ GENERAR VENTAS PROYECTADAS PARA DIAS FUTUROS ============
+        # ============ GENERAR VENTAS PROYECTADAS ============
+        # Proyectar desde inicio de datos hasta fin de proyeccion
+        # Si no hay datos reales, se usaran estas proyecciones
         ventas_tc_proyectadas = {}
         ventas_efectivo_proyectadas = {}
         ventas_deuna_proyectadas = {}
 
-        # Para cada dia desde hoy hasta fin de proyeccion
-        dia_actual = hoy
+        dia_actual = fecha_inicio_datos
         while dia_actual < fecha_fin_proyeccion:
             dia_str = str(dia_actual)
             dow = dia_actual.weekday()
             # PostgreSQL DOW: 0=domingo, 1=lunes... Python weekday: 0=lunes, 1=martes...
             dow_pg = (dow + 1) % 7  # Convertir a formato PostgreSQL
 
-            if dia_actual > hoy:  # Solo proyectar dias futuros
-                if dow_pg in promedios_tc:
-                    ventas_tc_proyectadas[dia_str] = promedios_tc[dow_pg]
-                if dow_pg in promedios_efectivo:
-                    ventas_efectivo_proyectadas[dia_str] = promedios_efectivo[dow_pg]
-                if dow_pg in promedios_deuna:
-                    ventas_deuna_proyectadas[dia_str] = promedios_deuna[dow_pg]
+            # Proyectar para todos los dias (si no hay datos reales, se usaran)
+            if dow_pg in promedios_tc:
+                ventas_tc_proyectadas[dia_str] = promedios_tc[dow_pg]
+            if dow_pg in promedios_efectivo:
+                ventas_efectivo_proyectadas[dia_str] = promedios_efectivo[dow_pg]
+            if dow_pg in promedios_deuna:
+                ventas_deuna_proyectadas[dia_str] = promedios_deuna[dow_pg]
 
             dia_actual += timedelta(days=1)
 
-        # Obtener ventas TC
+        # ============ DATOS ACTUALES - UNA SOLA QUERY COMBINADA ============
         cur.execute('''
-            WITH unicos AS (
-                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, valor
+            WITH base AS (
+                SELECT DISTINCT ON (documento_id, fecha, valor)
+                    fecha, valor, forma_cobro_pago, centro_costo, cta_afectada
                 FROM contifico_cobrospagos
-                WHERE tipo_registro = 'CLI' AND forma_cobro_pago ILIKE '%%tarjeta%%' AND fecha >= %s
+                WHERE tipo_registro = 'CLI' AND fecha >= %s
             )
-            SELECT fecha, SUM(valor) as total FROM unicos GROUP BY fecha ORDER BY fecha
+            SELECT 'TC' as tipo, fecha, NULL as centro, SUM(valor) as total
+            FROM base WHERE forma_cobro_pago ILIKE '%%tarjeta%%' GROUP BY fecha
+            UNION ALL
+            SELECT 'EF' as tipo, fecha, centro_costo as centro, SUM(valor) as total
+            FROM base WHERE forma_cobro_pago = 'Efectivo' GROUP BY fecha, centro_costo
+            UNION ALL
+            SELECT 'DE' as tipo, fecha, NULL as centro, SUM(valor) as total
+            FROM base WHERE forma_cobro_pago = 'Transferencia' AND cta_afectada = 'BANCO DEUNA' GROUP BY fecha
+            ORDER BY fecha
         ''', (fecha_inicio_datos,))
-        ventas_tc = {str(r[0]): float(r[1]) for r in cur.fetchall()}
 
-        # Agregar ventas proyectadas para dias sin datos
+        ventas_tc = {}
+        cobros_efectivo = {}
+        cobros_deuna = {}
+
+        for r in cur.fetchall():
+            tipo, fecha, centro, total = r[0], str(r[1]), r[2], float(r[3])
+            if tipo == 'TC':
+                ventas_tc[fecha] = ventas_tc.get(fecha, 0) + total
+            elif tipo == 'EF':
+                if fecha not in cobros_efectivo:
+                    cobros_efectivo[fecha] = {'G1': 0, 'G2': 0}
+                if centro in GRUPO1_EFECTIVO:
+                    cobros_efectivo[fecha]['G1'] += total
+                elif centro in GRUPO2_EFECTIVO:
+                    cobros_efectivo[fecha]['G2'] += total
+            else:  # DE
+                cobros_deuna[fecha] = cobros_deuna.get(fecha, 0) + total
+
+        # Agregar proyecciones para dias sin datos
         for fecha_str, total in ventas_tc_proyectadas.items():
             if fecha_str not in ventas_tc:
                 ventas_tc[fecha_str] = total
+        for fecha_str, total in ventas_efectivo_proyectadas.items():
+            if fecha_str not in cobros_efectivo:
+                cobros_efectivo[fecha_str] = {'G1': total * 0.5, 'G2': total * 0.5}
+        for fecha_str, total in ventas_deuna_proyectadas.items():
+            if fecha_str not in cobros_deuna:
+                cobros_deuna[fecha_str] = total
 
         # Calcular depositos TC (86% neto)
         depositos_tc = {}
@@ -6681,32 +6725,6 @@ def flujo_caja_datos():
                 depositos_tc[dep_str] = {'bruto': 0, 'neto': 0}
             depositos_tc[dep_str]['bruto'] += total
             depositos_tc[dep_str]['neto'] += total * 0.86
-
-        # Obtener cobros efectivo
-        cur.execute('''
-            WITH unicos AS (
-                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, centro_costo, valor
-                FROM contifico_cobrospagos
-                WHERE tipo_registro = 'CLI' AND forma_cobro_pago = 'Efectivo' AND fecha >= %s
-            )
-            SELECT fecha, centro_costo, SUM(valor) as total FROM unicos GROUP BY fecha, centro_costo ORDER BY fecha
-        ''', (fecha_inicio_datos,))
-        cobros_efectivo = {}
-        for r in cur.fetchall():
-            fecha = str(r[0])
-            local = r[1]
-            total = float(r[2])
-            if fecha not in cobros_efectivo:
-                cobros_efectivo[fecha] = {'G1': 0, 'G2': 0}
-            if local in GRUPO1_EFECTIVO:
-                cobros_efectivo[fecha]['G1'] += total
-            elif local in GRUPO2_EFECTIVO:
-                cobros_efectivo[fecha]['G2'] += total
-
-        # Agregar efectivo proyectado (dividir 50/50 entre G1 y G2)
-        for fecha_str, total in ventas_efectivo_proyectadas.items():
-            if fecha_str not in cobros_efectivo:
-                cobros_efectivo[fecha_str] = {'G1': total * 0.5, 'G2': total * 0.5}
 
         # Calcular depositos efectivo
         depositos_efectivo = {}
@@ -6722,23 +6740,6 @@ def flujo_caja_datos():
                 if dep not in depositos_efectivo:
                     depositos_efectivo[dep] = {'total': 0}
                 depositos_efectivo[dep]['total'] += grupos['G2']
-
-        # Obtener cobros DEUNA
-        cur.execute('''
-            WITH unicos AS (
-                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, valor
-                FROM contifico_cobrospagos
-                WHERE tipo_registro = 'CLI' AND forma_cobro_pago = 'Transferencia'
-                AND cta_afectada = 'BANCO DEUNA' AND fecha >= %s
-            )
-            SELECT fecha, SUM(valor) as total FROM unicos GROUP BY fecha ORDER BY fecha
-        ''', (fecha_inicio_datos,))
-        cobros_deuna = {str(r[0]): float(r[1]) for r in cur.fetchall()}
-
-        # Agregar DEUNA proyectado
-        for fecha_str, total in ventas_deuna_proyectadas.items():
-            if fecha_str not in cobros_deuna:
-                cobros_deuna[fecha_str] = total
 
         # Calcular depositos DEUNA
         depositos_deuna = {}
@@ -6851,7 +6852,7 @@ def flujo_caja_cargar_guardado():
             SELECT fecha_semana, semana_num, saldo_inicial, ajustes_tc, ajustes_efectivo,
                    ajustes_deuna, traspasos, egresos, updated_at
             FROM flujo_caja_guardado
-            WHERE fecha_semana = ANY(%s)
+            WHERE fecha_semana = ANY(%s::date[])
         ''', (lista_fechas,))
 
         guardados = {}
