@@ -1149,6 +1149,55 @@ async function fc_guardarDatos() {
     }
 }
 
+// ============ DESCARGAR EXCEL ============
+function fc_descargarExcel() {
+    const tabla = document.getElementById('fc-tabla');
+    if (!tabla) {
+        alert('No hay datos para exportar. Haga clic en Consultar primero.');
+        return;
+    }
+
+    // Crear workbook usando SheetJS (incluido en la pagina)
+    const wb = XLSX.utils.book_new();
+
+    // Obtener todas las filas de la tabla
+    const rows = tabla.querySelectorAll('tr');
+    const data = [];
+
+    rows.forEach(row => {
+        const rowData = [];
+        const cells = row.querySelectorAll('th, td');
+        cells.forEach(cell => {
+            // Si hay input, tomar su valor
+            const input = cell.querySelector('input');
+            if (input) {
+                rowData.push(input.value || '');
+            } else {
+                rowData.push(cell.textContent.trim());
+            }
+        });
+        if (rowData.length > 0) {
+            data.push(rowData);
+        }
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+
+    // Ajustar anchos de columna
+    ws['!cols'] = [{ wch: 25 }];  // Primera columna mas ancha
+    for (let i = 1; i < 50; i++) {
+        ws['!cols'].push({ wch: 12 });
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Flujo de Caja');
+
+    // Generar nombre de archivo con fecha
+    const fechaCorte = document.getElementById('fc-fecha-corte')?.value || '';
+    const nombreArchivo = `Flujo_Caja_${fechaCorte || 'export'}.xlsx`;
+
+    XLSX.writeFile(wb, nombreArchivo);
+}
+
 // Registrar en el sistema de vistas
 if (typeof window.viewInitializers === 'undefined') {
     window.viewInitializers = {};

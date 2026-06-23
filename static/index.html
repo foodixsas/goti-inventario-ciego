@@ -2280,6 +2280,7 @@
                         </div>
                         <button class="fc-btn" style="background:#1565c0;" onclick="fc_cargarDatos()"><i class="fas fa-search"></i> Consultar</button>
                         <button class="fc-btn" style="background:#2e7d32;" onclick="fc_guardarDatos()"><i class="fas fa-save"></i> Guardar</button>
+                        <button class="fc-btn" style="background:#f57c00;" onclick="fc_descargarExcel()"><i class="fas fa-file-excel"></i> Excel</button>
                     </div>
 
                     <div class="fc-resumen" id="fc-resumen" style="display:none">
@@ -2382,8 +2383,9 @@
     <!-- Toast notifications -->
     <div id="toast-container"></div>
 
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="js/config.js?v=20260317a"></script>
     <script src="js/app.js?v=20260317a"></script>
-    <script src="js/flujo-caja.js?v=20260623t"></script>
+    <script src="js/flujo-caja.js?v=20260623u"></script>
 </body>
 </html>
