@@ -22,7 +22,49 @@ function fc_init() {
         lunes.setDate(hoy.getDate() + diff);
         fechaInput.value = lunes.toISOString().split('T')[0];
     }
-    fc_cargarDatos();
+
+    // Intentar cargar desde cache primero
+    fc_cargarDesdeCache();
+}
+
+// Cargar datos desde cache (sin consultar BD)
+function fc_cargarDesdeCache() {
+    const container = document.getElementById('fc-tabla-container');
+    const cached = sessionStorage.getItem('fc_datos_cache');
+
+    if (cached) {
+        try {
+            const data = JSON.parse(cached);
+            // Verificar que el cache sea del mismo dia
+            const hoy = new Date().toISOString().split('T')[0];
+            if (data.fecha_cache === hoy && data.datos) {
+                fc_datos = data.datos;
+                fc_semanas = fc_datos.semanas;
+                fc_semanasNums = fc_semanas.map(s => s.num);
+                window._fc_semanas = fc_semanas;
+
+                fc_todasFechas = [];
+                fc_semanas.forEach(sem => {
+                    sem.dias.forEach(dia => fc_todasFechas.push(dia));
+                });
+
+                fc_renderTabla();
+                fc_actualizarInfo();
+                fc_cargarDatosGuardados().then(() => fc_recalcularTodo());
+
+                console.log('Datos cargados desde cache');
+                return;
+            }
+        } catch (e) {
+            console.log('Cache invalido, mostrando mensaje');
+        }
+    }
+
+    // No hay cache - mostrar mensaje para consultar
+    container.innerHTML = `<div class="fc-loading">
+        <p style="color:#1565c0; font-size:16px;"><i class="fas fa-info-circle"></i> Haga clic en <strong>Consultar</strong> para cargar los datos</p>
+        <p style="font-size:12px;color:#666;margin-top:8px;">Los datos se mantendran en cache durante el dia.</p>
+    </div>`;
 }
 
 // Cargar datos desde API con reintentos
@@ -67,6 +109,14 @@ async function fc_cargarDatos(reintentos = 0) {
         await fc_cargarDatosGuardados();
 
         fc_recalcularTodo();
+
+        // Guardar en cache para no volver a consultar
+        const cacheData = {
+            fecha_cache: new Date().toISOString().split('T')[0],
+            datos: fc_datos
+        };
+        sessionStorage.setItem('fc_datos_cache', JSON.stringify(cacheData));
+        console.log('Datos guardados en cache');
 
     } catch (error) {
         console.error('Error flujo caja:', error);
