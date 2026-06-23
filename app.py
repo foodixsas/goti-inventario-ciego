@@ -6488,25 +6488,46 @@ def carga_inicial_productos():
 # ============================================================
 
 def fc_get_movimientos_db():
-    """Conexion a BD movimientos usando pool"""
-    try:
-        conn = _get_movimientos_pool().getconn()
-        # Validar conexion
-        conn.cursor().execute("SELECT 1")
-        conn.rollback()
-        return conn
-    except Exception as e:
-        print(f"fc_get_movimientos_db error: {e}")
-        # Fallback a conexion directa si pool falla
-        return psycopg2.connect(
-            host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
-            database='movimientos',
-            user=os.environ.get('DB_USER', 'adminChios'),
-            password=os.environ.get('DB_PASSWORD', 'Burger2023'),
-            port=os.environ.get('DB_PORT', '5432'),
-            sslmode='require',
-            connect_timeout=10
-        )
+    """Conexion a BD movimientos con reintentos"""
+    import time
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Intentar pool primero
+            try:
+                conn = _get_movimientos_pool().getconn()
+                conn.cursor().execute("SELECT 1")
+                conn.rollback()
+                return conn
+            except Exception:
+                pass
+
+            # Fallback a conexion directa
+            conn = psycopg2.connect(
+                host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
+                database='movimientos',
+                user=os.environ.get('DB_USER', 'adminChios'),
+                password=os.environ.get('DB_PASSWORD', 'Burger2023'),
+                port=os.environ.get('DB_PORT', '5432'),
+                sslmode='require',
+                connect_timeout=15
+            )
+            return conn
+        except Exception as e:
+            print(f"fc_get_movimientos_db intento {attempt+1}/{max_retries}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(1)
+
+    # Ultimo intento
+    return psycopg2.connect(
+        host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
+        database='movimientos',
+        user=os.environ.get('DB_USER', 'adminChios'),
+        password=os.environ.get('DB_PASSWORD', 'Burger2023'),
+        port=os.environ.get('DB_PORT', '5432'),
+        sslmode='require',
+        connect_timeout=20
+    )
 
 def fc_release_movimientos_db(conn):
     """Libera conexion de movimientos al pool"""

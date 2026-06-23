@@ -25,8 +25,8 @@ function fc_init() {
     fc_cargarDatos();
 }
 
-// Cargar datos desde API
-async function fc_cargarDatos() {
+// Cargar datos desde API con reintentos
+async function fc_cargarDatos(reintentos = 0) {
     const container = document.getElementById('fc-tabla-container');
     container.innerHTML = '<div class="fc-loading"><div class="spinner"></div><p>Calculando proyecciones...</p></div>';
 
@@ -70,6 +70,13 @@ async function fc_cargarDatos() {
 
     } catch (error) {
         console.error('Error flujo caja:', error);
+        // Reintentar hasta 2 veces automaticamente
+        if (reintentos < 2) {
+            console.log(`Reintentando (${reintentos + 1}/2)...`);
+            container.innerHTML = '<div class="fc-loading"><div class="spinner"></div><p>Reintentando conexion...</p></div>';
+            await new Promise(r => setTimeout(r, 1500));
+            return fc_cargarDatos(reintentos + 1);
+        }
         container.innerHTML = `<div class="fc-loading"><p style="color:#ef4444;">Error: ${error.message}</p><p style="font-size:12px;color:#666;margin-top:8px;">Verifique la conexion e intente nuevamente.</p></div>`;
     }
 }
