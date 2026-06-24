@@ -6672,26 +6672,27 @@ def flujo_caja_datos():
         ''', (fecha_hist_inicio, hoy))
         promedios_deuna = {int(r[0]): float(r[1]) for r in cur.fetchall()}
 
-        # ============ GENERAR VENTAS PROYECTADAS PARA DIAS FUTUROS ============
+        # ============ GENERAR VENTAS PROYECTADAS PARA DIAS SIN DATOS ============
         ventas_tc_proyectadas = {}
         ventas_efectivo_proyectadas = {}
         ventas_deuna_proyectadas = {}
 
-        # Para cada dia desde hoy hasta fin de proyeccion
-        dia_actual = hoy
+        # Para cada dia desde inicio de datos hasta fin de proyeccion
+        # Incluimos dias pasados recientes para que tengan proyecciones si no hay datos
+        dia_actual = fecha_inicio_datos
         while dia_actual < fecha_fin_proyeccion:
             dia_str = str(dia_actual)
             dow = dia_actual.weekday()
             # PostgreSQL DOW: 0=domingo, 1=lunes... Python weekday: 0=lunes, 1=martes...
             dow_pg = (dow + 1) % 7  # Convertir a formato PostgreSQL
 
-            if dia_actual >= hoy:  # Proyectar hoy y dias futuros
-                if dow_pg in promedios_tc:
-                    ventas_tc_proyectadas[dia_str] = promedios_tc[dow_pg]
-                if dow_pg in promedios_efectivo:
-                    ventas_efectivo_proyectadas[dia_str] = promedios_efectivo[dow_pg]
-                if dow_pg in promedios_deuna:
-                    ventas_deuna_proyectadas[dia_str] = promedios_deuna[dow_pg]
+            # Proyectar todos los dias (pasados y futuros) - luego se filtran los que tienen datos reales
+            if dow_pg in promedios_tc:
+                ventas_tc_proyectadas[dia_str] = promedios_tc[dow_pg]
+            if dow_pg in promedios_efectivo:
+                ventas_efectivo_proyectadas[dia_str] = promedios_efectivo[dow_pg]
+            if dow_pg in promedios_deuna:
+                ventas_deuna_proyectadas[dia_str] = promedios_deuna[dow_pg]
 
             dia_actual += timedelta(days=1)
 

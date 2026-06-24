@@ -1390,10 +1390,14 @@ async function fc_cargarDatosGuardados() {
 
             // Aplicar plataformas
             if (guardado.plataformas) {
+                console.log('Cargando plataformas:', guardado.plataformas);
                 for (const [plat, valores] of Object.entries(guardado.plataformas)) {
                     for (const [dia, valor] of Object.entries(valores)) {
                         const input = document.querySelector(`.fc-plataforma-${plat}[data-fecha="${dia}"]`);
-                        if (input && valor) input.value = valor;
+                        if (input && valor != null && valor > 0) {
+                            input.value = valor;
+                            console.log(`Plataforma ${plat} ${dia} = ${valor}`);
+                        }
                     }
                 }
             }
@@ -1480,10 +1484,13 @@ async function fc_guardarDatos() {
                 const traspaso = document.querySelector(`.fc-input-traspaso[data-fecha="${dia}"]`);
                 if (traspaso && traspaso.value) traspasos[dia] = parseFloat(traspaso.value.replace(/,/g, '')) || 0;
 
-                // Plataformas
+                // Plataformas - guardar valores no vacíos
                 ['uber', 'rappi', 'pedidosya'].forEach(plat => {
                     const inp = document.querySelector(`.fc-plataforma-${plat}[data-fecha="${dia}"]`);
-                    if (inp && inp.value) plataformas[plat][dia] = parseFloat(inp.value.replace(/,/g, '')) || 0;
+                    if (inp && inp.value && inp.value.trim() !== '' && inp.value !== '0') {
+                        const val = parseFloat(inp.value.replace(/,/g, '')) || 0;
+                        if (val > 0) plataformas[plat][dia] = val;
+                    }
                 });
             });
 
