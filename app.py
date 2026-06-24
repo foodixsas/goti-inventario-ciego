@@ -6682,7 +6682,7 @@ def flujo_caja_datos():
             # PostgreSQL DOW: 0=domingo, 1=lunes... Python weekday: 0=lunes, 1=martes...
             dow_pg = (dow + 1) % 7  # Convertir a formato PostgreSQL
 
-            if dia_actual > hoy:  # Solo proyectar dias futuros
+            if dia_actual >= hoy:  # Proyectar hoy y dias futuros
                 if dow_pg in promedios_tc:
                     ventas_tc_proyectadas[dia_str] = promedios_tc[dow_pg]
                 if dow_pg in promedios_efectivo:
