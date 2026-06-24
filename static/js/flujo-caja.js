@@ -418,7 +418,8 @@ function fc_renderEgresos() {
 
 function fc_renderSubgrupoEgreso(sg) {
     let html = '';
-    html += `<tr class="row-banco" id="fc-grupo-${sg.id}"><td class="col-concepto indent-2">${sg.nombre} <button class="fc-btn-add" onclick="fc_agregarItem('${sg.id}')">+</button></td>`;
+    // Header clickeable para colapsar/expandir
+    html += `<tr class="row-banco" id="fc-grupo-${sg.id}" data-grupo-header="eg-${sg.id}" data-expanded="true" onclick="fc_toggleGrupo('eg-${sg.id}')" style="cursor:pointer;"><td class="col-concepto indent-2"><span class="fc-grupo-icon" style="margin-right:6px;">▼</span>${sg.nombre} <button class="fc-btn-add" onclick="event.stopPropagation();fc_agregarItem('${sg.id}')">+</button></td>`;
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header"></td>`;
         for (let i = 0; i < 8; i++) html += `<td class="dia-col sem-${sem.num}"></td>`;
@@ -426,7 +427,7 @@ function fc_renderSubgrupoEgreso(sg) {
     html += '</tr>';
 
     sg.items.forEach(item => {
-        html += `<tr class="row-banco-item fc-egreso-item-${sg.id}"><td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="${item}"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
+        html += `<tr class="row-banco-item fc-egreso-item-${sg.id}" data-grupo="eg-${sg.id}"><td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="${item}"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
         fc_semanas.forEach(sem => {
             html += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
             sem.dias.forEach((dia, i) => {
@@ -438,7 +439,7 @@ function fc_renderSubgrupoEgreso(sg) {
         html += '</tr>';
     });
 
-    html += `<tr class="row-banco-total" id="fc-total-${sg.id}-row"><td class="col-concepto indent-2">Total ${sg.nombre.split(' ').slice(0,2).join(' ')}</td>`;
+    html += `<tr class="row-banco-total" id="fc-total-${sg.id}-row" data-grupo="eg-${sg.id}"><td class="col-concepto indent-2">Total ${sg.nombre.split(' ').slice(0,2).join(' ')}</td>`;
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-total-${sg.id}-sem" data-semana="${sem.num}">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -920,6 +921,7 @@ function fc_agregarItem(grupo) {
 
     const newRow = document.createElement('tr');
     newRow.className = `row-banco-item fc-egreso-item-${grupo}`;
+    newRow.dataset.grupo = `eg-${grupo}`;
 
     let celdas = `<td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="Nuevo Item"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
 
@@ -1099,12 +1101,17 @@ async function fc_cargarDatosGuardados() {
                 }
             }
 
-            // Aplicar egresos
+            // Aplicar egresos - crear items faltantes si es necesario
             if (guardado.egresos) {
                 for (const [grupo, items] of Object.entries(guardado.egresos)) {
+                    // Crear items faltantes
+                    let rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
+                    while (rows.length < items.length) {
+                        fc_agregarItem(grupo);
+                        rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
+                    }
+
                     items.forEach((item, idx) => {
-                        // Buscar o crear el input correspondiente
-                        const rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
                         if (rows[idx]) {
                             const nombreInput = rows[idx].querySelector('.fc-input-nombre');
                             if (nombreInput && item.nombre) nombreInput.value = item.nombre;
@@ -1262,6 +1269,47 @@ function fc_descargarExcel() {
     const nombreArchivo = `Flujo_Caja_${fechaCorte || 'export'}.xlsx`;
 
     XLSX.writeFile(wb, nombreArchivo);
+}
+
+// ============ TOGGLE FILAS POR GRUPO ============
+function fc_toggleGrupo(grupoId) {
+    const header = document.querySelector(`[data-grupo-header="${grupoId}"]`);
+    if (!header) return;
+
+    const items = document.querySelectorAll(`[data-grupo="${grupoId}"]`);
+    const expanded = header.dataset.expanded !== 'false';
+
+    if (expanded) {
+        items.forEach(row => row.style.display = 'none');
+        header.dataset.expanded = 'false';
+        const icon = header.querySelector('.fc-grupo-icon');
+        if (icon) icon.textContent = '▶';
+    } else {
+        items.forEach(row => row.style.display = '');
+        header.dataset.expanded = 'true';
+        const icon = header.querySelector('.fc-grupo-icon');
+        if (icon) icon.textContent = '▼';
+    }
+}
+
+function fc_expandirFilas() {
+    document.querySelectorAll('[data-grupo-header]').forEach(header => {
+        const grupoId = header.dataset.grupoHeader;
+        document.querySelectorAll(`[data-grupo="${grupoId}"]`).forEach(row => row.style.display = '');
+        header.dataset.expanded = 'true';
+        const icon = header.querySelector('.fc-grupo-icon');
+        if (icon) icon.textContent = '▼';
+    });
+}
+
+function fc_colapsarFilas() {
+    document.querySelectorAll('[data-grupo-header]').forEach(header => {
+        const grupoId = header.dataset.grupoHeader;
+        document.querySelectorAll(`[data-grupo="${grupoId}"]`).forEach(row => row.style.display = 'none');
+        header.dataset.expanded = 'false';
+        const icon = header.querySelector('.fc-grupo-icon');
+        if (icon) icon.textContent = '▶';
+    });
 }
 
 // Registrar en el sistema de vistas
