@@ -6888,7 +6888,7 @@ def flujo_caja_cargar_guardado():
             SELECT fecha_semana, semana_num, saldo_inicial, ajustes_tc, ajustes_efectivo,
                    ajustes_deuna, traspasos, egresos, updated_at
             FROM flujo_caja_guardado
-            WHERE fecha_semana = ANY(%s)
+            WHERE fecha_semana = ANY(%s::date[])
         ''', (lista_fechas,))
 
         guardados = {}
