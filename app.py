@@ -6826,14 +6826,29 @@ def flujo_caja_guardar():
     """Guardar datos de flujo de caja trabajados"""
     conn = None
     try:
+        # Asegurar que las nuevas columnas existan
+        conn_temp = fc_get_movimientos_db()
+        cur_temp = conn_temp.cursor()
+        cur_temp.execute('''
+            ALTER TABLE flujo_caja_guardado
+            ADD COLUMN IF NOT EXISTS saldo_produbanco NUMERIC(14,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS saldo_pichincha NUMERIC(14,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS plataformas JSONB DEFAULT '{}'::jsonb
+        ''')
+        conn_temp.commit()
+        fc_release_movimientos_db(conn_temp)
+
         data = request.get_json()
         fecha_semana = data.get('fecha_semana')
         semana_num = data.get('semana_num')
-        saldo_inicial = data.get('saldo_inicial', 0)
+        # Soportar tanto formato viejo (saldo_inicial) como nuevo (saldo_produbanco/pichincha)
+        saldo_produbanco = data.get('saldo_produbanco', data.get('saldo_inicial', 0))
+        saldo_pichincha = data.get('saldo_pichincha', 0)
         ajustes_tc = json.dumps(data.get('ajustes_tc', {}))
         ajustes_efectivo = json.dumps(data.get('ajustes_efectivo', {}))
         ajustes_deuna = json.dumps(data.get('ajustes_deuna', {}))
         traspasos = json.dumps(data.get('traspasos', {}))
+        plataformas = json.dumps(data.get('plataformas', {}))
         egresos = json.dumps(data.get('egresos', {}))
         usuario = data.get('usuario', 'admin')
 
@@ -6843,21 +6858,23 @@ def flujo_caja_guardar():
         # Upsert: insertar o actualizar si ya existe
         cur.execute('''
             INSERT INTO flujo_caja_guardado
-                (fecha_semana, semana_num, saldo_inicial, ajustes_tc, ajustes_efectivo,
-                 ajustes_deuna, traspasos, egresos, created_by, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                (fecha_semana, semana_num, saldo_produbanco, saldo_pichincha, ajustes_tc, ajustes_efectivo,
+                 ajustes_deuna, traspasos, plataformas, egresos, created_by, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (fecha_semana) DO UPDATE SET
                 semana_num = EXCLUDED.semana_num,
-                saldo_inicial = EXCLUDED.saldo_inicial,
+                saldo_produbanco = EXCLUDED.saldo_produbanco,
+                saldo_pichincha = EXCLUDED.saldo_pichincha,
                 ajustes_tc = EXCLUDED.ajustes_tc,
                 ajustes_efectivo = EXCLUDED.ajustes_efectivo,
                 ajustes_deuna = EXCLUDED.ajustes_deuna,
                 traspasos = EXCLUDED.traspasos,
+                plataformas = EXCLUDED.plataformas,
                 egresos = EXCLUDED.egresos,
                 updated_at = NOW()
             RETURNING id
-        ''', (fecha_semana, semana_num, saldo_inicial, ajustes_tc, ajustes_efectivo,
-              ajustes_deuna, traspasos, egresos, usuario))
+        ''', (fecha_semana, semana_num, saldo_produbanco, saldo_pichincha, ajustes_tc, ajustes_efectivo,
+              ajustes_deuna, traspasos, plataformas, egresos, usuario))
 
         row_id = cur.fetchone()[0]
         conn.commit()
@@ -6888,8 +6905,12 @@ def flujo_caja_cargar_guardado():
         cur = conn.cursor()
 
         cur.execute('''
-            SELECT fecha_semana, semana_num, saldo_inicial, ajustes_tc, ajustes_efectivo,
-                   ajustes_deuna, traspasos, egresos, updated_at
+            SELECT fecha_semana, semana_num,
+                   COALESCE(saldo_produbanco, saldo_inicial, 0) as saldo_produbanco,
+                   COALESCE(saldo_pichincha, 0) as saldo_pichincha,
+                   ajustes_tc, ajustes_efectivo, ajustes_deuna, traspasos,
+                   COALESCE(plataformas, '{}'::jsonb) as plataformas,
+                   egresos, updated_at
             FROM flujo_caja_guardado
             WHERE fecha_semana = ANY(%s::date[])
         ''', (lista_fechas,))
@@ -6899,13 +6920,15 @@ def flujo_caja_cargar_guardado():
             fecha_str = str(row[0])
             guardados[fecha_str] = {
                 'semana_num': row[1],
-                'saldo_inicial': float(row[2]) if row[2] else 0,
-                'ajustes_tc': row[3] or {},
-                'ajustes_efectivo': row[4] or {},
-                'ajustes_deuna': row[5] or {},
-                'traspasos': row[6] or {},
-                'egresos': row[7] or {},
-                'updated_at': row[8].isoformat() if row[8] else None
+                'saldo_produbanco': float(row[2]) if row[2] else 0,
+                'saldo_pichincha': float(row[3]) if row[3] else 0,
+                'ajustes_tc': row[4] or {},
+                'ajustes_efectivo': row[5] or {},
+                'ajustes_deuna': row[6] or {},
+                'traspasos': row[7] or {},
+                'plataformas': row[8] or {},
+                'egresos': row[9] or {},
+                'updated_at': row[10].isoformat() if row[10] else None
             }
 
         return jsonify({'ok': True, 'guardados': guardados})
