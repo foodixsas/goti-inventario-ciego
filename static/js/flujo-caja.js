@@ -1338,13 +1338,20 @@ async function fc_cargarDatosGuardados() {
         for (const [fechaSemana, guardado] of Object.entries(data.guardados)) {
             // Aplicar saldos iniciales por banco (solo primera semana)
             if (semanas[0].inicio === fechaSemana) {
-                if (guardado.saldo_produbanco) {
+                console.log('Cargando saldos guardados:', guardado.saldo_produbanco, guardado.saldo_pichincha);
+                if (guardado.saldo_produbanco != null) {
                     const inputProdubanco = document.querySelector('.fc-saldo-produbanco-input');
-                    if (inputProdubanco) inputProdubanco.value = guardado.saldo_produbanco;
+                    if (inputProdubanco) {
+                        inputProdubanco.value = guardado.saldo_produbanco;
+                        console.log('Saldo Produbanco aplicado:', guardado.saldo_produbanco);
+                    }
                 }
-                if (guardado.saldo_pichincha) {
+                if (guardado.saldo_pichincha != null) {
                     const inputPichincha = document.querySelector('.fc-saldo-pichincha-input');
-                    if (inputPichincha) inputPichincha.value = guardado.saldo_pichincha;
+                    if (inputPichincha) {
+                        inputPichincha.value = guardado.saldo_pichincha;
+                        console.log('Saldo Pichincha aplicado:', guardado.saldo_pichincha);
+                    }
                 }
                 // Compatibilidad con datos antiguos (saldo_inicial único)
                 if (guardado.saldo_inicial && !guardado.saldo_produbanco) {

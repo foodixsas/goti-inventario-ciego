@@ -6904,6 +6904,15 @@ def flujo_caja_cargar_guardado():
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
 
+        # Asegurar que las nuevas columnas existan
+        cur.execute('''
+            ALTER TABLE flujo_caja_guardado
+            ADD COLUMN IF NOT EXISTS saldo_produbanco NUMERIC(14,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS saldo_pichincha NUMERIC(14,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS plataformas JSONB DEFAULT '{}'::jsonb
+        ''')
+        conn.commit()
+
         cur.execute('''
             SELECT fecha_semana, semana_num,
                    COALESCE(saldo_produbanco, saldo_inicial, 0) as saldo_produbanco,
