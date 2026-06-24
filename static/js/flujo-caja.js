@@ -1230,17 +1230,28 @@ function fc_descargarExcel() {
         return;
     }
 
+    // Expandir todo antes de exportar para capturar todos los datos
+    fc_expandirTodo();
+    fc_expandirFilas();
+
     // Crear workbook usando SheetJS (incluido en la pagina)
     const wb = XLSX.utils.book_new();
 
-    // Obtener todas las filas de la tabla
+    // Obtener todas las filas de la tabla (incluyendo ocultas por grupo)
     const rows = tabla.querySelectorAll('tr');
     const data = [];
 
     rows.forEach(row => {
+        // Saltar filas ocultas por toggle de grupo
+        if (row.style.display === 'none') return;
+
         const rowData = [];
         const cells = row.querySelectorAll('th, td');
         cells.forEach(cell => {
+            // Solo incluir celdas visibles (no las colapsadas de semana)
+            const style = window.getComputedStyle(cell);
+            if (style.display === 'none') return;
+
             // Si hay input, tomar su valor
             const input = cell.querySelector('input');
             if (input) {
