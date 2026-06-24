@@ -213,6 +213,7 @@ function fc_renderTabla() {
     html += fc_renderFilaPlataforma('UBER', 'uber', 'pichincha');
     html += fc_renderFilaPlataforma('RAPPI', 'rappi', 'pichincha');
     html += fc_renderFilaPlataforma('PEDIDOS YA', 'pedidosya', 'pichincha');
+    html += fc_renderFilaTraspasoSaliente('pichincha');
 
     // Total Ingresos
     html += fc_renderFilaTotalIngresos();
@@ -348,6 +349,21 @@ function fc_renderFilaPlataforma(titulo, tipo, banco) {
             </td>`;
         });
         html += `<td class="dia-col sem-${sem.num} total-col monto fc-plataforma-${tipo}-total" data-semana="${sem.num}" style="background:#e8f5e9 !important;">-</td>`;
+    });
+    html += '</tr>';
+    return html;
+}
+
+// Fila de traspaso saliente (muestra negativo del traspaso a Produbanco)
+function fc_renderFilaTraspasoSaliente(banco) {
+    let html = `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}" style="background:#ffcdd2 !important;"><td class="col-concepto indent-2" style="background:#ffcdd2 !important; color:#c62828;">Traspaso a Produbanco</td>`;
+    fc_semanas.forEach(sem => {
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-traspaso-saliente-sem" data-semana="${sem.num}" style="background:#ffcdd2 !important; color:#c62828;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            html += `<td class="dia-col sem-${sem.num}${sab} monto fc-traspaso-saliente-dia" data-fecha="${dia}" style="background:#ffcdd2 !important; color:#c62828;">-</td>`;
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto fc-traspaso-saliente-total" data-semana="${sem.num}" style="background:#ffcdd2 !important; color:#c62828;">-</td>`;
     });
     html += '</tr>';
     return html;
@@ -619,6 +635,23 @@ function fc_recalcularAjustes() {
 }
 
 function fc_recalcularTraspasos() {
+    // Actualizar por día (para mostrar el saliente en Pichincha)
+    fc_todasFechas.forEach(fecha => {
+        const inp = document.querySelector(`.fc-input-traspaso[data-fecha="${fecha}"]`);
+        const val = inp ? (parseFloat(inp.value.replace(/,/g, '')) || 0) : 0;
+
+        // Mostrar negativo en la fila de traspaso saliente de Pichincha
+        const salienteCell = document.querySelector(`.fc-traspaso-saliente-dia[data-fecha="${fecha}"]`);
+        if (salienteCell) {
+            if (val > 0) {
+                salienteCell.textContent = `(${fc_formatMonto(val)})`;
+            } else {
+                salienteCell.textContent = '-';
+            }
+        }
+    });
+
+    // Totales por semana
     fc_semanasNums.forEach(sem => {
         let total = 0;
         document.querySelectorAll(`.fc-input-traspaso[data-semana="${sem}"]`).forEach(inp => {
@@ -628,6 +661,12 @@ function fc_recalcularTraspasos() {
         if (semCell) semCell.textContent = fc_formatMonto(total);
         const totalCell = document.querySelector(`.fc-traspaso-total[data-semana="${sem}"]`);
         if (totalCell) totalCell.textContent = fc_formatMonto(total);
+
+        // Saliente (negativo)
+        const salienteSem = document.querySelector(`.fc-traspaso-saliente-sem[data-semana="${sem}"]`);
+        if (salienteSem) salienteSem.textContent = total > 0 ? `(${fc_formatMonto(total)})` : '-';
+        const salienteTotal = document.querySelector(`.fc-traspaso-saliente-total[data-semana="${sem}"]`);
+        if (salienteTotal) salienteTotal.textContent = total > 0 ? `(${fc_formatMonto(total)})` : '-';
     });
 }
 
