@@ -9,8 +9,11 @@ from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
 import os, secrets, smtplib, json
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
+
+# Zona horaria Ecuador (UTC-5)
+TZ_ECUADOR = timezone(timedelta(hours=-5))
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from openpyxl import Workbook
@@ -6604,10 +6607,10 @@ def flujo_caja_datos():
                 if lunes.weekday() != 0:
                     lunes = lunes - timedelta(days=lunes.weekday())
             except:
-                hoy = datetime.now().date()
+                hoy = datetime.now(TZ_ECUADOR).date()
                 lunes = hoy - timedelta(days=hoy.weekday())
         else:
-            hoy = datetime.now().date()
+            hoy = datetime.now(TZ_ECUADOR).date()
             lunes = hoy - timedelta(days=hoy.weekday())
 
         fecha_inicio_datos = lunes - timedelta(days=7)
@@ -6622,7 +6625,7 @@ def flujo_caja_datos():
             dias = [str(inicio + timedelta(days=j)) for j in range(7)]
             semanas.append({'num': num, 'inicio': str(inicio), 'fin': str(fin), 'dias': dias})
 
-        hoy = datetime.now().date()
+        hoy = datetime.now(TZ_ECUADOR).date()
 
         # ============ PROMEDIOS HISTORICOS (ultimas 8 semanas) ============
         fecha_hist_inicio = hoy - timedelta(weeks=8)
