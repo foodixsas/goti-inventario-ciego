@@ -201,17 +201,18 @@ function fc_renderTabla() {
     // ============ INGRESOS ============
     html += fc_renderSeccion('INGRESOS', 'row-section');
 
-    // PRODUBANCO
-    html += fc_renderSubseccion('BANCO PRODUBANCO');
-    html += fc_renderFilaIngreso('Deposito TC', 'tc', fc_datos.depositos_tc, 'neto');
-    html += fc_renderFilaIngreso('Deposito Efectivo', 'efectivo', fc_datos.depositos_efectivo, 'total');
-    html += fc_renderFilaTraspaso();
-    html += fc_renderFilaTotal('Total Produbanco', fc_datos.totales_produbanco, 'total-produbanco');
+    // PRODUBANCO (total en la misma fila del banco)
+    html += fc_renderSubseccionBanco('BANCO PRODUBANCO', 'produbanco');
+    html += fc_renderFilaIngreso('Deposito TC', 'tc', fc_datos.depositos_tc, 'neto', 'produbanco');
+    html += fc_renderFilaIngreso('Deposito Efectivo', 'efectivo', fc_datos.depositos_efectivo, 'total', 'produbanco');
+    html += fc_renderFilaTraspaso('produbanco');
 
-    // PICHINCHA
-    html += fc_renderSubseccion('BANCO PICHINCHA');
-    html += fc_renderFilaIngreso('Deposito DEUNA', 'deuna', fc_datos.depositos_deuna, 'total');
-    html += fc_renderFilaTotal('Total Pichincha', fc_datos.totales_pichincha, 'total-pichincha');
+    // PICHINCHA (total en la misma fila del banco)
+    html += fc_renderSubseccionBanco('BANCO PICHINCHA', 'pichincha');
+    html += fc_renderFilaIngreso('Deposito DEUNA', 'deuna', fc_datos.depositos_deuna, 'total', 'pichincha');
+    html += fc_renderFilaPlataforma('UBER', 'uber', 'pichincha');
+    html += fc_renderFilaPlataforma('RAPPI', 'rappi', 'pichincha');
+    html += fc_renderFilaPlataforma('PEDIDOS YA', 'pedidosya', 'pichincha');
 
     // Total Ingresos
     html += fc_renderFilaTotalIngresos();
@@ -227,36 +228,66 @@ function fc_renderTabla() {
     container.innerHTML = html;
 }
 
-// Saldo Inicial (primer dia editable, resto calculado)
+// Saldo Inicial por Banco (Produbanco y Pichincha separados)
 function fc_renderSaldoInicial() {
-    let html = `<tr class="row-total" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO INICIAL</td>`;
-    fc_semanas.forEach((sem, semIdx) => {
-        // Semana colapsada - suma del primer dia
-        html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-inicial-sem" data-semana="${sem.num}" style="background:#b3e5fc !important;">-</td>`;
+    let html = '';
 
+    // SALDO INICIAL PRODUBANCO
+    html += `<tr class="row-total" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO INICIAL PRODUBANCO</td>`;
+    fc_semanas.forEach((sem, semIdx) => {
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-produbanco-sem" data-semana="${sem.num}" style="background:#b3e5fc !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
             const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
             const esEditablePrimero = (semIdx === 0 && i === 0);
-
             if (esEditablePrimero) {
-                // Primer dia de primera semana: editable
                 html += `<td class="dia-col sem-${sem.num}${sab} monto" style="background:#b3e5fc !important;">
-                    <input type="text" class="fc-input fc-saldo-inicial-input" data-fecha="${dia}" placeholder="0" onchange="fc_recalcularTodo()" style="background:#e1f5fe;">
+                    <input type="text" class="fc-input fc-saldo-produbanco-input" data-fecha="${dia}" data-banco="produbanco" placeholder="0" onchange="fc_recalcularTodo()" style="background:#e1f5fe;">
                 </td>`;
             } else {
-                // Resto: calculado (saldo final del dia anterior)
-                html += `<td class="dia-col sem-${sem.num}${sab} monto fc-saldo-inicial-dia" data-fecha="${dia}" style="background:#b3e5fc !important;">-</td>`;
+                html += `<td class="dia-col sem-${sem.num}${sab} monto fc-saldo-produbanco-dia" data-fecha="${dia}" style="background:#b3e5fc !important;">-</td>`;
             }
         });
         html += `<td class="dia-col sem-${sem.num} total-col monto" style="background:#b3e5fc !important;"></td>`;
     });
     html += '</tr>';
+
+    // SALDO INICIAL PICHINCHA
+    html += `<tr class="row-total" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">SALDO INICIAL PICHINCHA</td>`;
+    fc_semanas.forEach((sem, semIdx) => {
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-pichincha-sem" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            const esEditablePrimero = (semIdx === 0 && i === 0);
+            if (esEditablePrimero) {
+                html += `<td class="dia-col sem-${sem.num}${sab} monto" style="background:#c8e6c9 !important;">
+                    <input type="text" class="fc-input fc-saldo-pichincha-input" data-fecha="${dia}" data-banco="pichincha" placeholder="0" onchange="fc_recalcularTodo()" style="background:#e8f5e9;">
+                </td>`;
+            } else {
+                html += `<td class="dia-col sem-${sem.num}${sab} monto fc-saldo-pichincha-dia" data-fecha="${dia}" style="background:#c8e6c9 !important;">-</td>`;
+            }
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto" style="background:#c8e6c9 !important;"></td>`;
+    });
+    html += '</tr>';
+
+    // SALDO INICIAL TOTAL (suma de ambos bancos)
+    html += `<tr class="row-total" style="background:#90caf9 !important;"><td class="col-concepto" style="background:#90caf9 !important; font-weight:bold;">SALDO INICIAL TOTAL</td>`;
+    fc_semanas.forEach((sem, semIdx) => {
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-total-sem" data-semana="${sem.num}" style="background:#90caf9 !important;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            html += `<td class="dia-col sem-${sem.num}${sab} monto fc-saldo-total-dia" data-fecha="${dia}" style="background:#90caf9 !important;">-</td>`;
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto" style="background:#90caf9 !important;"></td>`;
+    });
+    html += '</tr>';
+
     return html;
 }
 
 // Fila de ingreso con campo de ajuste
-function fc_renderFilaIngreso(titulo, tipo, datos, campo) {
-    let html = `<tr class="row-banco-item"><td class="col-concepto indent-2">${titulo}</td>`;
+function fc_renderFilaIngreso(titulo, tipo, datos, campo, banco) {
+    let html = `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}"><td class="col-concepto indent-2">${titulo}</td>`;
     fc_semanas.forEach(sem => {
         let totalSem = 0;
         sem.dias.forEach(dia => {
@@ -275,7 +306,7 @@ function fc_renderFilaIngreso(titulo, tipo, datos, campo) {
     html += '</tr>';
 
     // Fila de ajuste
-    html += `<tr class="row-banco-item" style="background:#fff3e0 !important;"><td class="col-concepto indent-3" style="background:#fff3e0 !important; font-size:10px; color:#e65100;">Ajuste ${titulo}</td>`;
+    html += `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}" style="background:#fff3e0 !important;"><td class="col-concepto indent-3" style="background:#fff3e0 !important; font-size:10px; color:#e65100;">Ajuste ${titulo}</td>`;
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-ajuste-${tipo}-sem" data-semana="${sem.num}" style="background:#fff3e0 !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -291,8 +322,8 @@ function fc_renderFilaIngreso(titulo, tipo, datos, campo) {
     return html;
 }
 
-function fc_renderFilaTraspaso() {
-    let html = `<tr class="row-banco-item"><td class="col-concepto indent-2">Traspaso desde Pichincha</td>`;
+function fc_renderFilaTraspaso(banco) {
+    let html = `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}"><td class="col-concepto indent-2">Traspaso desde Pichincha</td>`;
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-traspaso-sem" data-semana="${sem.num}">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -300,6 +331,23 @@ function fc_renderFilaTraspaso() {
             html += `<td class="dia-col sem-${sem.num}${sab} monto"><input type="text" class="fc-input fc-input-traspaso" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()"></td>`;
         });
         html += `<td class="dia-col sem-${sem.num} total-col monto fc-traspaso-total" data-semana="${sem.num}">-</td>`;
+    });
+    html += '</tr>';
+    return html;
+}
+
+// Fila de plataforma (UBER, RAPPI, PEDIDOS YA) - entrada manual
+function fc_renderFilaPlataforma(titulo, tipo, banco) {
+    let html = `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}" style="background:#e8f5e9 !important;"><td class="col-concepto indent-2" style="background:#e8f5e9 !important;">${titulo}</td>`;
+    fc_semanas.forEach(sem => {
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-plataforma-${tipo}-sem" data-semana="${sem.num}" style="background:#e8f5e9 !important;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            html += `<td class="dia-col sem-${sem.num}${sab} monto" style="background:#e8f5e9 !important;">
+                <input type="text" class="fc-input fc-input-plataforma fc-plataforma-${tipo}" data-fecha="${dia}" data-semana="${sem.num}" data-plataforma="${tipo}" placeholder="0" onchange="fc_recalcularTodo()" style="background:#c8e6c9;">
+            </td>`;
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto fc-plataforma-${tipo}-total" data-semana="${sem.num}" style="background:#e8f5e9 !important;">-</td>`;
     });
     html += '</tr>';
     return html;
@@ -326,6 +374,29 @@ function fc_renderSubseccion(titulo) {
             const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
             html += `<td class="dia-col sem-${sem.num}${sab}"></td>`;
         }
+    });
+    html += '</tr>';
+    return html;
+}
+
+// Subseccion de banco con totales en la misma fila
+function fc_renderSubseccionBanco(titulo, banco) {
+    const datos = banco === 'produbanco' ? fc_datos.totales_produbanco : fc_datos.totales_pichincha;
+    let html = `<tr class="row-subsection" data-grupo-header="ing-${banco}" data-expanded="true" onclick="fc_toggleGrupo('ing-${banco}')" style="font-weight:600; cursor:pointer;"><td class="col-concepto indent-1"><span class="fc-grupo-icon" style="margin-right:6px;">▼</span>${titulo}</td>`;
+    fc_semanas.forEach(sem => {
+        const val = datos[sem.num] || 0;
+        html += `<td class="col-semana sem-${sem.num}-header monto total-${banco}-sem" data-semana="${sem.num}" style="font-weight:600;">${fc_formatMonto(val)}</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            let valDia = 0;
+            if (banco === 'produbanco') {
+                valDia = (fc_datos.depositos_tc[dia]?.neto || 0) + (fc_datos.depositos_efectivo[dia]?.total || 0);
+            } else {
+                valDia = fc_datos.depositos_deuna[dia]?.total || 0;
+            }
+            html += `<td class="dia-col sem-${sem.num}${sab} monto total-${banco}-dia" data-fecha="${dia}" style="font-weight:600;">${fc_formatMonto(valDia)}</td>`;
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto total-${banco}-total" data-semana="${sem.num}" style="font-weight:600;">${fc_formatMonto(val)}</td>`;
     });
     html += '</tr>';
     return html;
@@ -418,16 +489,27 @@ function fc_renderEgresos() {
 
 function fc_renderSubgrupoEgreso(sg) {
     let html = '';
-    // Header clickeable para colapsar/expandir
+    // Header clickeable para colapsar/expandir CON totales
     html += `<tr class="row-banco" id="fc-grupo-${sg.id}" data-grupo-header="eg-${sg.id}" data-expanded="true" onclick="fc_toggleGrupo('eg-${sg.id}')" style="cursor:pointer;"><td class="col-concepto indent-2"><span class="fc-grupo-icon" style="margin-right:6px;">▼</span>${sg.nombre} <button class="fc-btn-add" onclick="event.stopPropagation();fc_agregarItem('${sg.id}')">+</button></td>`;
     fc_semanas.forEach(sem => {
-        html += `<td class="col-semana sem-${sem.num}-header"></td>`;
-        for (let i = 0; i < 8; i++) html += `<td class="dia-col sem-${sem.num}"></td>`;
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-total-${sg.id}-sem" data-semana="${sem.num}" style="font-weight:600;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            html += `<td class="dia-col sem-${sem.num}${sab} monto fc-total-${sg.id}-dia" data-fecha="${dia}" style="font-weight:600;">-</td>`;
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto fc-total-${sg.id}-total" data-semana="${sem.num}" style="font-weight:600;">-</td>`;
     });
     html += '</tr>';
 
     sg.items.forEach(item => {
-        html += `<tr class="row-banco-item fc-egreso-item-${sg.id}" data-grupo="eg-${sg.id}"><td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="${item}"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
+        html += `<tr class="row-banco-item fc-egreso-item-${sg.id}" data-grupo="eg-${sg.id}" data-banco="produbanco"><td class="col-concepto indent-3">
+            <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
+                <option value="produbanco" selected>PRO</option>
+                <option value="pichincha">PICH</option>
+            </select>
+            <input type="text" class="fc-input-nombre" value="${item}">
+            <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
+        </td>`;
         fc_semanas.forEach(sem => {
             html += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
             sem.dias.forEach((dia, i) => {
@@ -438,17 +520,6 @@ function fc_renderSubgrupoEgreso(sg) {
         });
         html += '</tr>';
     });
-
-    html += `<tr class="row-banco-total" id="fc-total-${sg.id}-row" data-grupo="eg-${sg.id}"><td class="col-concepto indent-2">Total ${sg.nombre.split(' ').slice(0,2).join(' ')}</td>`;
-    fc_semanas.forEach(sem => {
-        html += `<td class="col-semana sem-${sem.num}-header monto fc-total-${sg.id}-sem" data-semana="${sem.num}">-</td>`;
-        sem.dias.forEach((dia, i) => {
-            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
-            html += `<td class="dia-col sem-${sem.num}${sab} monto fc-total-${sg.id}-dia" data-fecha="${dia}">-</td>`;
-        });
-        html += `<td class="dia-col sem-${sem.num} total-col monto fc-total-${sg.id}-total" data-semana="${sem.num}">-</td>`;
-    });
-    html += '</tr>';
 
     return html;
 }
@@ -482,8 +553,32 @@ function fc_renderFlujoYSaldo() {
     });
     html += '</tr>';
 
-    // SALDO FINAL (Saldo Inicial + Flujo)
-    html += `<tr class="row-total" style="background:#81d4fa !important;"><td class="col-concepto" style="background:#81d4fa !important; font-weight:bold;">SALDO FINAL</td>`;
+    // SALDO FINAL PRODUBANCO
+    html += `<tr class="row-total" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO FINAL PRODUBANCO</td>`;
+    fc_semanas.forEach(sem => {
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-produbanco-sem" data-semana="${sem.num}" style="background:#b3e5fc !important;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            html += `<td class="dia-col sem-${sem.num}${sab} monto fc-saldo-final-produbanco-dia" data-fecha="${dia}" style="background:#b3e5fc !important;">-</td>`;
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto fc-saldo-final-produbanco-total" data-semana="${sem.num}" style="background:#b3e5fc !important;">-</td>`;
+    });
+    html += '</tr>';
+
+    // SALDO FINAL PICHINCHA
+    html += `<tr class="row-total" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">SALDO FINAL PICHINCHA</td>`;
+    fc_semanas.forEach(sem => {
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-pichincha-sem" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            html += `<td class="dia-col sem-${sem.num}${sab} monto fc-saldo-final-pichincha-dia" data-fecha="${dia}" style="background:#c8e6c9 !important;">-</td>`;
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto fc-saldo-final-pichincha-total" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
+    });
+    html += '</tr>';
+
+    // SALDO FINAL TOTAL (suma de ambos bancos)
+    html += `<tr class="row-total" style="background:#81d4fa !important;"><td class="col-concepto" style="background:#81d4fa !important; font-weight:bold;">SALDO FINAL TOTAL</td>`;
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-sem" data-semana="${sem.num}" style="background:#81d4fa !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -501,6 +596,7 @@ function fc_renderFlujoYSaldo() {
 function fc_recalcularTodo() {
     fc_recalcularAjustes();
     fc_recalcularTraspasos();
+    fc_recalcularPlataformas();
     fc_recalcularIngresos();
     fc_recalcularEgresos();
     fc_recalcularFlujoYSaldos();
@@ -535,19 +631,50 @@ function fc_recalcularTraspasos() {
     });
 }
 
+function fc_recalcularPlataformas() {
+    ['uber', 'rappi', 'pedidosya'].forEach(plat => {
+        fc_semanasNums.forEach(sem => {
+            let totalSem = 0;
+            document.querySelectorAll(`.fc-plataforma-${plat}[data-semana="${sem}"]`).forEach(inp => {
+                totalSem += parseFloat(inp.value.replace(/,/g, '')) || 0;
+            });
+            const semCell = document.querySelector(`.fc-plataforma-${plat}-sem[data-semana="${sem}"]`);
+            if (semCell) semCell.textContent = fc_formatMonto(totalSem);
+            const totalCell = document.querySelector(`.fc-plataforma-${plat}-total[data-semana="${sem}"]`);
+            if (totalCell) totalCell.textContent = fc_formatMonto(totalSem);
+        });
+    });
+}
+
 function fc_recalcularIngresos() {
-    // Calcular total ingresos por dia y semana (proyectado + ajustes + traspasos)
+    // Calcular total ingresos por dia y semana (proyectado + ajustes + traspasos + plataformas)
     fc_todasFechas.forEach(fecha => {
+        // PRODUBANCO: TC + Efectivo + ajustes + traspaso desde Pichincha
         const tc = fc_datos.depositos_tc[fecha]?.neto || 0;
         const ef = fc_datos.depositos_efectivo[fecha]?.total || 0;
-        const deuna = fc_datos.depositos_deuna[fecha]?.total || 0;
-
         const ajusteTc = parseFloat(document.querySelector(`.fc-ajuste-tc[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
         const ajusteEf = parseFloat(document.querySelector(`.fc-ajuste-efectivo[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
-        const ajusteDeuna = parseFloat(document.querySelector(`.fc-ajuste-deuna[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
         const traspaso = parseFloat(document.querySelector(`.fc-input-traspaso[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const totalProdubanco = tc + ef + ajusteTc + ajusteEf + traspaso;
 
-        const totalDia = tc + ef + deuna + ajusteTc + ajusteEf + ajusteDeuna + traspaso;
+        // Actualizar Total Produbanco por dia
+        const cellProdubanco = document.querySelector(`.total-produbanco-dia[data-fecha="${fecha}"]`);
+        if (cellProdubanco) cellProdubanco.textContent = fc_formatMonto(totalProdubanco);
+
+        // PICHINCHA: DEUNA + ajuste + plataformas - traspaso a Produbanco
+        const deuna = fc_datos.depositos_deuna[fecha]?.total || 0;
+        const ajusteDeuna = parseFloat(document.querySelector(`.fc-ajuste-deuna[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const uber = parseFloat(document.querySelector(`.fc-plataforma-uber[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const rappi = parseFloat(document.querySelector(`.fc-plataforma-rappi[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const pedidosya = parseFloat(document.querySelector(`.fc-plataforma-pedidosya[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const totalPichincha = deuna + ajusteDeuna + uber + rappi + pedidosya - traspaso;
+
+        // Actualizar Total Pichincha por dia
+        const cellPichincha = document.querySelector(`.total-pichincha-dia[data-fecha="${fecha}"]`);
+        if (cellPichincha) cellPichincha.textContent = fc_formatMonto(totalPichincha);
+
+        // Total Ingresos = Produbanco + Pichincha (sin duplicar traspaso)
+        const totalDia = tc + ef + deuna + ajusteTc + ajusteEf + ajusteDeuna + uber + rappi + pedidosya;
 
         const cell = document.querySelector(`.fc-total-ingresos-dia[data-fecha="${fecha}"]`);
         if (cell) cell.textContent = fc_formatMonto(totalDia);
@@ -556,6 +683,9 @@ function fc_recalcularIngresos() {
     // Totales por semana
     fc_semanasNums.forEach(sem => {
         let totalSem = 0;
+        let totalProdubanco = 0;
+        let totalPichincha = 0;
+
         const semana = fc_semanas.find(s => s.num === sem);
         if (semana) {
             semana.dias.forEach(fecha => {
@@ -563,12 +693,30 @@ function fc_recalcularIngresos() {
                 if (cell && cell.textContent !== '-') {
                     totalSem += parseFloat(cell.textContent.replace(/,/g, '')) || 0;
                 }
+                const cellP = document.querySelector(`.total-produbanco-dia[data-fecha="${fecha}"]`);
+                if (cellP && cellP.textContent !== '-') {
+                    totalProdubanco += parseFloat(cellP.textContent.replace(/,/g, '')) || 0;
+                }
+                const cellPich = document.querySelector(`.total-pichincha-dia[data-fecha="${fecha}"]`);
+                if (cellPich && cellPich.textContent !== '-') {
+                    totalPichincha += parseFloat(cellPich.textContent.replace(/,/g, '')) || 0;
+                }
             });
         }
         const semCell = document.querySelector(`.fc-total-ingresos-sem[data-semana="${sem}"]`);
         if (semCell) semCell.textContent = fc_formatMonto(totalSem);
         const totalCell = document.querySelector(`.fc-total-ingresos-total[data-semana="${sem}"]`);
         if (totalCell) totalCell.textContent = fc_formatMonto(totalSem);
+
+        // Totales banco por semana
+        const pSem = document.querySelector(`.total-produbanco-sem[data-semana="${sem}"]`);
+        if (pSem) pSem.textContent = fc_formatMonto(totalProdubanco);
+        const pTotal = document.querySelector(`.total-produbanco-total[data-semana="${sem}"]`);
+        if (pTotal) pTotal.textContent = fc_formatMonto(totalProdubanco);
+        const pichSem = document.querySelector(`.total-pichincha-sem[data-semana="${sem}"]`);
+        if (pichSem) pichSem.textContent = fc_formatMonto(totalPichincha);
+        const pichTotal = document.querySelector(`.total-pichincha-total[data-semana="${sem}"]`);
+        if (pichTotal) pichTotal.textContent = fc_formatMonto(totalPichincha);
     });
 }
 
@@ -671,27 +819,72 @@ function fc_recalcularEgresos() {
 }
 
 function fc_recalcularFlujoYSaldos() {
-    let saldoAnterior = 0;
+    let saldoProdubanco = 0;
+    let saldoPichincha = 0;
 
-    // Obtener saldo inicial del primer dia (input editable)
-    const inputSaldoInicial = document.querySelector('.fc-saldo-inicial-input');
-    if (inputSaldoInicial) {
-        saldoAnterior = parseFloat(inputSaldoInicial.value.replace(/,/g, '')) || 0;
+    // Obtener saldos iniciales del primer dia (inputs editables)
+    const inputSaldoProdubanco = document.querySelector('.fc-saldo-produbanco-input');
+    if (inputSaldoProdubanco) {
+        saldoProdubanco = parseFloat(inputSaldoProdubanco.value.replace(/,/g, '')) || 0;
+    }
+    const inputSaldoPichincha = document.querySelector('.fc-saldo-pichincha-input');
+    if (inputSaldoPichincha) {
+        saldoPichincha = parseFloat(inputSaldoPichincha.value.replace(/,/g, '')) || 0;
     }
 
     // Calcular por cada dia en orden
     fc_todasFechas.forEach((fecha, idx) => {
         // Saldo inicial del dia = saldo final del dia anterior
         if (idx > 0) {
-            const saldoInicialCell = document.querySelector(`.fc-saldo-inicial-dia[data-fecha="${fecha}"]`);
-            if (saldoInicialCell) saldoInicialCell.textContent = fc_formatMonto(saldoAnterior);
+            const saldoProdCell = document.querySelector(`.fc-saldo-produbanco-dia[data-fecha="${fecha}"]`);
+            if (saldoProdCell) saldoProdCell.textContent = fc_formatMonto(saldoProdubanco);
+            const saldoPichCell = document.querySelector(`.fc-saldo-pichincha-dia[data-fecha="${fecha}"]`);
+            if (saldoPichCell) saldoPichCell.textContent = fc_formatMonto(saldoPichincha);
+            const saldoTotalCell = document.querySelector(`.fc-saldo-total-dia[data-fecha="${fecha}"]`);
+            if (saldoTotalCell) saldoTotalCell.textContent = fc_formatMonto(saldoProdubanco + saldoPichincha);
+        } else {
+            // Primer dia - mostrar saldo total
+            const saldoTotalCell = document.querySelector(`.fc-saldo-total-dia[data-fecha="${fecha}"]`);
+            if (saldoTotalCell) saldoTotalCell.textContent = fc_formatMonto(saldoProdubanco + saldoPichincha);
         }
 
-        // Ingresos del dia
+        // Ingresos Produbanco (TC + Efectivo + ajustes + traspaso desde Pichincha)
+        const tc = fc_datos.depositos_tc[fecha]?.neto || 0;
+        const ef = fc_datos.depositos_efectivo[fecha]?.total || 0;
+        const ajusteTc = parseFloat(document.querySelector(`.fc-ajuste-tc[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const ajusteEf = parseFloat(document.querySelector(`.fc-ajuste-efectivo[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const traspaso = parseFloat(document.querySelector(`.fc-input-traspaso[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const ingresosProdubanco = tc + ef + ajusteTc + ajusteEf + traspaso;
+
+        // Ingresos Pichincha (DEUNA + ajuste + plataformas - traspaso)
+        const deuna = fc_datos.depositos_deuna[fecha]?.total || 0;
+        const ajusteDeuna = parseFloat(document.querySelector(`.fc-ajuste-deuna[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const uber = parseFloat(document.querySelector(`.fc-plataforma-uber[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const rappi = parseFloat(document.querySelector(`.fc-plataforma-rappi[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const pedidosya = parseFloat(document.querySelector(`.fc-plataforma-pedidosya[data-fecha="${fecha}"]`)?.value.replace(/,/g, '') || 0);
+        const ingresosPichincha = deuna + ajusteDeuna + uber + rappi + pedidosya - traspaso;
+
+        // Egresos por banco (sumar según selector de banco en cada egreso)
+        let egresosProdubanco = 0;
+        let egresosPichincha = 0;
+        document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
+            const banco = row.dataset.banco || 'produbanco';
+            const input = row.querySelector(`[data-fecha="${fecha}"]`);
+            if (input) {
+                const val = parseFloat(input.value.replace(/,/g, '')) || 0;
+                if (banco === 'pichincha') {
+                    egresosPichincha += val;
+                } else {
+                    egresosProdubanco += val;
+                }
+            }
+        });
+
+        // Ingresos totales del dia
         const ingresosCell = document.querySelector(`.fc-total-ingresos-dia[data-fecha="${fecha}"]`);
         const ingresos = ingresosCell && ingresosCell.textContent !== '-' ? parseFloat(ingresosCell.textContent.replace(/,/g, '')) || 0 : 0;
 
-        // Egresos del dia
+        // Egresos totales del dia
         const egresosCell = document.querySelector(`.fc-total-egresos-dia[data-fecha="${fecha}"]`);
         const egresos = egresosCell && egresosCell.textContent !== '-' ? parseFloat(egresosCell.textContent.replace(/,/g, '')) || 0 : 0;
 
@@ -703,21 +896,35 @@ function fc_recalcularFlujoYSaldos() {
             flujoCell.style.color = flujo < 0 ? '#c62828' : '#2e7d32';
         }
 
-        // Saldo Final = Saldo Inicial + Flujo
-        const saldoFinal = saldoAnterior + flujo;
+        // Actualizar saldos por banco
+        saldoProdubanco = saldoProdubanco + ingresosProdubanco - egresosProdubanco;
+        saldoPichincha = saldoPichincha + ingresosPichincha - egresosPichincha;
+
+        // Saldo Final por banco
+        const saldoFinalProdCell = document.querySelector(`.fc-saldo-final-produbanco-dia[data-fecha="${fecha}"]`);
+        if (saldoFinalProdCell) {
+            saldoFinalProdCell.textContent = fc_formatFlujo(saldoProdubanco);
+            saldoFinalProdCell.style.color = saldoProdubanco < 0 ? '#c62828' : '#01579b';
+        }
+        const saldoFinalPichCell = document.querySelector(`.fc-saldo-final-pichincha-dia[data-fecha="${fecha}"]`);
+        if (saldoFinalPichCell) {
+            saldoFinalPichCell.textContent = fc_formatFlujo(saldoPichincha);
+            saldoFinalPichCell.style.color = saldoPichincha < 0 ? '#c62828' : '#2e7d32';
+        }
+
+        // Saldo Final Total
+        const saldoFinal = saldoProdubanco + saldoPichincha;
         const saldoFinalCell = document.querySelector(`.fc-saldo-final-dia[data-fecha="${fecha}"]`);
         if (saldoFinalCell) {
             saldoFinalCell.textContent = fc_formatFlujo(saldoFinal);
             saldoFinalCell.style.color = saldoFinal < 0 ? '#c62828' : '#01579b';
         }
-
-        saldoAnterior = saldoFinal;
     });
 
     // Calcular totales por semana
     fc_semanas.forEach(sem => {
         let flujoSem = 0;
-        let primerSaldoInicial = null;
+        let primerSaldoTotal = null;
         let ultimoSaldoFinal = 0;
 
         sem.dias.forEach((fecha, idx) => {
@@ -731,12 +938,15 @@ function fc_recalcularFlujoYSaldos() {
 
             if (idx === 0) {
                 if (sem === fc_semanas[0]) {
-                    const inp = document.querySelector('.fc-saldo-inicial-input');
-                    primerSaldoInicial = parseFloat(inp?.value.replace(/,/g, '')) || 0;
+                    const inpProd = document.querySelector('.fc-saldo-produbanco-input');
+                    const inpPich = document.querySelector('.fc-saldo-pichincha-input');
+                    const prod = parseFloat(inpProd?.value.replace(/,/g, '')) || 0;
+                    const pich = parseFloat(inpPich?.value.replace(/,/g, '')) || 0;
+                    primerSaldoTotal = prod + pich;
                 } else {
-                    const cell = document.querySelector(`.fc-saldo-inicial-dia[data-fecha="${fecha}"]`);
+                    const cell = document.querySelector(`.fc-saldo-total-dia[data-fecha="${fecha}"]`);
                     if (cell && cell.textContent !== '-') {
-                        primerSaldoInicial = parseFloat(cell.textContent.replace(/[()]/g, '').replace(/,/g, '')) || 0;
+                        primerSaldoTotal = parseFloat(cell.textContent.replace(/[()]/g, '').replace(/,/g, '')) || 0;
                     }
                 }
             }
@@ -750,9 +960,9 @@ function fc_recalcularFlujoYSaldos() {
             }
         });
 
-        // Saldo inicial semana
-        const siSemCell = document.querySelector(`.fc-saldo-inicial-sem[data-semana="${sem.num}"]`);
-        if (siSemCell) siSemCell.textContent = fc_formatMonto(primerSaldoInicial || 0);
+        // Saldo inicial semana (total)
+        const siSemCell = document.querySelector(`.fc-saldo-total-sem[data-semana="${sem.num}"]`);
+        if (siSemCell) siSemCell.textContent = fc_formatMonto(primerSaldoTotal || 0);
 
         // Flujo semana
         const flujoSemCell = document.querySelector(`.fc-flujo-sem[data-semana="${sem.num}"]`);
@@ -899,9 +1109,10 @@ function fc_getSemanasFromDOM() {
 }
 
 function fc_agregarItem(grupo) {
-    const totalRow = document.getElementById(`fc-total-${grupo}-row`);
-    if (!totalRow) {
-        console.error('fc_agregarItem: No se encontró totalRow para grupo:', grupo);
+    // Buscar la fila header del grupo
+    const headerRow = document.getElementById(`fc-grupo-${grupo}`);
+    if (!headerRow) {
+        console.error('fc_agregarItem: No se encontró header para grupo:', grupo);
         return;
     }
 
@@ -922,8 +1133,16 @@ function fc_agregarItem(grupo) {
     const newRow = document.createElement('tr');
     newRow.className = `row-banco-item fc-egreso-item-${grupo}`;
     newRow.dataset.grupo = `eg-${grupo}`;
+    newRow.dataset.banco = 'produbanco';
 
-    let celdas = `<td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="Nuevo Item"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
+    let celdas = `<td class="col-concepto indent-3">
+        <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
+            <option value="produbanco" selected>PRO</option>
+            <option value="pichincha">PICH</option>
+        </select>
+        <input type="text" class="fc-input-nombre" value="Nuevo Item">
+        <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
+    </td>`;
 
     semanas.forEach(sem => {
         celdas += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
@@ -935,7 +1154,16 @@ function fc_agregarItem(grupo) {
     });
 
     newRow.innerHTML = celdas;
-    totalRow.parentNode.insertBefore(newRow, totalRow);
+
+    // Encontrar el último item del grupo para insertar después
+    const existingItems = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
+    if (existingItems.length > 0) {
+        const lastItem = existingItems[existingItems.length - 1];
+        lastItem.parentNode.insertBefore(newRow, lastItem.nextSibling);
+    } else {
+        // Si no hay items, insertar después del header
+        headerRow.parentNode.insertBefore(newRow, headerRow.nextSibling);
+    }
 
     // Aplicar visibilidad correcta segun estado actual de las semanas
     fc_aplicarVisibilidadNuevoItem(newRow);
@@ -990,21 +1218,39 @@ function fc_agregarSubgrupo(tipo) {
     const totalRow = document.querySelector(targetSelector)?.closest('tr');
     if (!totalRow) return;
 
+    // Header con totales integrados
     const headerRow = document.createElement('tr');
     headerRow.className = 'row-banco';
     headerRow.id = `fc-grupo-${grupoId}`;
-    let headerCeldas = `<td class="col-concepto indent-2"><input type="text" class="fc-input-nombre" value="NUEVO SUBGRUPO" style="font-weight:bold;text-transform:uppercase;width:140px;"> <button class="fc-btn-add" onclick="fc_agregarItem('${grupoId}')">+</button> <button class="fc-btn-del" onclick="fc_eliminarSubgrupo(this)">x</button></td>`;
+    headerRow.dataset.grupoHeader = `eg-${grupoId}`;
+    headerRow.dataset.expanded = 'true';
+    let headerCeldas = `<td class="col-concepto indent-2"><span class="fc-grupo-icon" style="margin-right:6px;">▼</span><input type="text" class="fc-input-nombre" value="NUEVO SUBGRUPO" style="font-weight:bold;text-transform:uppercase;width:120px;"> <button class="fc-btn-add" onclick="event.stopPropagation();fc_agregarItem('${grupoId}')">+</button> <button class="fc-btn-del" onclick="fc_eliminarSubgrupo(this)">x</button></td>`;
     semanas.forEach(sem => {
-        headerCeldas += `<td class="col-semana sem-${sem.num}-header"></td>`;
-        for (let i = 0; i < 8; i++) headerCeldas += `<td class="dia-col sem-${sem.num}"></td>`;
+        headerCeldas += `<td class="col-semana sem-${sem.num}-header monto fc-total-${grupoId}-sem" data-semana="${sem.num}" style="font-weight:600;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            headerCeldas += `<td class="dia-col sem-${sem.num}${sab} monto fc-total-${grupoId}-dia" data-fecha="${dia}" style="font-weight:600;">-</td>`;
+        });
+        headerCeldas += `<td class="dia-col sem-${sem.num} total-col monto fc-total-${grupoId}-total" data-semana="${sem.num}" style="font-weight:600;">-</td>`;
     });
     headerRow.innerHTML = headerCeldas;
+    headerRow.style.cursor = 'pointer';
+    headerRow.onclick = function(e) { if (!e.target.closest('input,button,select')) fc_toggleGrupo(`eg-${grupoId}`); };
 
-    // Crear item row
+    // Crear item row con selector de banco
     const itemRow = document.createElement('tr');
     itemRow.className = `row-banco-item fc-egreso-item-${grupoId}`;
+    itemRow.dataset.grupo = `eg-${grupoId}`;
+    itemRow.dataset.banco = 'produbanco';
 
-    let itemHtml = `<td class="col-concepto indent-3"><input type="text" class="fc-input-nombre" value="Item 1"><button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button></td>`;
+    let itemHtml = `<td class="col-concepto indent-3">
+        <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
+            <option value="produbanco" selected>PRO</option>
+            <option value="pichincha">PICH</option>
+        </select>
+        <input type="text" class="fc-input-nombre" value="Item 1">
+        <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
+    </td>`;
     semanas.forEach(sem => {
         itemHtml += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -1015,28 +1261,12 @@ function fc_agregarSubgrupo(tipo) {
     });
     itemRow.innerHTML = itemHtml;
 
-    const subTotalRow = document.createElement('tr');
-    subTotalRow.className = 'row-banco-total';
-    subTotalRow.id = `fc-total-${grupoId}-row`;
-    let totalCeldas = `<td class="col-concepto indent-2">Total Subgrupo</td>`;
-    semanas.forEach(sem => {
-        totalCeldas += `<td class="col-semana sem-${sem.num}-header monto fc-total-${grupoId}-sem" data-semana="${sem.num}">-</td>`;
-        sem.dias.forEach((dia, i) => {
-            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
-            totalCeldas += `<td class="dia-col sem-${sem.num}${sab} monto fc-total-${grupoId}-dia" data-fecha="${dia}">-</td>`;
-        });
-        totalCeldas += `<td class="dia-col sem-${sem.num} total-col monto fc-total-${grupoId}-total" data-semana="${sem.num}">-</td>`;
-    });
-    subTotalRow.innerHTML = totalCeldas;
-
     totalRow.parentNode.insertBefore(headerRow, totalRow);
     totalRow.parentNode.insertBefore(itemRow, totalRow);
-    totalRow.parentNode.insertBefore(subTotalRow, totalRow);
 
-    // Aplicar visibilidad correcta a todas las filas nuevas
+    // Aplicar visibilidad correcta a las filas nuevas
     fc_aplicarVisibilidadNuevoItem(headerRow);
     fc_aplicarVisibilidadNuevoItem(itemRow);
-    fc_aplicarVisibilidadNuevoItem(subTotalRow);
 }
 
 function fc_eliminarSubgrupo(btn) {
@@ -1044,9 +1274,9 @@ function fc_eliminarSubgrupo(btn) {
     if (!headerRow) return;
     const grupoId = headerRow.id.replace('fc-grupo-', '');
 
+    // Eliminar todos los items del grupo
     document.querySelectorAll(`.fc-egreso-item-${grupoId}`).forEach(r => r.remove());
-    const totalRow = document.getElementById(`fc-total-${grupoId}-row`);
-    if (totalRow) totalRow.remove();
+    // Eliminar el header
     headerRow.remove();
 
     fc_recalcularTodo();
@@ -1067,10 +1297,21 @@ async function fc_cargarDatosGuardados() {
 
         // Aplicar datos guardados
         for (const [fechaSemana, guardado] of Object.entries(data.guardados)) {
-            // Aplicar saldo inicial (solo primera semana)
-            if (guardado.saldo_inicial && semanas[0].inicio === fechaSemana) {
-                const inputSaldo = document.querySelector('.fc-saldo-inicial-input');
-                if (inputSaldo) inputSaldo.value = guardado.saldo_inicial;
+            // Aplicar saldos iniciales por banco (solo primera semana)
+            if (semanas[0].inicio === fechaSemana) {
+                if (guardado.saldo_produbanco) {
+                    const inputProdubanco = document.querySelector('.fc-saldo-produbanco-input');
+                    if (inputProdubanco) inputProdubanco.value = guardado.saldo_produbanco;
+                }
+                if (guardado.saldo_pichincha) {
+                    const inputPichincha = document.querySelector('.fc-saldo-pichincha-input');
+                    if (inputPichincha) inputPichincha.value = guardado.saldo_pichincha;
+                }
+                // Compatibilidad con datos antiguos (saldo_inicial único)
+                if (guardado.saldo_inicial && !guardado.saldo_produbanco) {
+                    const inputProdubanco = document.querySelector('.fc-saldo-produbanco-input');
+                    if (inputProdubanco) inputProdubanco.value = guardado.saldo_inicial;
+                }
             }
 
             // Aplicar ajustes
@@ -1101,6 +1342,16 @@ async function fc_cargarDatosGuardados() {
                 }
             }
 
+            // Aplicar plataformas
+            if (guardado.plataformas) {
+                for (const [plat, valores] of Object.entries(guardado.plataformas)) {
+                    for (const [dia, valor] of Object.entries(valores)) {
+                        const input = document.querySelector(`.fc-plataforma-${plat}[data-fecha="${dia}"]`);
+                        if (input && valor) input.value = valor;
+                    }
+                }
+            }
+
             // Aplicar egresos - crear items faltantes si es necesario
             if (guardado.egresos) {
                 for (const [grupo, items] of Object.entries(guardado.egresos)) {
@@ -1115,6 +1366,13 @@ async function fc_cargarDatosGuardados() {
                         if (rows[idx]) {
                             const nombreInput = rows[idx].querySelector('.fc-input-nombre');
                             if (nombreInput && item.nombre) nombreInput.value = item.nombre;
+
+                            // Aplicar banco seleccionado
+                            if (item.banco) {
+                                rows[idx].dataset.banco = item.banco;
+                                const select = rows[idx].querySelector('.fc-select-banco');
+                                if (select) select.value = item.banco;
+                            }
 
                             for (const [dia, valor] of Object.entries(item.valores || {})) {
                                 const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
@@ -1144,11 +1402,14 @@ async function fc_guardarDatos() {
             const fechaSemana = sem.inicio;
             const semanaNum = sem.num;
 
-            // Recoger saldo inicial (solo para primera semana)
-            let saldoInicial = 0;
-            const inputSaldo = document.querySelector('.fc-saldo-inicial-input');
-            if (inputSaldo && sem === semanas[0]) {
-                saldoInicial = parseFloat(inputSaldo.value.replace(/,/g, '')) || 0;
+            // Recoger saldos iniciales por banco (solo para primera semana)
+            let saldoProdubanco = 0;
+            let saldoPichincha = 0;
+            if (sem === semanas[0]) {
+                const inputProdubanco = document.querySelector('.fc-saldo-produbanco-input');
+                if (inputProdubanco) saldoProdubanco = parseFloat(inputProdubanco.value.replace(/,/g, '')) || 0;
+                const inputPichincha = document.querySelector('.fc-saldo-pichincha-input');
+                if (inputPichincha) saldoPichincha = parseFloat(inputPichincha.value.replace(/,/g, '')) || 0;
             }
 
             // Recoger ajustes
@@ -1156,6 +1417,9 @@ async function fc_guardarDatos() {
             const ajustes_efectivo = {};
             const ajustes_deuna = {};
             const traspasos = {};
+
+            // Plataformas
+            const plataformas = { uber: {}, rappi: {}, pedidosya: {} };
 
             sem.dias.forEach(dia => {
                 const ajTc = document.querySelector(`.fc-ajuste-tc[data-fecha="${dia}"]`);
@@ -1169,6 +1433,12 @@ async function fc_guardarDatos() {
 
                 const traspaso = document.querySelector(`.fc-input-traspaso[data-fecha="${dia}"]`);
                 if (traspaso && traspaso.value) traspasos[dia] = parseFloat(traspaso.value.replace(/,/g, '')) || 0;
+
+                // Plataformas
+                ['uber', 'rappi', 'pedidosya'].forEach(plat => {
+                    const inp = document.querySelector(`.fc-plataforma-${plat}[data-fecha="${dia}"]`);
+                    if (inp && inp.value) plataformas[plat][dia] = parseFloat(inp.value.replace(/,/g, '')) || 0;
+                });
             });
 
             // Recoger egresos (todos los items con sus valores)
@@ -1181,7 +1451,8 @@ async function fc_guardarDatos() {
 
                 if (!egresos[grupo]) egresos[grupo] = [];
 
-                const itemData = { nombre, valores: {} };
+                const banco = row.dataset.banco || 'produbanco';
+                const itemData = { nombre, banco, valores: {} };
                 sem.dias.forEach(dia => {
                     const input = row.querySelector(`[data-fecha="${dia}"].fc-input`);
                     if (input && input.value) {
@@ -1198,11 +1469,13 @@ async function fc_guardarDatos() {
                 body: JSON.stringify({
                     fecha_semana: fechaSemana,
                     semana_num: semanaNum,
-                    saldo_inicial: saldoInicial,
+                    saldo_produbanco: saldoProdubanco,
+                    saldo_pichincha: saldoPichincha,
                     ajustes_tc,
                     ajustes_efectivo,
                     ajustes_deuna,
                     traspasos,
+                    plataformas,
                     egresos,
                     usuario: 'admin'
                 })
@@ -1304,23 +1577,21 @@ function fc_toggleGrupo(grupoId) {
 }
 
 function fc_expandirFilas() {
-    document.querySelectorAll('[data-grupo-header]').forEach(header => {
-        const grupoId = header.dataset.grupoHeader;
-        document.querySelectorAll(`[data-grupo="${grupoId}"]`).forEach(row => row.style.display = '');
-        header.dataset.expanded = 'true';
-        const icon = header.querySelector('.fc-grupo-icon');
-        if (icon) icon.textContent = '▼';
-    });
+    // Buscar todas las filas de items (ingresos y egresos) y mostrarlas
+    document.querySelectorAll('[data-grupo]').forEach(row => row.style.display = '');
+
+    // Actualizar iconos de headers
+    document.querySelectorAll('.fc-grupo-icon').forEach(icon => icon.textContent = '▼');
+    document.querySelectorAll('[data-grupo-header]').forEach(h => h.dataset.expanded = 'true');
 }
 
 function fc_colapsarFilas() {
-    document.querySelectorAll('[data-grupo-header]').forEach(header => {
-        const grupoId = header.dataset.grupoHeader;
-        document.querySelectorAll(`[data-grupo="${grupoId}"]`).forEach(row => row.style.display = 'none');
-        header.dataset.expanded = 'false';
-        const icon = header.querySelector('.fc-grupo-icon');
-        if (icon) icon.textContent = '▶';
-    });
+    // Buscar todas las filas de items (ingresos y egresos) y ocultarlas
+    document.querySelectorAll('[data-grupo]').forEach(row => row.style.display = 'none');
+
+    // Actualizar iconos de headers
+    document.querySelectorAll('.fc-grupo-icon').forEach(icon => icon.textContent = '▶');
+    document.querySelectorAll('[data-grupo-header]').forEach(h => h.dataset.expanded = 'false');
 }
 
 // Registrar en el sistema de vistas
