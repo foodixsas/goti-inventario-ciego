@@ -518,19 +518,23 @@ function fc_renderSubgrupoEgreso(sg) {
     html += '</tr>';
 
     sg.items.forEach(item => {
-        html += `<tr class="row-banco-item fc-egreso-item-${sg.id}" data-grupo="eg-${sg.id}" data-banco="produbanco"><td class="col-concepto indent-3">
+        html += `<tr class="row-banco-item fc-egreso-item-${sg.id}" data-grupo="eg-${sg.id}" data-banco="produbanco" data-deuda="0"><td class="col-concepto indent-3">
             <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
                 <option value="produbanco" selected>PRO</option>
                 <option value="pichincha">PICH</option>
             </select>
             <input type="text" class="fc-input-nombre" value="${item}">
+            <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
             <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
         </td>`;
         fc_semanas.forEach(sem => {
             html += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
             sem.dias.forEach((dia, i) => {
                 const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
-                html += `<td class="dia-col sem-${sem.num}${sab} monto"><input type="text" class="fc-input fc-input-egreso-${sg.id}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()"></td>`;
+                html += `<td class="dia-col sem-${sem.num}${sab} monto fc-celda-egreso">
+                    <input type="text" class="fc-input fc-input-egreso-${sg.id}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()">
+                    <button class="fc-btn-rep" onclick="fc_abrirRecurrencia(this)" title="Repetir desde aqui">&#x21bb;</button>
+                </td>`;
             });
             html += `<td class="dia-col sem-${sem.num} total-col monto fc-item-total" data-semana="${sem.num}">-</td>`;
         });
@@ -617,6 +621,7 @@ function fc_recalcularTodo() {
     fc_recalcularEgresos();
     fc_recalcularFlujoYSaldos();
     fc_actualizarResumen();
+    fc_recalcularTodosSaldos();
 }
 
 function fc_recalcularAjustes() {
@@ -1180,6 +1185,7 @@ function fc_agregarItem(grupo) {
             <option value="pichincha">PICH</option>
         </select>
         <input type="text" class="fc-input-nombre" value="Nuevo Item">
+        <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
         <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
     </td>`;
 
@@ -1187,7 +1193,10 @@ function fc_agregarItem(grupo) {
         celdas += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
         sem.dias.forEach((dia, i) => {
             const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
-            celdas += `<td class="dia-col sem-${sem.num}${sab} monto"><input type="text" class="fc-input fc-input-egreso-${grupo}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()"></td>`;
+            celdas += `<td class="dia-col sem-${sem.num}${sab} monto fc-celda-egreso">
+                <input type="text" class="fc-input fc-input-egreso-${grupo}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()">
+                <button class="fc-btn-rep" onclick="fc_abrirRecurrencia(this)" title="Repetir desde aqui">&#x21bb;</button>
+            </td>`;
         });
         celdas += `<td class="dia-col sem-${sem.num} total-col monto fc-item-total" data-semana="${sem.num}">-</td>`;
     });
@@ -1288,13 +1297,17 @@ function fc_agregarSubgrupo(tipo) {
             <option value="pichincha">PICH</option>
         </select>
         <input type="text" class="fc-input-nombre" value="Item 1">
+        <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
         <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
     </td>`;
     semanas.forEach(sem => {
         itemHtml += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
         sem.dias.forEach((dia, i) => {
             const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
-            itemHtml += `<td class="dia-col sem-${sem.num}${sab} monto"><input type="text" class="fc-input fc-input-egreso-${grupoId}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()"></td>`;
+            itemHtml += `<td class="dia-col sem-${sem.num}${sab} monto fc-celda-egreso">
+                <input type="text" class="fc-input fc-input-egreso-${grupoId}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()">
+                <button class="fc-btn-rep" onclick="fc_abrirRecurrencia(this)" title="Repetir desde aqui">&#x21bb;</button>
+            </td>`;
         });
         itemHtml += `<td class="dia-col sem-${sem.num} total-col monto fc-item-total" data-semana="${sem.num}">-</td>`;
     });
@@ -1645,6 +1658,423 @@ function fc_colapsarFilas() {
     // Actualizar iconos de headers
     document.querySelectorAll('.fc-grupo-icon').forEach(icon => icon.textContent = '▶');
     document.querySelectorAll('[data-grupo-header]').forEach(h => h.dataset.expanded = 'false');
+}
+
+// ============ CONTROL DE DEUDA ============
+let fc_deuda_row = null;
+
+function fc_abrirDeuda(badge) {
+    fc_deuda_row = badge.closest('tr');
+    if (!fc_deuda_row) return;
+
+    const deudaActual = parseFloat(fc_deuda_row.dataset.deuda) || 0;
+    const nombre = fc_deuda_row.querySelector('.fc-input-nombre')?.value || 'Item';
+
+    // Calcular total pagos
+    let totalPagos = 0;
+    fc_deuda_row.querySelectorAll('.fc-input').forEach(inp => {
+        totalPagos += parseFloat(inp.value.replace(/,/g, '')) || 0;
+    });
+
+    const saldo = deudaActual - totalPagos;
+
+    // Crear popup inline
+    let popup = document.getElementById('fc-popup-deuda');
+    if (!popup) {
+        popup = document.createElement('div');
+        popup.id = 'fc-popup-deuda';
+        popup.innerHTML = `
+            <div class="fc-popup-deuda-content">
+                <div class="fc-popup-header">Control de Deuda</div>
+                <div class="fc-popup-nombre"></div>
+                <div class="fc-popup-row">
+                    <label>Deuda Total:</label>
+                    <input type="text" id="fc-deuda-valor" placeholder="0">
+                </div>
+                <div class="fc-popup-row fc-popup-info">
+                    <span>Pagos programados:</span>
+                    <span id="fc-deuda-pagos">$0</span>
+                </div>
+                <div class="fc-popup-row fc-popup-info">
+                    <span>Saldo pendiente:</span>
+                    <span id="fc-deuda-saldo">$0</span>
+                </div>
+                <div class="fc-popup-btns">
+                    <button onclick="fc_cerrarDeuda()">Cancelar</button>
+                    <button onclick="fc_guardarDeuda()" class="primary">Guardar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(popup);
+
+        // Cerrar al hacer clic fuera
+        popup.addEventListener('click', (e) => {
+            if (e.target === popup) fc_cerrarDeuda();
+        });
+
+        // Recalcular saldo al cambiar deuda
+        document.getElementById('fc-deuda-valor').addEventListener('input', function() {
+            const d = parseFloat(this.value.replace(/,/g, '')) || 0;
+            let p = 0;
+            if (fc_deuda_row) {
+                fc_deuda_row.querySelectorAll('.fc-input').forEach(inp => {
+                    p += parseFloat(inp.value.replace(/,/g, '')) || 0;
+                });
+            }
+            const s = d - p;
+            document.getElementById('fc-deuda-saldo').textContent = '$' + s.toLocaleString('en-US', {minimumFractionDigits: 2});
+            document.getElementById('fc-deuda-saldo').style.color = s > 0 ? '#c62828' : '#2e7d32';
+        });
+    }
+
+    // Llenar datos
+    popup.querySelector('.fc-popup-nombre').textContent = nombre;
+    document.getElementById('fc-deuda-valor').value = deudaActual > 0 ? deudaActual : '';
+    document.getElementById('fc-deuda-pagos').textContent = '$' + totalPagos.toLocaleString('en-US', {minimumFractionDigits: 2});
+    document.getElementById('fc-deuda-saldo').textContent = '$' + saldo.toLocaleString('en-US', {minimumFractionDigits: 2});
+    document.getElementById('fc-deuda-saldo').style.color = saldo > 0 ? '#c62828' : '#2e7d32';
+
+    popup.classList.add('active');
+    document.getElementById('fc-deuda-valor').focus();
+}
+
+function fc_cerrarDeuda() {
+    const popup = document.getElementById('fc-popup-deuda');
+    if (popup) popup.classList.remove('active');
+    fc_deuda_row = null;
+}
+
+function fc_guardarDeuda() {
+    if (!fc_deuda_row) return;
+
+    const deuda = parseFloat(document.getElementById('fc-deuda-valor').value.replace(/,/g, '')) || 0;
+    fc_deuda_row.dataset.deuda = deuda;
+
+    // Actualizar badge
+    fc_actualizarBadgeDeuda(fc_deuda_row);
+
+    fc_cerrarDeuda();
+}
+
+function fc_actualizarBadgeDeuda(row) {
+    const badge = row.querySelector('.fc-saldo-badge');
+    if (!badge) return;
+
+    const deuda = parseFloat(row.dataset.deuda) || 0;
+    let totalPagos = 0;
+    row.querySelectorAll('.fc-input').forEach(inp => {
+        totalPagos += parseFloat(inp.value.replace(/,/g, '')) || 0;
+    });
+
+    const saldo = deuda - totalPagos;
+
+    badge.className = 'fc-saldo-badge';
+    if (deuda === 0) {
+        badge.textContent = '';
+    } else if (saldo <= 0) {
+        badge.classList.add('pagado');
+        badge.textContent = '';
+    } else {
+        badge.classList.add('tiene-deuda');
+        badge.textContent = saldo >= 1000 ? Math.round(saldo/1000) + 'k' : Math.round(saldo);
+    }
+}
+
+function fc_recalcularTodosSaldos() {
+    document.querySelectorAll('[data-deuda]').forEach(row => {
+        fc_actualizarBadgeDeuda(row);
+    });
+}
+
+// ============ RECURRENCIA DE GASTOS ============
+let fc_recurrente_input = null;
+let fc_recurrente_fecha = null;
+let fc_recurrente_row = null;
+
+function fc_abrirRecurrencia(btn) {
+    const celda = btn.closest('td');
+    const input = celda.querySelector('input');
+    fc_recurrente_input = input;
+    fc_recurrente_fecha = input.dataset.fecha;
+    fc_recurrente_row = btn.closest('tr');
+
+    const valor = parseFloat(input.value.replace(/,/g, '')) || 0;
+
+    // Crear modal si no existe
+    let modal = document.getElementById('fc-modal-recurrente');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'fc-modal-recurrente';
+        modal.innerHTML = `
+            <div class="fc-modal-overlay" onclick="fc_cerrarModalRecurrente()"></div>
+            <div class="fc-modal-content">
+                <div class="fc-modal-header">
+                    <span class="fc-modal-icon">&#x21bb;</span>
+                    <div>
+                        <h3>Repetir valor</h3>
+                        <p class="fc-fecha-inicio">Desde <strong id="fc-fecha-desde"></strong> en adelante</p>
+                    </div>
+                    <button class="fc-modal-close" onclick="fc_cerrarModalRecurrente()">&times;</button>
+                </div>
+                <div class="fc-modal-body">
+                    <div class="fc-rec-grid">
+                        <label class="fc-rec-option">
+                            <input type="radio" name="fc-tipo-rec" value="dia-semana" checked>
+                            <div class="fc-rec-card">
+                                <span class="fc-rec-title">Semanal</span>
+                                <span class="fc-rec-desc" id="fc-info-dia-semana">Cada lunes</span>
+                            </div>
+                        </label>
+                        <label class="fc-rec-option">
+                            <input type="radio" name="fc-tipo-rec" value="quincenal">
+                            <div class="fc-rec-card">
+                                <span class="fc-rec-title">Quincenal</span>
+                                <span class="fc-rec-desc">Cada 15 dias</span>
+                            </div>
+                        </label>
+                        <label class="fc-rec-option">
+                            <input type="radio" name="fc-tipo-rec" value="dia-mes">
+                            <div class="fc-rec-card">
+                                <span class="fc-rec-title">Mensual</span>
+                                <span class="fc-rec-desc" id="fc-info-dia-mes">Dia 15</span>
+                            </div>
+                        </label>
+                        <label class="fc-rec-option">
+                            <input type="radio" name="fc-tipo-rec" value="ultimo-mes">
+                            <div class="fc-rec-card">
+                                <span class="fc-rec-title">Fin de mes</span>
+                                <span class="fc-rec-desc">Ultimo dia</span>
+                            </div>
+                        </label>
+                        <label class="fc-rec-option">
+                            <input type="radio" name="fc-tipo-rec" value="ordinal-mes">
+                            <div class="fc-rec-card">
+                                <span class="fc-rec-title">Ordinal</span>
+                                <span class="fc-rec-desc" id="fc-info-ordinal">2do Lunes</span>
+                            </div>
+                        </label>
+                        <label class="fc-rec-option">
+                            <input type="radio" name="fc-tipo-rec" value="dias-habiles">
+                            <div class="fc-rec-card">
+                                <span class="fc-rec-title">Dias habiles</span>
+                                <span class="fc-rec-desc">Lun a Vie</span>
+                            </div>
+                        </label>
+                        <label class="fc-rec-option">
+                            <input type="radio" name="fc-tipo-rec" value="anual">
+                            <div class="fc-rec-card">
+                                <span class="fc-rec-title">Anual</span>
+                                <span class="fc-rec-desc" id="fc-info-anual">Mismo dia</span>
+                            </div>
+                        </label>
+                    </div>
+                    <div class="fc-rec-valor">
+                        <span>$</span>
+                        <input type="text" id="fc-valor-recurrente" placeholder="0.00">
+                    </div>
+                </div>
+                <div class="fc-modal-footer">
+                    <button onclick="fc_cerrarModalRecurrente()" class="fc-btn-cancelar">Cancelar</button>
+                    <button onclick="fc_aplicarRecurrencia()" class="fc-btn-aplicar">Aplicar</button>
+                </div>
+            </div>
+        `;
+        modal.className = 'fc-modal';
+        document.body.appendChild(modal);
+
+        // Agregar estilos
+        if (!document.getElementById('fc-modal-styles')) {
+            const styles = document.createElement('style');
+            styles.id = 'fc-modal-styles';
+            styles.textContent = `
+                .fc-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+                .fc-modal.active { display: block; }
+                .fc-modal-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); }
+                .fc-modal-content { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 12px; width: 320px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); overflow: hidden; }
+                .fc-modal-header { display: flex; align-items: center; gap: 10px; padding: 12px 15px; background: linear-gradient(135deg, #1565c0, #1976d2); color: white; }
+                .fc-modal-icon { font-size: 18px; background: rgba(255,255,255,0.2); padding: 6px; border-radius: 8px; }
+                .fc-modal-header h3 { margin: 0; font-size: 14px; font-weight: 600; }
+                .fc-fecha-inicio { margin: 2px 0 0; font-size: 11px; opacity: 0.9; }
+                .fc-modal-close { margin-left: auto; background: none; border: none; color: white; font-size: 20px; cursor: pointer; opacity: 0.7; padding: 0 5px; }
+                .fc-modal-close:hover { opacity: 1; }
+                .fc-modal-body { padding: 15px; }
+                .fc-rec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+                .fc-rec-option { cursor: pointer; }
+                .fc-rec-option input { display: none; }
+                .fc-rec-card { display: flex; flex-direction: column; padding: 10px; border: 1.5px solid #e0e0e0; border-radius: 8px; transition: all 0.15s; }
+                .fc-rec-option input:checked + .fc-rec-card { border-color: #1565c0; background: #e3f2fd; }
+                .fc-rec-card:hover { border-color: #90caf9; }
+                .fc-rec-title { font-size: 11px; font-weight: 600; color: #333; }
+                .fc-rec-desc { font-size: 10px; color: #666; margin-top: 2px; }
+                .fc-rec-valor { display: flex; align-items: center; margin-top: 15px; padding-top: 12px; border-top: 1px solid #eee; gap: 5px; }
+                .fc-rec-valor span { font-size: 16px; color: #666; font-weight: 500; }
+                .fc-rec-valor input { flex: 1; padding: 10px; font-size: 16px; font-weight: 600; border: 1.5px solid #e0e0e0; border-radius: 8px; text-align: right; }
+                .fc-rec-valor input:focus { outline: none; border-color: #1565c0; }
+                .fc-modal-footer { display: flex; gap: 8px; padding: 0 15px 15px; }
+                .fc-modal-footer button { flex: 1; padding: 10px; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.15s; }
+                .fc-btn-cancelar { background: #f5f5f5; color: #666; }
+                .fc-btn-cancelar:hover { background: #e0e0e0; }
+                .fc-btn-aplicar { background: #1565c0; color: white; }
+                .fc-btn-aplicar:hover { background: #0d47a1; }
+                .fc-celda-egreso { position: relative; }
+                .fc-btn-rep { position: absolute; right: 1px; top: 1px; background: transparent; border: none; cursor: pointer; padding: 0; font-size: 8px; opacity: 0; transition: all 0.2s; color: #90caf9; width: 12px; height: 12px; display: flex; align-items: center; justify-content: center; border-radius: 2px; }
+                .fc-celda-egreso:hover .fc-btn-rep { opacity: 0.6; }
+                .fc-btn-rep:hover { opacity: 1 !important; background: #1565c0; color: white; }
+                .fc-celda-egreso input { width: 100%; padding-right: 12px; box-sizing: border-box; }
+                .fc-saldo-badge { display: inline-block; min-width: 22px; height: 20px; line-height: 20px; text-align: center; font-size: 11px; font-weight: 600; border-radius: 4px; cursor: pointer; margin-left: 6px; vertical-align: middle; transition: all 0.15s; }
+                .fc-saldo-badge:empty { background: #f0f0f0; border: 1.5px dashed #ccc; }
+                .fc-saldo-badge:empty:hover { background: #e3f2fd; border-color: #1565c0; transform: scale(1.05); }
+                .fc-saldo-badge:empty::before { content: '$'; color: #999; font-size: 11px; }
+                .fc-saldo-badge.tiene-deuda { background: linear-gradient(135deg, #ffcdd2, #ef9a9a); color: #b71c1c; padding: 0 6px; border: none; box-shadow: 0 1px 3px rgba(198,40,40,0.2); }
+                .fc-saldo-badge.pagado { background: linear-gradient(135deg, #c8e6c9, #a5d6a7); color: #1b5e20; border: none; box-shadow: 0 1px 3px rgba(46,125,50,0.2); }
+                .fc-saldo-badge.pagado::before { content: '✓'; font-size: 12px; }
+                #fc-popup-deuda { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); z-index: 9999; }
+                #fc-popup-deuda.active { display: flex; align-items: center; justify-content: center; }
+                .fc-popup-deuda-content { background: white; border-radius: 10px; padding: 16px; width: 240px; box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
+                .fc-popup-header { font-size: 12px; font-weight: 600; color: #1565c0; margin-bottom: 8px; }
+                .fc-popup-nombre { font-size: 14px; font-weight: 500; color: #333; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
+                .fc-popup-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+                .fc-popup-row label { font-size: 11px; color: #666; }
+                .fc-popup-row input { width: 100px; padding: 6px 8px; border: 1.5px solid #e0e0e0; border-radius: 6px; font-size: 14px; text-align: right; }
+                .fc-popup-row input:focus { outline: none; border-color: #1565c0; }
+                .fc-popup-info { font-size: 11px; color: #888; }
+                .fc-popup-info span:last-child { font-weight: 600; }
+                .fc-popup-btns { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+                .fc-popup-btns button { flex: 1; padding: 8px; border: none; border-radius: 6px; font-size: 11px; cursor: pointer; }
+                .fc-popup-btns button:first-child { background: #f5f5f5; color: #666; }
+                .fc-popup-btns button.primary { background: #1565c0; color: white; }
+            `;
+            document.head.appendChild(styles);
+        }
+    }
+
+    // Llenar info de la fecha seleccionada
+    const d = new Date(fc_recurrente_fecha + 'T12:00:00');
+    const dias = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+    const diasFull = ['Domingo', 'Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado'];
+    const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const diaSemana = dias[d.getDay()];
+    const diaSemanaFull = diasFull[d.getDay()];
+    const diaMes = d.getDate();
+    const ordinal = Math.ceil(diaMes / 7);
+    const ordinalTxt = ['', '1er', '2do', '3er', '4to', '5to'][ordinal];
+
+    document.getElementById('fc-fecha-desde').textContent = `${diaSemanaFull} ${diaMes} ${meses[d.getMonth()]}`;
+    document.getElementById('fc-info-dia-mes').textContent = `Dia ${diaMes}`;
+    document.getElementById('fc-info-dia-semana').textContent = `Cada ${diaSemana}`;
+    document.getElementById('fc-info-ordinal').textContent = `${ordinalTxt} ${diaSemana}`;
+    document.getElementById('fc-info-anual').textContent = `${diaMes} ${meses[d.getMonth()]}`;
+    document.getElementById('fc-valor-recurrente').value = valor > 0 ? valor : '';
+
+    modal.classList.add('active');
+    setTimeout(() => document.getElementById('fc-valor-recurrente').focus(), 100);
+}
+
+function fc_cerrarModalRecurrente() {
+    const modal = document.getElementById('fc-modal-recurrente');
+    if (modal) modal.classList.remove('active');
+    fc_recurrente_input = null;
+    fc_recurrente_fecha = null;
+    fc_recurrente_row = null;
+}
+
+function fc_aplicarRecurrencia() {
+    if (!fc_recurrente_row || !fc_recurrente_fecha) return;
+
+    const tipo = document.querySelector('input[name="fc-tipo-rec"]:checked').value;
+    const valor = parseFloat(document.getElementById('fc-valor-recurrente').value.replace(/,/g, '')) || 0;
+
+    if (valor <= 0) {
+        alert('Ingrese un valor mayor a 0');
+        return;
+    }
+
+    const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
+    if (!semanas || semanas.length === 0) {
+        alert('No hay datos de semanas');
+        return;
+    }
+
+    const fechaInicio = new Date(fc_recurrente_fecha + 'T12:00:00');
+    const diaMesInicio = fechaInicio.getDate();
+    const diaSemanaInicio = fechaInicio.getDay(); // 0=dom, 1=lun...
+    const ordinalInicio = Math.ceil(diaMesInicio / 7);
+
+    let fechasAplicar = [];
+
+    // Recopilar todas las fechas en orden
+    let todasFechas = [];
+    semanas.forEach(sem => {
+        sem.dias.forEach(fecha => todasFechas.push(fecha));
+    });
+    todasFechas.sort();
+
+    // Filtrar solo fechas >= fecha inicio
+    todasFechas = todasFechas.filter(f => f >= fc_recurrente_fecha);
+
+    let diasDesdeInicio = 0;
+    todasFechas.forEach(fecha => {
+        const d = new Date(fecha + 'T12:00:00');
+        const diffTime = d - fechaInicio;
+        const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+        if (tipo === 'dia-mes') {
+            // Mismo dia del mes
+            if (d.getDate() === diaMesInicio) {
+                fechasAplicar.push(fecha);
+            }
+        } else if (tipo === 'dia-semana') {
+            // Mismo dia de la semana
+            if (d.getDay() === diaSemanaInicio) {
+                fechasAplicar.push(fecha);
+            }
+        } else if (tipo === 'ordinal-mes') {
+            // Mismo ordinal (ej: tercer miercoles)
+            if (d.getDay() === diaSemanaInicio) {
+                const ordinal = Math.ceil(d.getDate() / 7);
+                if (ordinal === ordinalInicio) {
+                    fechasAplicar.push(fecha);
+                }
+            }
+        } else if (tipo === 'quincenal') {
+            // Cada 15 dias desde la fecha inicio
+            if (diffDays % 15 === 0) {
+                fechasAplicar.push(fecha);
+            }
+        } else if (tipo === 'ultimo-mes') {
+            // Ultimo dia de cada mes
+            const ultimoDia = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+            if (d.getDate() === ultimoDia) {
+                fechasAplicar.push(fecha);
+            }
+        } else if (tipo === 'dias-habiles') {
+            // Lunes a Viernes (1-5)
+            const dow = d.getDay();
+            if (dow >= 1 && dow <= 5) {
+                fechasAplicar.push(fecha);
+            }
+        } else if (tipo === 'anual') {
+            // Mismo dia y mes cada año
+            if (d.getDate() === diaMesInicio && d.getMonth() === fechaInicio.getMonth()) {
+                fechasAplicar.push(fecha);
+            }
+        }
+    });
+
+    // Aplicar valor a las fechas en esta fila
+    let aplicados = 0;
+    fechasAplicar.forEach(fecha => {
+        const input = fc_recurrente_row.querySelector(`input[data-fecha="${fecha}"]`);
+        if (input) {
+            input.value = valor;
+            aplicados++;
+        }
+    });
+
+    fc_recalcularTodo();
+    fc_cerrarModalRecurrente();
+
+    alert(`$${valor} aplicado a ${aplicados} fecha(s) desde ${fc_recurrente_fecha}`);
 }
 
 // Registrar en el sistema de vistas

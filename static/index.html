@@ -73,6 +73,66 @@
         .vs-modal-foto-item { display:flex; flex-direction:column; align-items:center; gap:8px; }
         .vs-modal-img { max-width:min(420px,90vw); border-radius:10px; box-shadow:0 8px 32px rgba(0,0,0,0.6); cursor:zoom-in; }
         .vs-modal-foto-label { color:#e2e8f0; font-size:12px; font-weight:600; background:rgba(255,255,255,0.1); padding:4px 12px; border-radius:20px; }
+        /* Comparacion Azure vs Supabase */
+        .vs-comparacion { background:linear-gradient(135deg,#f8fafc 0%,#e2e8f0 100%); border-radius:12px; padding:20px; margin-bottom:20px; border:1px solid #cbd5e1; }
+        .vs-comp-header { font-size:14px; font-weight:700; color:#334155; margin-bottom:16px; display:flex; align-items:center; gap:8px; }
+        .vs-comp-header i { color:#6366f1; }
+        .vs-comp-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+        .vs-comp-col { background:white; border-radius:10px; padding:16px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+        .vs-comp-col.diferencia { background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%); }
+        .vs-comp-titulo { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; }
+        .vs-comp-titulo.azure { color:#0369a1; }
+        .vs-comp-titulo.supabase { color:#7c3aed; }
+        .vs-comp-titulo.deuna-azure { color:#059669; }
+        .vs-comp-titulo.deuna-supa { color:#d97706; }
+        .vs-falt-titulo.deuna-azure { color:#059669; border-color:#059669; }
+        .vs-falt-titulo.deuna-supa { color:#d97706; border-color:#d97706; }
+        .vs-comp-deuna { background:linear-gradient(135deg,#ecfdf5 0%,#d1fae5 100%); border-color:#6ee7b7; }
+        .vs-comp-deuna .vs-comp-header i { color:#059669; }
+        .vs-comp-valor { font-size:20px; font-weight:800; color:#1e293b; }
+        .vs-comp-monto { font-size:16px; font-weight:600; color:#64748b; margin-top:4px; }
+        .vs-comp-estado { margin-top:16px; padding:10px 16px; border-radius:8px; font-size:13px; font-weight:600; text-align:center; }
+        .vs-comp-estado.ok { background:#d1fae5; color:#065f46; }
+        .vs-comp-estado.warning { background:#fef3c7; color:#92400e; }
+        .vs-comp-estado.error { background:#fee2e2; color:#991b1b; }
+        .vs-comp-faltantes { margin-top:16px; }
+        .vs-falt-cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+        .vs-falt-col { background:white; border-radius:8px; padding:12px; max-height:300px; overflow-y:auto; }
+        .vs-falt-titulo { font-size:12px; font-weight:700; margin-bottom:10px; padding-bottom:8px; border-bottom:2px solid; }
+        .vs-falt-titulo.azure { color:#0369a1; border-color:#0369a1; }
+        .vs-falt-titulo.supabase { color:#7c3aed; border-color:#7c3aed; }
+        .vs-falt-lista { font-size:12px; }
+        .vs-falt-item { display:flex; justify-content:space-between; padding:6px 8px; border-radius:4px; margin-bottom:4px; background:#f8fafc; }
+        .vs-falt-item:hover { background:#e2e8f0; }
+        .vs-falt-factura { font-family:monospace; color:#334155; }
+        .vs-falt-monto { font-weight:600; color:#64748b; }
+        .vs-falt-empty { color:#94a3b8; font-style:italic; text-align:center; padding:20px; }
+        .vs-lotes-alerta { margin-top:16px; background:#fef2f2; border:2px solid #fca5a5; border-radius:10px; padding:14px; }
+        .vs-lotes-alerta-header { font-size:13px; font-weight:700; color:#dc2626; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+        .vs-lotes-alerta-lista { display:flex; flex-wrap:wrap; gap:8px; }
+        .vs-lote-chip { background:white; border:1px solid #fca5a5; border-radius:6px; padding:6px 12px; font-size:12px; display:flex; flex-direction:column; }
+        .vs-lote-chip-num { font-weight:700; color:#dc2626; }
+        .vs-lote-chip-info { font-size:10px; color:#64748b; }
+        @media (max-width:640px) { .vs-comp-grid { grid-template-columns:1fr; } .vs-falt-cols { grid-template-columns:1fr; } }
+
+        /* Panel Cortesias */
+        .vs-cortesias-panel { background:linear-gradient(135deg,#fffbeb 0%,#fef3c7 100%); border-radius:12px; padding:16px; margin-bottom:20px; border:2px solid #f59e0b; }
+        .vs-cortesias-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px; }
+        .vs-cortesias-titulo { font-size:14px; font-weight:700; color:#b45309; display:flex; align-items:center; gap:8px; }
+        .vs-cortesias-icon { font-size:18px; }
+        .vs-cortesias-resumen { font-size:13px; color:#92400e; font-weight:600; }
+        .vs-cortesias-tabla { background:white; border-radius:8px; overflow:hidden; }
+        .vs-cortesias-row { display:grid; grid-template-columns:70px 1fr 1fr 100px 1fr 80px; gap:8px; padding:10px 12px; align-items:center; font-size:12px; }
+        .vs-cortesias-header-row { background:#fef3c7; font-weight:700; color:#92400e; font-size:11px; text-transform:uppercase; }
+        .vs-cortesias-row:not(.vs-cortesias-header-row) { border-bottom:1px solid #fef3c7; }
+        .vs-cortesias-row:not(.vs-cortesias-header-row):hover { background:#fffbeb; }
+        .vs-cort-col.dna { font-family:monospace; font-weight:600; color:#b45309; }
+        .vs-cort-col.cliente { color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .vs-cort-col.vendedor { color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .vs-cort-col.local { color:#64748b; font-size:11px; }
+        .vs-cort-col.nota { color:#0369a1; font-style:italic; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .vs-cort-col.monto { font-weight:700; color:#dc2626; text-align:right; }
+        @media (max-width:900px) { .vs-cortesias-row { grid-template-columns:60px 1fr 1fr 70px; } .vs-cort-col.vendedor, .vs-cort-col.nota { display:none; } }
 
         /* ===== FLUJO DE CAJA MODULE ===== */
         .fc-container { background:white; border-radius:10px; border:1px solid #e2e8f0; overflow-x:auto; }
@@ -336,7 +396,7 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
-                        <button class="nav-btn" data-view="vouchers" style="display:none;">
+                        <button class="nav-btn" data-view="vouchers">
                             <i class="fas fa-search-dollar"></i><span>Consultar</span>
                         </button>
                     </div>
@@ -2233,6 +2293,115 @@
                             </div>
                         </div>
 
+                        <!-- Panel Comparacion Tarjetas -->
+                        <div class="vs-comparacion" id="vs-comparacion" style="display:none">
+                            <div class="vs-comp-header">
+                                <i class="fas fa-balance-scale"></i> Comparacion: Contifico vs Vouchers
+                            </div>
+                            <div class="vs-comp-grid">
+                                <div class="vs-comp-col">
+                                    <div class="vs-comp-titulo azure">Contifico (Tarjetas)</div>
+                                    <div class="vs-comp-valor" id="vs-comp-azure-txn">0 txn</div>
+                                    <div class="vs-comp-monto" id="vs-comp-azure-monto">$0.00</div>
+                                </div>
+                                <div class="vs-comp-col">
+                                    <div class="vs-comp-titulo supabase">Vouchers Escaneados</div>
+                                    <div class="vs-comp-valor" id="vs-comp-supa-txn">0 txn</div>
+                                    <div class="vs-comp-monto" id="vs-comp-supa-monto">$0.00</div>
+                                </div>
+                                <div class="vs-comp-col diferencia">
+                                    <div class="vs-comp-titulo">Diferencia</div>
+                                    <div class="vs-comp-valor" id="vs-comp-diff-txn">0 txn</div>
+                                    <div class="vs-comp-monto" id="vs-comp-diff-monto">$0.00</div>
+                                </div>
+                            </div>
+                            <div class="vs-comp-estado" id="vs-comp-estado"></div>
+
+                            <!-- Alerta de lotes faltantes -->
+                            <div class="vs-lotes-alerta" id="vs-lotes-alerta" style="display:none">
+                                <div class="vs-lotes-alerta-header">
+                                    <i class="fas fa-exclamation-triangle"></i> Lotes en Contifico sin cierre en Vouchers
+                                </div>
+                                <div class="vs-lotes-alerta-lista" id="vs-lotes-faltantes"></div>
+                            </div>
+
+                            <!-- Detalle de faltantes -->
+                            <div class="vs-comp-faltantes" id="vs-comp-faltantes" style="display:none">
+                                <div class="vs-falt-cols">
+                                    <div class="vs-falt-col">
+                                        <div class="vs-falt-titulo azure">En Contifico pero NO en Vouchers</div>
+                                        <div class="vs-falt-lista" id="vs-falt-azure"></div>
+                                    </div>
+                                    <div class="vs-falt-col">
+                                        <div class="vs-falt-titulo supabase">En Vouchers pero NO en Contifico</div>
+                                        <div class="vs-falt-lista" id="vs-falt-supa"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Panel Comparacion DEUNA -->
+                        <div class="vs-comparacion vs-comp-deuna" id="vs-comparacion-deuna" style="display:none">
+                            <div class="vs-comp-header">
+                                <i class="fas fa-mobile-alt"></i> Comparacion DEUNA: Contifico vs Vouchers
+                            </div>
+                            <div class="vs-comp-grid">
+                                <div class="vs-comp-col">
+                                    <div class="vs-comp-titulo deuna-azure">Contifico (DEUNA)</div>
+                                    <div class="vs-comp-valor" id="vs-deuna-azure-txn">0 txn</div>
+                                    <div class="vs-comp-monto" id="vs-deuna-azure-monto">$0.00</div>
+                                </div>
+                                <div class="vs-comp-col">
+                                    <div class="vs-comp-titulo deuna-supa">Vouchers DEUNA</div>
+                                    <div class="vs-comp-valor" id="vs-deuna-supa-txn">0 txn</div>
+                                    <div class="vs-comp-monto" id="vs-deuna-supa-monto">$0.00</div>
+                                </div>
+                                <div class="vs-comp-col diferencia">
+                                    <div class="vs-comp-titulo">Diferencia</div>
+                                    <div class="vs-comp-valor" id="vs-deuna-diff-txn">0 txn</div>
+                                    <div class="vs-comp-monto" id="vs-deuna-diff-monto">$0.00</div>
+                                </div>
+                            </div>
+                            <div class="vs-comp-estado" id="vs-deuna-estado"></div>
+                            <div class="vs-comp-faltantes" id="vs-deuna-faltantes" style="display:none">
+                                <div class="vs-falt-cols">
+                                    <div class="vs-falt-col">
+                                        <div class="vs-falt-titulo deuna-azure">En Contifico pero NO en Vouchers</div>
+                                        <div class="vs-falt-lista" id="vs-deuna-falt-azure"></div>
+                                    </div>
+                                    <div class="vs-falt-col">
+                                        <div class="vs-falt-titulo deuna-supa">En Vouchers pero NO en Contifico</div>
+                                        <div class="vs-falt-lista" id="vs-deuna-falt-supa"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Panel Cortesias -->
+                        <div class="vs-cortesias-panel" id="vs-cortesias-panel" style="display:none">
+                            <div class="vs-cortesias-header">
+                                <div class="vs-cortesias-titulo">
+                                    <span class="vs-cortesias-icon">🎁</span>
+                                    Cortesias del dia
+                                </div>
+                                <div class="vs-cortesias-resumen">
+                                    <span id="vs-cortesias-count">0</span> cortesias |
+                                    <span id="vs-cortesias-total">$0.00</span>
+                                </div>
+                            </div>
+                            <div class="vs-cortesias-tabla">
+                                <div class="vs-cortesias-row vs-cortesias-header-row">
+                                    <div class="vs-cort-col dna">DNA</div>
+                                    <div class="vs-cort-col cliente">Cliente</div>
+                                    <div class="vs-cort-col vendedor">Vendedor</div>
+                                    <div class="vs-cort-col local">Local</div>
+                                    <div class="vs-cort-col nota">Motivo</div>
+                                    <div class="vs-cort-col monto">Monto</div>
+                                </div>
+                                <div id="vs-cortesias-body"></div>
+                            </div>
+                        </div>
+
                         <div class="vs-tabla-wrapper">
                             <div class="vs-tabla-header">
                                 <div>
@@ -2270,14 +2439,21 @@
                             <input type="date" id="fc-fecha-corte" style="border:1.5px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:14px;">
                         </div>
                         <div style="display:flex; flex-direction:column; gap:4px;">
-                            <label style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Semanas a mostrar</label>
+                            <label style="font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase;">Horizonte</label>
                             <select id="fc-num-semanas" style="border:1.5px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:14px;">
-                                <option value="2" selected>2 semanas</option>
-                                <option value="3">3 semanas</option>
-                                <option value="4">4 semanas</option>
-                                <option value="5">5 semanas</option>
-                                <option value="6">6 semanas</option>
-                                <option value="8">8 semanas</option>
+                                <optgroup label="Corto Plazo">
+                                    <option value="4" selected>4 sem (1 mes)</option>
+                                    <option value="6">6 sem (1.5 meses)</option>
+                                </optgroup>
+                                <optgroup label="Mediano Plazo">
+                                    <option value="8">8 sem (2 meses)</option>
+                                    <option value="10">10 sem (2.5 meses)</option>
+                                    <option value="12">12 sem (3 meses)</option>
+                                </optgroup>
+                                <optgroup label="Largo Plazo">
+                                    <option value="16">16 sem (4 meses)</option>
+                                    <option value="20">20 sem (5 meses)</option>
+                                </optgroup>
                             </select>
                         </div>
                         <button class="fc-btn" style="background:#1565c0;" onclick="fc_cargarDatos()"><i class="fas fa-search"></i> Consultar</button>
