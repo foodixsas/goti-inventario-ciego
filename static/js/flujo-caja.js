@@ -1340,12 +1340,46 @@ async function fc_cargarDatosGuardados() {
         const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
         if (!semanas || semanas.length === 0) return;
 
-        const fechas = semanas.map(s => s.inicio).join(',');
+        // Generar rango amplio: desde primera semana visible hasta +52 semanas
+        // Esto asegura que datos guardados en proyecciones largas se carguen en proyecciones cortas
+        const primeraFecha = new Date(semanas[0].inicio + 'T12:00:00');
+        const todasLasFechas = [];
+        for (let i = 0; i < 52; i++) {
+            const fecha = new Date(primeraFecha);
+            fecha.setDate(primeraFecha.getDate() + (i * 7));
+            todasLasFechas.push(fecha.toISOString().split('T')[0]);
+        }
+        const fechas = todasLasFechas.join(',');
         const response = await fetch(`/api/flujo-caja/cargar-guardado?fechas=${fechas}`);
         if (!response.ok) return;
 
         const data = await response.json();
         if (!data.ok || !data.guardados) return;
+
+        // Consolidar egresos de todas las semanas antes de aplicar
+        const egresosConsolidados = {};
+        for (const [fechaSemana, guardado] of Object.entries(data.guardados)) {
+            if (guardado.egresos) {
+                for (const [grupo, items] of Object.entries(guardado.egresos)) {
+                    if (!egresosConsolidados[grupo]) egresosConsolidados[grupo] = [];
+                    items.forEach((item, idx) => {
+                        // Buscar si ya existe este item por nombre
+                        let existente = egresosConsolidados[grupo].find(e => e.nombre === item.nombre);
+                        if (!existente) {
+                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, valores: {} };
+                            egresosConsolidados[grupo].push(existente);
+                        }
+                        // Consolidar valores (fechas)
+                        for (const [dia, valor] of Object.entries(item.valores || {})) {
+                            if (valor) existente.valores[dia] = valor;
+                        }
+                        // Actualizar banco y deuda si vienen
+                        if (item.banco) existente.banco = item.banco;
+                        if (item.deuda) existente.deuda = item.deuda;
+                    });
+                }
+            }
+        }
 
         // Aplicar datos guardados
         for (const [fechaSemana, guardado] of Object.entries(data.guardados)) {
@@ -1415,36 +1449,43 @@ async function fc_cargarDatosGuardados() {
                 }
             }
 
-            // Aplicar egresos - crear items faltantes si es necesario
-            if (guardado.egresos) {
-                for (const [grupo, items] of Object.entries(guardado.egresos)) {
-                    // Crear items faltantes
-                    let rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
-                    while (rows.length < items.length) {
-                        fc_agregarItem(grupo);
-                        rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
+            // Egresos se aplican después del loop con datos consolidados
+        }
+
+        // Aplicar egresos consolidados (fuera del loop para evitar duplicados)
+        for (const [grupo, items] of Object.entries(egresosConsolidados)) {
+            // Crear items faltantes
+            let rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
+            while (rows.length < items.length) {
+                fc_agregarItem(grupo);
+                rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
+            }
+
+            items.forEach((item, idx) => {
+                if (rows[idx]) {
+                    const nombreInput = rows[idx].querySelector('.fc-input-nombre');
+                    if (nombreInput && item.nombre) nombreInput.value = item.nombre;
+
+                    // Aplicar banco seleccionado
+                    if (item.banco) {
+                        rows[idx].dataset.banco = item.banco;
+                        const select = rows[idx].querySelector('.fc-select-banco');
+                        if (select) select.value = item.banco;
                     }
 
-                    items.forEach((item, idx) => {
-                        if (rows[idx]) {
-                            const nombreInput = rows[idx].querySelector('.fc-input-nombre');
-                            if (nombreInput && item.nombre) nombreInput.value = item.nombre;
+                    // Aplicar deuda guardada
+                    if (item.deuda) {
+                        rows[idx].dataset.deuda = item.deuda;
+                        fc_actualizarBadgeDeuda(rows[idx]);
+                    }
 
-                            // Aplicar banco seleccionado
-                            if (item.banco) {
-                                rows[idx].dataset.banco = item.banco;
-                                const select = rows[idx].querySelector('.fc-select-banco');
-                                if (select) select.value = item.banco;
-                            }
-
-                            for (const [dia, valor] of Object.entries(item.valores || {})) {
-                                const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
-                                if (input && valor) input.value = valor;
-                            }
-                        }
-                    });
+                    // Aplicar valores de TODAS las fechas consolidadas
+                    for (const [dia, valor] of Object.entries(item.valores || {})) {
+                        const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
+                        if (input && valor) input.value = valor;
+                    }
                 }
-            }
+            });
         }
     } catch (error) {
         console.error('Error cargando datos guardados:', error);
@@ -1518,7 +1559,8 @@ async function fc_guardarDatos() {
                 if (!egresos[grupo]) egresos[grupo] = [];
 
                 const banco = row.dataset.banco || 'produbanco';
-                const itemData = { nombre, banco, valores: {} };
+                const deuda = parseFloat(row.dataset.deuda) || 0;
+                const itemData = { nombre, banco, deuda, valores: {} };
                 sem.dias.forEach(dia => {
                     const input = row.querySelector(`[data-fecha="${dia}"].fc-input`);
                     if (input && input.value) {
