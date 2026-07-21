@@ -166,6 +166,7 @@ function fc_renderTabla() {
         html += `<th class="col-semana header-semana sem-${sem.num}-header" onclick="fc_toggleSemana(${sem.num})" colspan="1" style="cursor:pointer;">▶ Sem ${sem.num}</th>`;
         html += `<th class="dia-col sem-${sem.num} header-semana" onclick="fc_toggleSemana(${sem.num})" colspan="8" style="display:none; cursor:pointer;">▼ Semana ${sem.num}</th>`;
     });
+    html += '<th class="col-saldo" rowspan="3" style="background:#e3f2fd; min-width:80px;">SALDO</th>';
     html += '</tr>';
 
     // Header fechas (T12:00 evita problemas de zona horaria)
@@ -250,6 +251,7 @@ function fc_renderSaldoInicial() {
         });
         html += `<td class="dia-col sem-${sem.num} total-col monto" style="background:#b3e5fc !important;"></td>`;
     });
+    html += '<td class="col-saldo" style="background:#b3e5fc !important;"></td>';
     html += '</tr>';
 
     // SALDO INICIAL PICHINCHA
@@ -515,6 +517,8 @@ function fc_renderSubgrupoEgreso(sg) {
         });
         html += `<td class="dia-col sem-${sem.num} total-col monto fc-total-${sg.id}-total" data-semana="${sem.num}" style="font-weight:600;">-</td>`;
     });
+    // Columna SALDO total del grupo
+    html += `<td class="col-saldo monto fc-saldo-grupo-${sg.id}" style="font-weight:600; background:#e3f2fd; min-width:80px;">-</td>`;
     html += '</tr>';
 
     sg.items.forEach(item => {
@@ -538,6 +542,10 @@ function fc_renderSubgrupoEgreso(sg) {
             });
             html += `<td class="dia-col sem-${sem.num} total-col monto fc-item-total" data-semana="${sem.num}">-</td>`;
         });
+        // Columna SALDO del item (editable)
+        html += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
+            <input type="text" class="fc-input fc-input-saldo" placeholder="0" onchange="fc_recalcularSaldos()" style="width:70px; text-align:right; background:#e3f2fd;">
+        </td>`;
         html += '</tr>';
     });
 
@@ -622,6 +630,7 @@ function fc_recalcularTodo() {
     fc_recalcularFlujoYSaldos();
     fc_actualizarResumen();
     fc_recalcularTodosSaldos();
+    fc_recalcularSaldos();
 }
 
 function fc_recalcularAjustes() {
@@ -1366,16 +1375,17 @@ async function fc_cargarDatosGuardados() {
                         // Buscar si ya existe este item por nombre
                         let existente = egresosConsolidados[grupo].find(e => e.nombre === item.nombre);
                         if (!existente) {
-                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, valores: {} };
+                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, valores: {} };
                             egresosConsolidados[grupo].push(existente);
                         }
                         // Consolidar valores (fechas)
                         for (const [dia, valor] of Object.entries(item.valores || {})) {
                             if (valor) existente.valores[dia] = valor;
                         }
-                        // Actualizar banco y deuda si vienen
+                        // Actualizar banco, deuda y saldo si vienen
                         if (item.banco) existente.banco = item.banco;
                         if (item.deuda) existente.deuda = item.deuda;
+                        if (item.saldo) existente.saldo = item.saldo;
                     });
                 }
             }
@@ -1479,6 +1489,12 @@ async function fc_cargarDatosGuardados() {
                         fc_actualizarBadgeDeuda(rows[idx]);
                     }
 
+                    // Aplicar saldo guardado
+                    if (item.saldo) {
+                        const saldoInput = rows[idx].querySelector('.fc-input-saldo');
+                        if (saldoInput) saldoInput.value = item.saldo;
+                    }
+
                     // Aplicar valores de TODAS las fechas consolidadas
                     for (const [dia, valor] of Object.entries(item.valores || {})) {
                         const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
@@ -1560,7 +1576,9 @@ async function fc_guardarDatos() {
 
                 const banco = row.dataset.banco || 'produbanco';
                 const deuda = parseFloat(row.dataset.deuda) || 0;
-                const itemData = { nombre, banco, deuda, valores: {} };
+                const saldoInput = row.querySelector('.fc-input-saldo');
+                const saldo = saldoInput ? (parseFloat(saldoInput.value.replace(/,/g, '')) || 0) : 0;
+                const itemData = { nombre, banco, deuda, saldo, valores: {} };
                 sem.dias.forEach(dia => {
                     const input = row.querySelector(`[data-fecha="${dia}"].fc-input`);
                     if (input && input.value) {
@@ -1826,6 +1844,58 @@ function fc_recalcularTodosSaldos() {
     document.querySelectorAll('[data-deuda]').forEach(row => {
         fc_actualizarBadgeDeuda(row);
     });
+}
+
+// ============ RECALCULAR SALDOS DE PROVEEDORES ============
+function fc_recalcularSaldos() {
+    // Recalcular saldo de cada item: Saldo = Deuda ingresada - Pagos realizados
+    const grupos = {};
+
+    document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
+        const saldoInput = row.querySelector('.fc-input-saldo');
+        if (!saldoInput) return;
+
+        const saldoIngresado = parseFloat(saldoInput.value.replace(/,/g, '')) || 0;
+
+        // Sumar todos los pagos de esta fila
+        let totalPagos = 0;
+        row.querySelectorAll('.fc-input[data-fecha]').forEach(inp => {
+            totalPagos += parseFloat(inp.value.replace(/,/g, '')) || 0;
+        });
+
+        // Calcular saldo restante
+        const saldoRestante = saldoIngresado - totalPagos;
+
+        // Guardar en dataset para uso posterior
+        row.dataset.saldoIngresado = saldoIngresado;
+        row.dataset.saldoRestante = saldoRestante;
+
+        // Actualizar color del input según saldo
+        if (saldoIngresado > 0) {
+            if (saldoRestante <= 0) {
+                saldoInput.style.color = '#2e7d32'; // Verde - pagado
+            } else {
+                saldoInput.style.color = '#c62828'; // Rojo - pendiente
+            }
+        } else {
+            saldoInput.style.color = '#333';
+        }
+
+        // Agrupar por grupo
+        const clase = Array.from(row.classList).find(c => c.startsWith('fc-egreso-item-'));
+        const grupo = clase ? clase.replace('fc-egreso-item-', '') : 'otros';
+        if (!grupos[grupo]) grupos[grupo] = 0;
+        grupos[grupo] += saldoRestante;
+    });
+
+    // Actualizar totales de grupos
+    for (const [grupo, total] of Object.entries(grupos)) {
+        const celda = document.querySelector(`.fc-saldo-grupo-${grupo}`);
+        if (celda) {
+            celda.textContent = total > 0 ? fc_formatMonto(total) : '-';
+            celda.style.color = total > 0 ? '#c62828' : '#2e7d32';
+        }
+    }
 }
 
 // ============ RECURRENCIA DE GASTOS ============
