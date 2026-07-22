@@ -6952,6 +6952,400 @@ def flujo_caja_cargar_guardado():
             fc_release_movimientos_db(conn)
 
 
+# =====================================================
+# VOUCHER SCANNER - Endpoint comparacion Azure
+# =====================================================
+@app.route('/api/vouchers/cobros-tarjeta', methods=['GET'])
+def vs_cobros_tarjeta():
+    """Obtiene cobros con tarjeta de Azure para comparar con vouchers Supabase"""
+    fecha = request.args.get('fecha')
+    local = request.args.get('local')  # Filtro opcional por local
+    if not fecha:
+        return jsonify({'error': 'Fecha requerida'}), 400
+
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Mapeo de IDs Supabase a nombres de local en Azure
+        mapeo_locales = {
+            'vj6e98Ao7UrAEdWB': 'PORTUGAL',
+            'gDGe76ymMCn21dn2': 'REAL',
+            'pXKdwmJWZcgk3agW': 'SANTO CACHON PORTUGAL',
+            '4pzb864o4uBWpeEw': 'SANTO CACHON REAL',
+            'rQzaOyDP4cElmdp4': 'SIMON BOLON'
+        }
+        local_azure = mapeo_locales.get(local) if local else None
+
+        # Cobros con tarjeta - detalle individual
+        if local_azure:
+            cur.execute('''
+                SELECT
+                    codigo_comprobante as factura,
+                    centro_costo as local,
+                    valor,
+                    persona,
+                    lote
+                FROM contifico_cobrospagos
+                WHERE fecha = %s AND forma_cobro_pago = 'Tarjeta Credito' AND centro_costo = %s
+                ORDER BY lote, codigo_comprobante
+            ''', (fecha, local_azure))
+        else:
+            cur.execute('''
+                SELECT
+                    codigo_comprobante as factura,
+                    centro_costo as local,
+                    valor,
+                    persona,
+                    lote
+                FROM contifico_cobrospagos
+                WHERE fecha = %s AND forma_cobro_pago = 'Tarjeta Credito'
+                ORDER BY centro_costo, lote, codigo_comprobante
+            ''', (fecha,))
+
+        registros = []
+        total_monto = 0
+        for row in cur.fetchall():
+            factura = row['factura'] or ''
+            local = row['local'] or '(sin local)'
+            valor = float(row['valor'] or 0)
+            registros.append({
+                'factura': factura,
+                'local': local,
+                'valor': valor,
+                'persona': row['persona'] or '',
+                'lote': row['lote'] or ''
+            })
+            total_monto += valor
+
+        # Obtener lotes únicos con totales
+        lotes_unicos = {}
+        for r in registros:
+            lote = r['lote'] or ''
+            if lote:
+                if lote not in lotes_unicos:
+                    lotes_unicos[lote] = {'lote': lote, 'local': r['local'], 'txn': 0, 'total': 0}
+                lotes_unicos[lote]['txn'] += 1
+                lotes_unicos[lote]['total'] += r['valor']
+
+        return jsonify({
+            'ok': True,
+            'fecha': fecha,
+            'registros': registros,
+            'lotes': list(lotes_unicos.values()),
+            'total_transacciones': len(registros),
+            'total_monto': total_monto
+        })
+
+    except Exception as e:
+        print(f"Error en /api/vouchers/cobros-tarjeta: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
+
+
+@app.route('/api/vouchers/cobros-deuna', methods=['GET'])
+def vs_cobros_deuna():
+    """Obtiene cobros DEUNA de Azure (contifico_cobrospagos) para comparar con vouchers Supabase"""
+    fecha = request.args.get('fecha')
+    local = request.args.get('local')
+    if not fecha:
+        return jsonify({'error': 'Fecha requerida'}), 400
+
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Mapeo de IDs Supabase a nombres de local en Azure
+        mapeo_locales = {
+            'vj6e98Ao7UrAEdWB': 'PORTUGAL',
+            'gDGe76ymMCn21dn2': 'REAL',
+            'pXKdwmJWZcgk3agW': 'SANTO CACHON PORTUGAL',
+            '4pzb864o4uBWpeEw': 'SANTO CACHON REAL',
+            'rQzaOyDP4cElmdp4': 'SIMON BOLON'
+        }
+        local_azure = mapeo_locales.get(local) if local else None
+
+        # Consultar contifico_cobrospagos (DEUNA = Transferencia + BANCO DEUNA)
+        if local_azure:
+            cur.execute('''
+                SELECT
+                    codigo_comprobante as factura,
+                    centro_costo as local,
+                    valor,
+                    persona
+                FROM contifico_cobrospagos
+                WHERE fecha = %s
+                  AND forma_cobro_pago = 'Transferencia'
+                  AND cta_afectada = 'BANCO DEUNA'
+                  AND centro_costo = %s
+                ORDER BY codigo_comprobante
+            ''', (fecha, local_azure))
+        else:
+            cur.execute('''
+                SELECT
+                    codigo_comprobante as factura,
+                    centro_costo as local,
+                    valor,
+                    persona
+                FROM contifico_cobrospagos
+                WHERE fecha = %s
+                  AND forma_cobro_pago = 'Transferencia'
+                  AND cta_afectada = 'BANCO DEUNA'
+                ORDER BY centro_costo, codigo_comprobante
+            ''', (fecha,))
+
+        registros = []
+        total_monto = 0
+        for row in cur.fetchall():
+            factura = row['factura'] or ''
+            local_name = row['local'] or '(sin local)'
+            valor = float(row['valor'] or 0)
+            registros.append({
+                'factura': factura,
+                'local': local_name,
+                'valor': valor,
+                'persona': row['persona'] or ''
+            })
+            total_monto += valor
+
+        return jsonify({
+            'ok': True,
+            'fecha': fecha,
+            'registros': registros,
+            'total_transacciones': len(registros),
+            'total_monto': total_monto
+        })
+
+    except Exception as e:
+        print(f"Error en /api/vouchers/cobros-deuna: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
+
+
+@app.route('/api/vouchers/cortesias', methods=['GET'])
+def vs_cortesias():
+    """Obtiene cortesias (DNAs) de una fecha para control"""
+    fecha = request.args.get('fecha')
+    local = request.args.get('local')
+    if not fecha:
+        return jsonify({'error': 'Fecha requerida'}), 400
+
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        mapeo_locales = {
+            'vj6e98Ao7UrAEdWB': 'PORTUGAL',
+            'gDGe76ymMCn21dn2': 'REAL',
+            'pXKdwmJWZcgk3agW': 'SANTO CACHON PORTUGAL',
+            '4pzb864o4uBWpeEw': 'SANTO CACHON REAL',
+            'rQzaOyDP4cElmdp4': 'SIMON BOLON',
+            'isla_floreana': 'FLOREANA'
+        }
+        local_azure = mapeo_locales.get(local) if local else None
+
+        if local_azure:
+            cur.execute('''
+                SELECT num_documento, persona, vendedor, centro_costo, nota, total
+                FROM fact_detallada
+                WHERE fecha = %s
+                  AND tipo_documento = 'DNA'
+                  AND centro_costo = %s
+                ORDER BY num_documento
+            ''', (fecha, local_azure))
+        else:
+            cur.execute('''
+                SELECT num_documento, persona, vendedor, centro_costo, nota, total
+                FROM fact_detallada
+                WHERE fecha = %s
+                  AND tipo_documento = 'DNA'
+                ORDER BY centro_costo, num_documento
+            ''', (fecha,))
+
+        registros = []
+        total_monto = 0
+        for row in cur.fetchall():
+            monto = float(row['total'] or 0)
+            registros.append({
+                'dna': row['num_documento'] or '',
+                'cliente': row['persona'] or '',
+                'vendedor': row['vendedor'] or '',
+                'local': row['centro_costo'] or '',
+                'nota': row['nota'] or '',
+                'monto': monto
+            })
+            total_monto += monto
+
+        return jsonify({
+            'ok': True,
+            'fecha': fecha,
+            'registros': registros,
+            'total_cortesias': len(registros),
+            'total_monto': total_monto
+        })
+
+    except Exception as e:
+        print(f"Error en /api/vouchers/cortesias: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
+
+
+# ============================================================
+# INVENTARIO LOCALES (actualizar cantidad / toma fisica)
+# ============================================================
+
+WORKER_TOKEN = os.environ.get('WORKER_TOKEN', 'worker-foodix-2026-changeme')
+
+@app.route('/api/inventario-locales/solicitar', methods=['POST'])
+def inventario_locales_solicitar():
+    """Admin solicita tarea de actualizar cantidad o toma fisica."""
+    data = request.json or {}
+    bodega = data.get('bodega')
+    fecha = data.get('fecha')
+    accion = data.get('accion')
+    usuario = data.get('usuario', 'admin')
+
+    if not bodega or not fecha or not accion:
+        return jsonify({'error': 'bodega, fecha y accion son requeridos'}), 400
+
+    if accion not in ('actualizar_cantidad', 'toma_fisica'):
+        return jsonify({'error': 'accion debe ser actualizar_cantidad o toma_fisica'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO goti.tareas_inventario_locales (bodega, fecha, accion, solicitado_por)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """, (bodega, fecha, accion, usuario))
+        tarea_id = cur.fetchone()['id']
+        conn.commit()
+        return jsonify({'ok': True, 'id': tarea_id})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/inventario-locales/pendientes', methods=['GET'])
+def inventario_locales_pendientes():
+    """Worker toma tareas pendientes."""
+    token = request.headers.get('X-Worker-Token')
+    if token != WORKER_TOKEN:
+        return jsonify({'error': 'unauthorized'}), 401
+    worker_id = request.args.get('worker_id', 'pc-finanzas')
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE goti.tareas_inventario_locales
+            SET estado = 'en_proceso', worker_lock = %s, timestamp_inicio = NOW()
+            WHERE id IN (
+                SELECT id FROM goti.tareas_inventario_locales
+                WHERE estado = 'pendiente' ORDER BY solicitado_at ASC LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING id, bodega, fecha, accion
+        """, (worker_id,))
+        rows = cur.fetchall()
+        conn.commit()
+        return jsonify([{
+            'id': r['id'],
+            'bodega': r['bodega'],
+            'fecha': r['fecha'].isoformat() if r['fecha'] else None,
+            'accion': r['accion'],
+        } for r in rows])
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/inventario-locales/resultado', methods=['POST'])
+def inventario_locales_resultado():
+    """Worker reporta resultado."""
+    token = request.headers.get('X-Worker-Token')
+    if token != WORKER_TOKEN:
+        return jsonify({'error': 'unauthorized'}), 401
+    data = request.json or {}
+    ejec_id = data.get('id')
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE goti.tareas_inventario_locales
+            SET estado = %s, timestamp_fin = NOW(), total_productos = %s,
+                url_contifico = %s, error_msg = %s
+            WHERE id = %s
+        """, (
+            data.get('estado', 'completado'),
+            data.get('total_productos'),
+            data.get('url_contifico'),
+            data.get('error_msg'),
+            ejec_id
+        ))
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/inventario-locales/historial', methods=['GET'])
+def inventario_locales_historial():
+    """Lista historial de tareas."""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, bodega, fecha, accion, estado, solicitado_por, solicitado_at,
+                   timestamp_inicio, timestamp_fin, total_productos, url_contifico, error_msg
+            FROM goti.tareas_inventario_locales
+            ORDER BY solicitado_at DESC
+            LIMIT 100
+        """)
+        return jsonify(cur.fetchall())
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/inventario-locales/estado/<int:tarea_id>', methods=['GET'])
+def inventario_locales_estado(tarea_id):
+    """Estado de una tarea especifica."""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM goti.tareas_inventario_locales WHERE id = %s", (tarea_id,))
+        r = cur.fetchone()
+        if not r:
+            return jsonify({'error': 'no encontrado'}), 404
+        return jsonify(dict(r))
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: release_db(conn)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)

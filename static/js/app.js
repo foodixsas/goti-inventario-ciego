@@ -1443,6 +1443,11 @@ function cambiarVista(viewName) {
         if (dh && !dh.value) dh.value = new Date().toISOString().split('T')[0];
     }
 
+    // Auto-inicializar carga locales
+    if (viewName === 'carga-locales') {
+        clInit();
+    }
+
     // Auto-inicializar cuadres de caja
     if (viewName === 'cuadre-registro') { cuadreInit(); }
     if (viewName === 'cuadre-historial' || viewName === 'cuadre-dashboard') {
@@ -9848,6 +9853,9 @@ async function vs_buscar() {
     document.getElementById('vs-tabla-contenido').innerHTML = `<div class="vs-estado-msg"><div class="vs-spinner"></div><p>Cargando datos...</p></div>`;
     document.getElementById('vs-resumen').style.display = 'none';
     document.getElementById('vs-cierre-banner').style.display = 'none';
+    document.getElementById('vs-comparacion').style.display = 'none';
+    document.getElementById('vs-comparacion-deuna').style.display = 'none';
+    document.getElementById('vs-cortesias-panel').style.display = 'none';
     document.getElementById('vs-filtro-estado').style.display = 'none';
     document.getElementById('vs-btn-export').style.display = 'none';
 
@@ -9897,6 +9905,13 @@ async function vs_buscar() {
         document.getElementById('vs-btn-export').style.display = registros.length > 0 ? 'inline-block' : 'none';
         document.querySelectorAll('.vs-btn-estado').forEach(b => b.classList.remove('activo'));
         document.querySelector('.vs-btn-estado.todos').classList.add('activo');
+
+        // Comparacion con Azure (Contifico) - Tarjetas y DEUNA
+        vs_cargarComparacionAzure(fecha, local, registros);
+        vs_cargarComparacionDeuna(fecha, local, registros);
+
+        // Cargar cortesias del dia
+        vs_cargarCortesias(fecha, local);
     } catch(e) {
         document.getElementById('vs-tabla-contenido').innerHTML = `<div class="vs-estado-msg"><div class="icono">&#10060;</div><p>Error al cargar datos.</p></div>`;
     }
@@ -10171,4 +10186,420 @@ function vs_exportarCSV() {
     a.href = URL.createObjectURL(blob);
     a.download = `vouchers_${fecha}_${localNombre.replace(/ /g,'_')}.csv`;
     a.click();
+}
+
+async function vs_cargarComparacionAzure(fecha, local, registrosSupa) {
+    try {
+        let url = `/api/vouchers/cobros-tarjeta?fecha=${fecha}`;
+        if (local) url += `&local=${local}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.ok) return;
+
+        const azureRegs = data.registros || [];
+
+        // Filtrar registros Supabase: excluir DEUNA y TRANSFERENCIA (no son tarjeta tradicional)
+        const registrosSupaFiltrados = registrosSupa.filter(r => {
+            // Excluir por forma de pago en factura
+            const formasPago = r.formas_pago_factura || [];
+            if (formasPago.includes('TRANSFERENCIA')) return false;
+
+            // Excluir por tipo de pago DEUNA en vouchers
+            const pagos = vsFotosMap[r.id] || [];
+            if (pagos.length === 0) return true; // Sin pagos, incluir
+            const tieneDeuna = pagos.some(p => (p.tarjeta_tipo || '').toUpperCase().includes('DEUNA'));
+            const tieneTarjeta = pagos.some(p => {
+                const tipo = (p.tarjeta_tipo || '').toUpperCase();
+                return tipo && !tipo.includes('DEUNA');
+            });
+            return tieneTarjeta || !tieneDeuna; // Incluir si tiene tarjeta o no tiene DEUNA
+        });
+
+        // Calcular totales Supabase (sin DEUNA)
+        const supaTxn = registrosSupaFiltrados.length;
+        const supaMonto = registrosSupaFiltrados.reduce((s, r) => s + (r.vouchers_total || 0), 0);
+
+        // Datos Azure
+        const azureTxn = data.total_transacciones;
+        const azureMonto = data.total_monto;
+
+        // Diferencias
+        const diffTxn = azureTxn - supaTxn;
+        const diffMonto = azureMonto - supaMonto;
+
+        // Renderizar totales
+        document.getElementById('vs-comp-azure-txn').textContent = `${azureTxn} txn`;
+        document.getElementById('vs-comp-azure-monto').textContent = `$${azureMonto.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+        document.getElementById('vs-comp-supa-txn').textContent = `${supaTxn} txn`;
+        document.getElementById('vs-comp-supa-monto').textContent = `$${supaMonto.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+        document.getElementById('vs-comp-diff-txn').textContent = `${diffTxn >= 0 ? '+' : ''}${diffTxn} txn`;
+        document.getElementById('vs-comp-diff-monto').textContent = `${diffMonto >= 0 ? '+' : ''}$${Math.abs(diffMonto).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+
+        // Normalizar numero de factura (quitar prefijo FAC/NC y espacios)
+        const normalizarFactura = (f) => f ? f.replace(/^(FAC|NC)\s*/i, '').trim() : '';
+
+        // Cruce de facturas (normalizadas, sin DEUNA)
+        const facturasAzureNorm = new Set(azureRegs.map(r => normalizarFactura(r.factura)).filter(f => f));
+        const facturasSupaNorm = new Set(registrosSupaFiltrados.map(r => normalizarFactura(r.numero_factura)).filter(f => f));
+
+        // Faltantes en cada sistema
+        const enAzureNoSupa = azureRegs.filter(r => r.factura && !facturasSupaNorm.has(normalizarFactura(r.factura)));
+        const enSupaNoAzure = registrosSupaFiltrados.filter(r => r.numero_factura && !facturasAzureNorm.has(normalizarFactura(r.numero_factura)));
+
+        // Renderizar faltantes
+        const faltAzureEl = document.getElementById('vs-falt-azure');
+        const faltSupaEl = document.getElementById('vs-falt-supa');
+
+        if (enAzureNoSupa.length > 0) {
+            faltAzureEl.innerHTML = enAzureNoSupa.map(r => `
+                <div class="vs-falt-item">
+                    <span class="vs-falt-factura">${r.factura}${r.lote ? ' <small style="color:#6366f1">[L:'+r.lote+']</small>' : ''}</span>
+                    <span class="vs-falt-monto">$${r.valor.toFixed(2)}</span>
+                </div>
+            `).join('');
+        } else {
+            faltAzureEl.innerHTML = '<div class="vs-falt-empty">Todas las facturas de Contifico estan en Vouchers</div>';
+        }
+
+        if (enSupaNoAzure.length > 0) {
+            faltSupaEl.innerHTML = enSupaNoAzure.map(r => `
+                <div class="vs-falt-item">
+                    <span class="vs-falt-factura">${r.numero_factura}</span>
+                    <span class="vs-falt-monto">$${(r.vouchers_total || 0).toFixed(2)}</span>
+                </div>
+            `).join('');
+        } else {
+            faltSupaEl.innerHTML = '<div class="vs-falt-empty">Todas las facturas de Vouchers estan en Contifico</div>';
+        }
+
+        // Mostrar panel de faltantes si hay diferencias
+        document.getElementById('vs-comp-faltantes').style.display = (enAzureNoSupa.length > 0 || enSupaNoAzure.length > 0) ? 'block' : 'none';
+
+        // Comparar lotes: Azure vs Supabase (cierres)
+        const lotesAzure = data.lotes || [];
+        const normalizarLote = (l) => l ? l.replace(/^0+/, '') : ''; // Quitar ceros a la izquierda
+        const lotesSupaSet = new Set(vsCierresActuales.map(c => normalizarLote(c.lote_numero)));
+
+        const lotesFaltantes = lotesAzure.filter(l => l.lote && !lotesSupaSet.has(normalizarLote(l.lote)));
+
+        const alertaLotesEl = document.getElementById('vs-lotes-alerta');
+        const listaLotesEl = document.getElementById('vs-lotes-faltantes');
+
+        if (lotesFaltantes.length > 0) {
+            listaLotesEl.innerHTML = lotesFaltantes.map(l => `
+                <div class="vs-lote-chip">
+                    <span class="vs-lote-chip-num">Lote ${l.lote}</span>
+                    <span class="vs-lote-chip-info">${l.local} | ${l.txn} txn | $${l.total.toFixed(2)}</span>
+                </div>
+            `).join('');
+            alertaLotesEl.style.display = 'block';
+        } else {
+            alertaLotesEl.style.display = 'none';
+        }
+
+        // Estado - considerar diferencias numéricas y facturas faltantes
+        const estadoEl = document.getElementById('vs-comp-estado');
+        const hayDiffTxn = diffTxn !== 0;
+        const hayDiffMonto = Math.abs(diffMonto) >= 0.01;
+        const hayFaltantes = enAzureNoSupa.length > 0 || enSupaNoAzure.length > 0;
+
+        if (!hayDiffTxn && !hayDiffMonto && !hayFaltantes) {
+            estadoEl.className = 'vs-comp-estado ok';
+            estadoEl.textContent = 'Todas las facturas coinciden';
+        } else if (hayFaltantes) {
+            estadoEl.className = 'vs-comp-estado error';
+            estadoEl.textContent = `${enAzureNoSupa.length} facturas solo en Contifico, ${enSupaNoAzure.length} solo en Vouchers`;
+        } else {
+            // Hay diferencia numérica pero no facturas faltantes (posible diferencia de montos)
+            estadoEl.className = 'vs-comp-estado warning';
+            estadoEl.textContent = `Diferencia: ${diffTxn >= 0 ? '+' : ''}${diffTxn} txn, ${diffMonto >= 0 ? '+' : '-'}$${Math.abs(diffMonto).toFixed(2)}`;
+        }
+
+        document.getElementById('vs-comparacion').style.display = 'block';
+    } catch (e) {
+        console.log('Error cargando comparacion Azure:', e);
+    }
+}
+
+async function vs_cargarComparacionDeuna(fecha, local, registrosSupa) {
+    try {
+        let url = `/api/vouchers/cobros-deuna?fecha=${fecha}`;
+        if (local) url += `&local=${local}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.ok) return;
+
+        const azureRegs = data.registros || [];
+
+        // Filtrar registros Supabase que tienen pagos DEUNA
+        const registrosSupaDeuna = registrosSupa.filter(r => {
+            const pagos = vsFotosMap[r.id] || [];
+            return pagos.some(p => (p.tarjeta_tipo || '').toUpperCase().includes('DEUNA'));
+        });
+
+        // Calcular totales - usar vouchers_total de los registros filtrados
+        const supaTxn = registrosSupaDeuna.length;
+        const supaMonto = registrosSupaDeuna.reduce((s, r) => s + (r.vouchers_total || 0), 0);
+        const azureTxn = data.total_transacciones;
+        const azureMonto = data.total_monto;
+        const diffTxn = azureTxn - supaTxn;
+        const diffMonto = azureMonto - supaMonto;
+
+        // Si no hay datos DEUNA en ningún lado, ocultar panel
+        if (azureTxn === 0 && supaTxn === 0) {
+            document.getElementById('vs-comparacion-deuna').style.display = 'none';
+            return;
+        }
+
+        // Renderizar totales
+        document.getElementById('vs-deuna-azure-txn').textContent = `${azureTxn} txn`;
+        document.getElementById('vs-deuna-azure-monto').textContent = `$${azureMonto.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+        document.getElementById('vs-deuna-supa-txn').textContent = `${supaTxn} txn`;
+        document.getElementById('vs-deuna-supa-monto').textContent = `$${supaMonto.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+        document.getElementById('vs-deuna-diff-txn').textContent = `${diffTxn >= 0 ? '+' : ''}${diffTxn} txn`;
+        document.getElementById('vs-deuna-diff-monto').textContent = `${diffMonto >= 0 ? '+' : ''}$${Math.abs(diffMonto).toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+
+        // Cruce por factura (igual que tarjetas)
+        const normalizarFactura = (f) => f ? f.replace(/^(FAC|NC)\s*/i, '').trim() : '';
+        const facturasAzureNorm = new Set(azureRegs.map(r => normalizarFactura(r.factura)).filter(f => f));
+        const facturasSupaNorm = new Set(registrosSupaDeuna.map(r => normalizarFactura(r.numero_factura)).filter(f => f));
+
+        const enAzureNoSupa = azureRegs.filter(r => r.factura && !facturasSupaNorm.has(normalizarFactura(r.factura)));
+        const enSupaNoAzure = registrosSupaDeuna.filter(r => r.numero_factura && !facturasAzureNorm.has(normalizarFactura(r.numero_factura)));
+
+        // Renderizar faltantes
+        const faltAzureEl = document.getElementById('vs-deuna-falt-azure');
+        const faltSupaEl = document.getElementById('vs-deuna-falt-supa');
+
+        if (enAzureNoSupa.length > 0) {
+            faltAzureEl.innerHTML = enAzureNoSupa.slice(0, 20).map(r => `
+                <div class="vs-falt-item">
+                    <span class="vs-falt-factura">${r.factura}</span>
+                    <span class="vs-falt-monto">$${r.valor.toFixed(2)}</span>
+                </div>
+            `).join('') + (enAzureNoSupa.length > 20 ? `<div class="vs-falt-more">+${enAzureNoSupa.length - 20} más...</div>` : '');
+        } else {
+            faltAzureEl.innerHTML = '<div class="vs-falt-empty">Todas coinciden</div>';
+        }
+
+        if (enSupaNoAzure.length > 0) {
+            faltSupaEl.innerHTML = enSupaNoAzure.slice(0, 20).map(r => `
+                <div class="vs-falt-item">
+                    <span class="vs-falt-factura">${r.numero_factura}</span>
+                    <span class="vs-falt-monto">$${(r.vouchers_total || 0).toFixed(2)}</span>
+                </div>
+            `).join('') + (enSupaNoAzure.length > 20 ? `<div class="vs-falt-more">+${enSupaNoAzure.length - 20} más...</div>` : '');
+        } else {
+            faltSupaEl.innerHTML = '<div class="vs-falt-empty">Todas coinciden</div>';
+        }
+
+        document.getElementById('vs-deuna-faltantes').style.display = (enAzureNoSupa.length > 0 || enSupaNoAzure.length > 0) ? 'block' : 'none';
+
+        // Estado
+        const estadoEl = document.getElementById('vs-deuna-estado');
+        const hayDiffTxn = diffTxn !== 0;
+        const hayDiffMonto = Math.abs(diffMonto) >= 0.01;
+        const hayFaltantes = enAzureNoSupa.length > 0 || enSupaNoAzure.length > 0;
+
+        if (!hayDiffTxn && !hayDiffMonto && !hayFaltantes) {
+            estadoEl.className = 'vs-comp-estado ok';
+            estadoEl.textContent = 'Todos los pagos DEUNA coinciden';
+        } else if (hayFaltantes) {
+            estadoEl.className = 'vs-comp-estado error';
+            estadoEl.textContent = `${enAzureNoSupa.length} sin escanear, ${enSupaNoAzure.length} sin registrar`;
+        } else {
+            estadoEl.className = 'vs-comp-estado warning';
+            estadoEl.textContent = `Diferencia: ${diffTxn >= 0 ? '+' : ''}${diffTxn} txn, ${diffMonto >= 0 ? '+' : '-'}$${Math.abs(diffMonto).toFixed(2)}`;
+        }
+
+        document.getElementById('vs-comparacion-deuna').style.display = 'block';
+    } catch (e) {
+        console.log('Error cargando comparacion DEUNA:', e);
+    }
+}
+
+async function vs_cargarCortesias(fecha, local) {
+    try {
+        let url = `/api/vouchers/cortesias?fecha=${fecha}`;
+        if (local) url += `&local=${local}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.ok) return;
+
+        const registros = data.registros || [];
+
+        if (registros.length === 0) {
+            document.getElementById('vs-cortesias-panel').style.display = 'none';
+            return;
+        }
+
+        document.getElementById('vs-cortesias-count').textContent = data.total_cortesias;
+        document.getElementById('vs-cortesias-total').textContent = `$${data.total_monto.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+
+        const bodyEl = document.getElementById('vs-cortesias-body');
+        bodyEl.innerHTML = registros.map(r => `
+            <div class="vs-cortesias-row">
+                <div class="vs-cort-col dna">${r.dna}</div>
+                <div class="vs-cort-col cliente" title="${r.cliente}">${r.cliente}</div>
+                <div class="vs-cort-col vendedor" title="${r.vendedor}">${r.vendedor}</div>
+                <div class="vs-cort-col local">${r.local}</div>
+                <div class="vs-cort-col nota" title="${r.nota || ''}">${r.nota || '-'}</div>
+                <div class="vs-cort-col monto">$${r.monto.toFixed(2)}</div>
+            </div>
+        `).join('');
+
+        document.getElementById('vs-cortesias-panel').style.display = 'block';
+    } catch (e) {
+        console.log('Error cargando cortesias:', e);
+    }
+}
+
+// ============================================================
+// MODULO: Carga Inventario Locales (Actualizar Cantidad / Toma Fisica)
+// ============================================================
+
+const CL_LOCALES_NOMBRES = {
+    'real_audiencia': 'Real Audiencia',
+    'floreana': 'Floreana',
+    'portugal': 'Portugal',
+    'santo_cachon_real': 'Santo Cachon Real',
+    'santo_cachon_portugal': 'Santo Cachon Portugal',
+    'simon_bolon': 'Simon Bolon',
+    'TODAS': 'TODAS'
+};
+
+let _clPollInterval = null;
+
+function clInit() {
+    const fechaInput = document.getElementById('cl-fecha');
+    if (fechaInput && !fechaInput.value) {
+        fechaInput.value = new Date().toISOString().split('T')[0];
+    }
+    clCargarHistorial();
+}
+
+async function clEnviarTarea() {
+    const fecha = document.getElementById('cl-fecha').value;
+    const bodega = document.getElementById('cl-bodega').value;
+    const accion = document.getElementById('cl-accion').value;
+    const statusEl = document.getElementById('cl-status');
+    const btn = document.getElementById('cl-btn-enviar');
+
+    if (!fecha) { showToast('Selecciona una fecha', 'error'); return; }
+    if (!bodega) { showToast('Selecciona un local', 'error'); return; }
+    if (!accion) { showToast('Selecciona una accion', 'error'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
+    statusEl.textContent = 'Enviando solicitud al worker...';
+    statusEl.className = 'cl-status-info';
+    statusEl.style.display = 'block';
+
+    try {
+        const bodegas = bodega === 'TODAS'
+            ? ['real_audiencia', 'floreana', 'portugal', 'santo_cachon_real', 'santo_cachon_portugal', 'simon_bolon']
+            : [bodega];
+
+        const resultados = [];
+        for (const b of bodegas) {
+            const res = await fetch(`${CONFIG.API_URL}/api/inventario-locales/solicitar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bodega: b,
+                    fecha: fecha,
+                    accion: accion,
+                    usuario: state.user?.nombre || 'admin'
+                })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                resultados.push(data.id);
+            }
+        }
+
+        if (resultados.length > 0) {
+            statusEl.textContent = `${resultados.length} tarea(s) creada(s). IDs: ${resultados.join(', ')}. Esperando worker...`;
+            statusEl.className = 'cl-status-ok';
+            showToast(`${resultados.length} tarea(s) enviada(s) al worker`, 'success');
+            clCargarHistorial();
+            clIniciarPolling();
+        } else {
+            statusEl.textContent = 'No se crearon tareas';
+            statusEl.className = 'cl-status-err';
+            showToast('Error al crear tareas', 'error');
+        }
+    } catch (e) {
+        statusEl.textContent = 'Error de conexion: ' + e.message;
+        statusEl.className = 'cl-status-err';
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar al Worker';
+    }
+}
+
+async function clCargarHistorial() {
+    const tbody = document.getElementById('cl-historial-body');
+    if (!tbody) return;
+
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/inventario-locales/historial`);
+        const data = await res.json();
+
+        if (data.error) {
+            tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center;">Error: ${data.error}</td></tr>`;
+            return;
+        }
+
+        if (!data.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;">No hay tareas registradas</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.map(t => {
+            const badgeClass = {
+                'pendiente': 'cl-badge-pendiente',
+                'en_proceso': 'cl-badge-proceso',
+                'completado': 'cl-badge-ok',
+                'error': 'cl-badge-err'
+            }[t.estado] || 'cl-badge-pendiente';
+
+            const accionTxt = t.accion === 'actualizar_cantidad' ? 'Actualizar Cant.' : 'Toma Fisica';
+            const fechaCorta = t.fecha ? t.fecha.split('T')[0].split('-').reverse().join('/') : '-';
+            const solicitadoAt = t.solicitado_at ? new Date(t.solicitado_at).toLocaleString('es-EC', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'}) : '-';
+
+            return `
+                <tr>
+                    <td><strong>${t.id}</strong></td>
+                    <td>${fechaCorta}</td>
+                    <td>${CL_LOCALES_NOMBRES[t.bodega] || t.bodega}</td>
+                    <td>${accionTxt}</td>
+                    <td><span class="cl-badge ${badgeClass}">${t.estado}</span></td>
+                    <td>${t.total_productos || '-'}</td>
+                    <td>${solicitadoAt}</td>
+                </tr>
+            `;
+        }).join('');
+
+        const hayEnProceso = data.some(t => t.estado === 'pendiente' || t.estado === 'en_proceso');
+        if (!hayEnProceso && _clPollInterval) {
+            clearInterval(_clPollInterval);
+            _clPollInterval = null;
+        }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center;">Error: ${e.message}</td></tr>`;
+    }
+}
+
+function clIniciarPolling() {
+    if (_clPollInterval) return;
+    _clPollInterval = setInterval(clCargarHistorial, 5000);
+}
+
+function clDetenerPolling() {
+    if (_clPollInterval) {
+        clearInterval(_clPollInterval);
+        _clPollInterval = null;
+    }
 }

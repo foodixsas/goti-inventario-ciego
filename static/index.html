@@ -185,6 +185,17 @@
         .fc-card.verde .fc-card-valor { color:#10b981; }
         .fc-card.rojo .fc-card-valor { color:#ef4444; }
         @keyframes spin { to { transform:rotate(360deg); } }
+
+        /* ===== CARGA LOCALES MODULE ===== */
+        #cl-status { font-size:13px; font-weight:500; }
+        #cl-status.cl-status-ok { background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; display:block; }
+        #cl-status.cl-status-err { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; display:block; }
+        #cl-status.cl-status-info { background:#dbeafe; color:#1e40af; border:1px solid #93c5fd; display:block; }
+        .cl-badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; }
+        .cl-badge-pendiente { background:#fef3c7; color:#92400e; }
+        .cl-badge-proceso { background:#dbeafe; color:#1e40af; }
+        .cl-badge-ok { background:#d1fae5; color:#065f46; }
+        .cl-badge-err { background:#fee2e2; color:#991b1b; }
     </style>
 </head>
 <body>
@@ -297,6 +308,10 @@
                         <button class="nav-btn" data-view="descuentos-nomina" style="display:none;">
                             <i class="fas fa-file-invoice-dollar"></i>
                             <span>Descuentos Nomina</span>
+                        </button>
+                        <button class="nav-btn" data-view="carga-locales" style="display:none;">
+                            <i class="fas fa-store"></i>
+                            <span>Carga Locales</span>
                         </button>
                     </div>
                 </div>
@@ -1946,6 +1961,66 @@
 
                     <!-- Detalle expandible -->
                     <div id="desc-detalle" style="margin-top:16px;"></div>
+                </div>
+
+                <!-- Vista Carga Locales (Actualizar Cantidad / Toma Fisica) -->
+                <div id="view-carga-locales" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-store"></i> Carga Inventario Locales</h2>
+                    </div>
+
+                    <div class="obs-filtros" style="flex-wrap:wrap;gap:16px;">
+                        <div class="obs-filtro-grupo">
+                            <label for="cl-fecha">Fecha</label>
+                            <input type="date" id="cl-fecha" class="obs-filtro-input">
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label for="cl-bodega">Local</label>
+                            <select id="cl-bodega" class="obs-filtro-input">
+                                <option value="">-- Seleccionar --</option>
+                                <option value="real_audiencia">Real Audiencia</option>
+                                <option value="floreana">Floreana</option>
+                                <option value="portugal">Portugal</option>
+                                <option value="santo_cachon_real">Santo Cachon Real</option>
+                                <option value="santo_cachon_portugal">Santo Cachon Portugal</option>
+                                <option value="simon_bolon">Simon Bolon</option>
+                                <option value="TODAS">TODAS LAS BODEGAS</option>
+                            </select>
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label for="cl-accion">Accion</label>
+                            <select id="cl-accion" class="obs-filtro-input">
+                                <option value="">-- Seleccionar --</option>
+                                <option value="actualizar_cantidad">Actualizar Cantidad (Contifico a BD)</option>
+                                <option value="toma_fisica">Cargar Toma Fisica (BD a Contifico)</option>
+                            </select>
+                        </div>
+                        <div class="obs-filtro-grupo" style="align-self:flex-end;">
+                            <button id="cl-btn-enviar" class="btn-primary" onclick="clEnviarTarea()">
+                                <i class="fas fa-paper-plane"></i> Enviar al Worker
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="cl-status" style="margin:16px 0;padding:12px;border-radius:8px;display:none;"></div>
+
+                    <h3 style="margin-top:24px;margin-bottom:12px;"><i class="fas fa-history"></i> Historial de Tareas</h3>
+                    <div id="cl-historial-container">
+                        <table class="data-table" id="cl-historial-tabla">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Fecha</th>
+                                    <th>Local</th>
+                                    <th>Accion</th>
+                                    <th>Estado</th>
+                                    <th>Productos</th>
+                                    <th>Solicitado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cl-historial-body"></tbody>
+                        </table>
+                    </div>
                 </div>
 
                 <!-- Vista Usuarios (solo admin) -->
