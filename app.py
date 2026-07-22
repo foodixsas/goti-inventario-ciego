@@ -4346,22 +4346,24 @@ def cruce_op_resultado():
         # Borrar detalle previo si existiera
         cur.execute("DELETE FROM goti.cruce_operativo_detalle WHERE ejecucion_id = %s", (ejec_id,))
 
-        # Insertar detalle
+        # Insertar detalle (batch insert para evitar timeout)
         if detalle:
+            valores = []
             for d in detalle:
-                cur.execute("""
-                    INSERT INTO goti.cruce_operativo_detalle
-                    (ejecucion_id, codigo, nombre, categoria, unidad, unidad_toma, factor,
-                     unidad_destino, cantidad_toma, cantidad_sistema, diferencia,
-                     costo_unitario, valor_diferencia, tipo_abc, origen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
+                valores.append((
                     ejec_id, d.get('codigo'), d.get('nombre'), d.get('categoria'),
                     d.get('unidad_destino'), d.get('unidad_toma'), d.get('factor'),
                     d.get('unidad_destino'), d.get('cantidad_toma'), d.get('cantidad_sistema'),
                     d.get('diferencia'), d.get('costo_unitario'), d.get('valor_diferencia'),
                     d.get('tipo_abc'), d.get('origen', 'cruce_operativo')
                 ))
+            cur.executemany("""
+                INSERT INTO goti.cruce_operativo_detalle
+                (ejecucion_id, codigo, nombre, categoria, unidad, unidad_toma, factor,
+                 unidad_destino, cantidad_toma, cantidad_sistema, diferencia,
+                 costo_unitario, valor_diferencia, tipo_abc, origen)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, valores)
 
         # Update ejecucion
         cur.execute("""
