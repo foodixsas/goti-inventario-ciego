@@ -6476,24 +6476,37 @@ def carga_inicial_productos():
         cur = conn.cursor()
         total = 0
 
-        # Si es bodega operativa, cargar desde equivalencias_conteo
+        # Si es bodega operativa, cargar desde tablas de toma fisica
         if marca in BODEGAS_OPERATIVAS_MAP:
-            bodega = BODEGAS_OPERATIVAS_MAP[marca]
-            cur.execute("""
-                SELECT codigo, producto, unidad_toma, factor, unidad_destino
-                FROM goti.equivalencias_conteo
-                WHERE bodega = %s
-            """, (bodega,))
-            rows = cur.fetchall()
-            for row in rows:
-                codigo, producto, unidad_toma, factor, unidad_destino = row
-                cur.execute("""
-                    INSERT INTO goti.productos_por_marca (marca, codigo, nombre, activo, unidad, equivalencia)
-                    VALUES (%s, %s, %s, TRUE, %s, %s)
-                    ON CONFLICT (marca, codigo) DO UPDATE
-                    SET nombre = EXCLUDED.nombre, unidad = EXCLUDED.unidad, equivalencia = EXCLUDED.equivalencia
-                """, (marca, codigo, producto, unidad_toma, factor))
-                total += 1
+            # Mapeo de marca a tabla de toma fisica
+            TABLAS_TOMA = {
+                'BODEGA_PRINCIPAL': 'public.toma_bodega',
+                'MATERIA_PRIMA': 'public.toma_materiaprima',
+                'PLANTA': 'public.toma_planta',
+            }
+            tabla = TABLAS_TOMA.get(marca)
+            if tabla:
+                # Obtener productos unicos de la toma fisica (ultimo mes)
+                cur.execute(f"""
+                    SELECT DISTINCT codigo, producto, unidad
+                    FROM {tabla}
+                    WHERE fecha >= CURRENT_DATE - INTERVAL '30 days'
+                    ORDER BY codigo
+                """)
+                rows = cur.fetchall()
+                for row in rows:
+                    codigo, producto, unidad = row
+                    # Determinar equivalencia por defecto segun unidad
+                    equiv = 1
+                    if unidad and 'kg' in unidad.lower():
+                        equiv = 1000  # Kg a gramos
+                    cur.execute("""
+                        INSERT INTO goti.productos_por_marca (marca, codigo, nombre, activo, unidad, equivalencia)
+                        VALUES (%s, %s, %s, TRUE, %s, %s)
+                        ON CONFLICT (marca, codigo) DO UPDATE
+                        SET nombre = EXCLUDED.nombre
+                    """, (marca, codigo, producto, unidad or 'Unidad', equiv))
+                    total += 1
         else:
             # Cargar desde lista hardcodeada para locales
             marcas_cargar = [marca] if marca else list(PRODUCTOS_LOCALES.keys())
