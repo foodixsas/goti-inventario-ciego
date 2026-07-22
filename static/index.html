@@ -2163,10 +2163,17 @@
                                     <i class="fas fa-tag"></i> Seleccionar Marca
                                 </label>
                                 <select id="cprod-marca" class="input-merma" style="width:100%;padding:10px 14px;font-size:14px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-white);color:var(--text-dark);" onchange="cprodCargar()">
-                                    <option value="">-- Todas las marcas --</option>
-                                    <option value="CHIOS">CHIOS (Hamburguesas)</option>
-                                    <option value="CACHON">SANTO CACHON (Cortes)</option>
-                                    <option value="SIMON_BOLON">SIMON BOLON (Bolones)</option>
+                                    <option value="">-- Todas --</option>
+                                    <optgroup label="Locales de Venta">
+                                        <option value="CHIOS">CHIOS (Hamburguesas)</option>
+                                        <option value="CACHON">SANTO CACHON (Cortes)</option>
+                                        <option value="SIMON_BOLON">SIMON BOLON (Bolones)</option>
+                                    </optgroup>
+                                    <optgroup label="Bodegas Operativas">
+                                        <option value="BODEGA_PRINCIPAL">Bodega Principal</option>
+                                        <option value="MATERIA_PRIMA">Materia Prima</option>
+                                        <option value="PLANTA">Planta de Producción</option>
+                                    </optgroup>
                                 </select>
                             </div>
                             <div id="cprod-resumen" style="display:none;flex:1;display:flex;gap:10px;flex-wrap:wrap;margin-left:auto;">

@@ -162,11 +162,12 @@ function fc_renderTabla() {
 
     // Header semanas
     html += '<tr><th class="col-concepto" rowspan="3">FLUJO DE CAJA</th>';
+    html += '<th class="col-saldo" rowspan="3" style="background:#e3f2fd; min-width:80px;">SALDO</th>';
+    html += '<th class="col-dias" rowspan="3" style="background:#fff3e0; min-width:50px;" title="Días de crédito">DÍAS</th>';
     fc_semanas.forEach(sem => {
         html += `<th class="col-semana header-semana sem-${sem.num}-header" onclick="fc_toggleSemana(${sem.num})" colspan="1" style="cursor:pointer;">▶ Sem ${sem.num}</th>`;
         html += `<th class="dia-col sem-${sem.num} header-semana" onclick="fc_toggleSemana(${sem.num})" colspan="8" style="display:none; cursor:pointer;">▼ Semana ${sem.num}</th>`;
     });
-    html += '<th class="col-saldo" rowspan="3" style="background:#e3f2fd; min-width:80px;">SALDO</th>';
     html += '</tr>';
 
     // Header fechas (T12:00 evita problemas de zona horaria)
@@ -236,6 +237,8 @@ function fc_renderSaldoInicial() {
 
     // SALDO INICIAL PRODUBANCO
     html += `<tr class="row-total" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO INICIAL PRODUBANCO</td>`;
+    html += '<td class="col-saldo" style="background:#b3e5fc !important;"></td>';
+    html += '<td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach((sem, semIdx) => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-produbanco-sem" data-semana="${sem.num}" style="background:#b3e5fc !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -251,11 +254,12 @@ function fc_renderSaldoInicial() {
         });
         html += `<td class="dia-col sem-${sem.num} total-col monto" style="background:#b3e5fc !important;"></td>`;
     });
-    html += '<td class="col-saldo" style="background:#b3e5fc !important;"></td>';
     html += '</tr>';
 
     // SALDO INICIAL PICHINCHA
     html += `<tr class="row-total" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">SALDO INICIAL PICHINCHA</td>`;
+    html += '<td class="col-saldo" style="background:#c8e6c9 !important;"></td>';
+    html += '<td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach((sem, semIdx) => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-pichincha-sem" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -275,6 +279,8 @@ function fc_renderSaldoInicial() {
 
     // SALDO INICIAL TOTAL (suma de ambos bancos)
     html += `<tr class="row-total" style="background:#90caf9 !important;"><td class="col-concepto" style="background:#90caf9 !important; font-weight:bold;">SALDO INICIAL TOTAL</td>`;
+    html += '<td class="col-saldo" style="background:#90caf9 !important;"></td>';
+    html += '<td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach((sem, semIdx) => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-total-sem" data-semana="${sem.num}" style="background:#90caf9 !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -291,6 +297,7 @@ function fc_renderSaldoInicial() {
 // Fila de ingreso con campo de ajuste
 function fc_renderFilaIngreso(titulo, tipo, datos, campo, banco) {
     let html = `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}"><td class="col-concepto indent-2">${titulo}</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         let totalSem = 0;
         sem.dias.forEach(dia => {
@@ -310,6 +317,7 @@ function fc_renderFilaIngreso(titulo, tipo, datos, campo, banco) {
 
     // Fila de ajuste
     html += `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}" style="background:#fff3e0 !important;"><td class="col-concepto indent-3" style="background:#fff3e0 !important; font-size:10px; color:#e65100;">Ajuste ${titulo}</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-ajuste-${tipo}-sem" data-semana="${sem.num}" style="background:#fff3e0 !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -327,6 +335,7 @@ function fc_renderFilaIngreso(titulo, tipo, datos, campo, banco) {
 
 function fc_renderFilaTraspaso(banco) {
     let html = `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}"><td class="col-concepto indent-2">Traspaso desde Pichincha</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-traspaso-sem" data-semana="${sem.num}">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -342,6 +351,7 @@ function fc_renderFilaTraspaso(banco) {
 // Fila de plataforma (UBER, RAPPI, PEDIDOS YA) - entrada manual
 function fc_renderFilaPlataforma(titulo, tipo, banco) {
     let html = `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}" style="background:#e8f5e9 !important;"><td class="col-concepto indent-2" style="background:#e8f5e9 !important;">${titulo}</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-plataforma-${tipo}-sem" data-semana="${sem.num}" style="background:#e8f5e9 !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -359,6 +369,7 @@ function fc_renderFilaPlataforma(titulo, tipo, banco) {
 // Fila de traspaso saliente (muestra negativo del traspaso a Produbanco)
 function fc_renderFilaTraspasoSaliente(banco) {
     let html = `<tr class="row-banco-item fc-ingreso-item-${banco}" data-grupo="ing-${banco}" style="background:#ffcdd2 !important;"><td class="col-concepto indent-2" style="background:#ffcdd2 !important; color:#c62828;">Traspaso a Produbanco</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-traspaso-saliente-sem" data-semana="${sem.num}" style="background:#ffcdd2 !important; color:#c62828;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -373,6 +384,7 @@ function fc_renderFilaTraspasoSaliente(banco) {
 
 function fc_renderSeccion(titulo, clase) {
     let html = `<tr class="${clase}"><td class="col-concepto">${titulo}</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header"></td>`;
         for (let i = 0; i < 8; i++) {
@@ -386,6 +398,7 @@ function fc_renderSeccion(titulo, clase) {
 
 function fc_renderSubseccion(titulo) {
     let html = `<tr class="row-subsection"><td class="col-concepto indent-1">${titulo}</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header"></td>`;
         for (let i = 0; i < 8; i++) {
@@ -401,6 +414,7 @@ function fc_renderSubseccion(titulo) {
 function fc_renderSubseccionBanco(titulo, banco) {
     const datos = banco === 'produbanco' ? fc_datos.totales_produbanco : fc_datos.totales_pichincha;
     let html = `<tr class="row-subsection" data-grupo-header="ing-${banco}" data-expanded="true" onclick="fc_toggleGrupo('ing-${banco}')" style="font-weight:600; cursor:pointer;"><td class="col-concepto indent-1"><span class="fc-grupo-icon" style="margin-right:6px;">▼</span>${titulo}</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         const val = datos[sem.num] || 0;
         html += `<td class="col-semana sem-${sem.num}-header monto total-${banco}-sem" data-semana="${sem.num}" style="font-weight:600;">${fc_formatMonto(val)}</td>`;
@@ -422,6 +436,7 @@ function fc_renderSubseccionBanco(titulo, banco) {
 
 function fc_renderFilaTotal(titulo, datos, clase) {
     let html = `<tr class="row-banco-total"><td class="col-concepto indent-1">${titulo}</td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         const val = datos[sem.num] || 0;
         html += `<td class="col-semana sem-${sem.num}-header monto ${clase}-sem" data-semana="${sem.num}" data-base="${val}">${fc_formatMonto(val)}</td>`;
@@ -443,6 +458,7 @@ function fc_renderFilaTotal(titulo, datos, clase) {
 
 function fc_renderFilaTotalIngresos() {
     let html = `<tr class="row-total" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">TOTAL INGRESOS</td>`;
+    html += '<td class="col-saldo" style="background:#c8e6c9 !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-total-ingresos-sem" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -460,6 +476,7 @@ function fc_renderEgresos() {
 
     // PAGOS FIJOS
     html += `<tr class="row-subsection"><td class="col-concepto indent-1">PAGOS FIJOS <button class="fc-btn-add" onclick="fc_agregarSubgrupo('pagos-fijos')" title="Agregar subgrupo">+</button></td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header"></td>`;
         for (let i = 0; i < 8; i++) html += `<td class="dia-col sem-${sem.num}"></td>`;
@@ -492,6 +509,7 @@ function fc_renderEgresos() {
 
     // PAGO PROVEEDORES
     html += `<tr class="row-subsection"><td class="col-concepto indent-1">PAGO PROVEEDORES <button class="fc-btn-add" onclick="fc_agregarSubgrupo('proveedores')" title="Agregar subgrupo">+</button></td>`;
+    html += '<td class="col-saldo"></td><td class="col-dias"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header"></td>`;
         for (let i = 0; i < 8; i++) html += `<td class="dia-col sem-${sem.num}"></td>`;
@@ -509,6 +527,10 @@ function fc_renderSubgrupoEgreso(sg) {
     let html = '';
     // Header clickeable para colapsar/expandir CON totales
     html += `<tr class="row-banco" id="fc-grupo-${sg.id}" data-grupo-header="eg-${sg.id}" data-expanded="true" onclick="fc_toggleGrupo('eg-${sg.id}')" style="cursor:pointer;"><td class="col-concepto indent-2"><span class="fc-grupo-icon" style="margin-right:6px;">▼</span>${sg.nombre} <button class="fc-btn-add" onclick="event.stopPropagation();fc_agregarItem('${sg.id}')">+</button></td>`;
+    // Columna SALDO total del grupo (después del nombre)
+    html += `<td class="col-saldo monto fc-saldo-grupo-${sg.id}" style="font-weight:600; background:#e3f2fd; min-width:80px;">-</td>`;
+    // Columna DÍAS vacía para grupo (no aplica)
+    html += `<td class="col-dias" style="background:#fff3e0;"></td>`;
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-total-${sg.id}-sem" data-semana="${sem.num}" style="font-weight:600;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -517,8 +539,6 @@ function fc_renderSubgrupoEgreso(sg) {
         });
         html += `<td class="dia-col sem-${sem.num} total-col monto fc-total-${sg.id}-total" data-semana="${sem.num}" style="font-weight:600;">-</td>`;
     });
-    // Columna SALDO total del grupo
-    html += `<td class="col-saldo monto fc-saldo-grupo-${sg.id}" style="font-weight:600; background:#e3f2fd; min-width:80px;">-</td>`;
     html += '</tr>';
 
     sg.items.forEach(item => {
@@ -531,6 +551,14 @@ function fc_renderSubgrupoEgreso(sg) {
             <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
             <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
         </td>`;
+        // Columna SALDO del item (editable) - después del nombre
+        html += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
+            <input type="text" class="fc-input fc-input-saldo" placeholder="0" onchange="fc_recalcularSaldos()" style="width:70px; text-align:right; background:#e3f2fd;">
+        </td>`;
+        // Columna DÍAS CRÉDITO del item (editable)
+        html += `<td class="col-dias monto" style="background:#fff3e0; min-width:50px;">
+            <input type="number" class="fc-input fc-input-dias" placeholder="0" min="0" max="365" style="width:45px; text-align:center; background:#fff3e0;">
+        </td>`;
         fc_semanas.forEach(sem => {
             html += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
             sem.dias.forEach((dia, i) => {
@@ -542,10 +570,6 @@ function fc_renderSubgrupoEgreso(sg) {
             });
             html += `<td class="dia-col sem-${sem.num} total-col monto fc-item-total" data-semana="${sem.num}">-</td>`;
         });
-        // Columna SALDO del item (editable)
-        html += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
-            <input type="text" class="fc-input fc-input-saldo" placeholder="0" onchange="fc_recalcularSaldos()" style="width:70px; text-align:right; background:#e3f2fd;">
-        </td>`;
         html += '</tr>';
     });
 
@@ -554,6 +578,7 @@ function fc_renderSubgrupoEgreso(sg) {
 
 function fc_renderTotalEgreso(titulo, tipo, color) {
     let html = `<tr class="row-total"><td class="col-concepto indent-1" style="background:${color};">${titulo}</td>`;
+    html += `<td class="col-saldo" style="background:${color};"></td><td class="col-dias" style="background:#fff3e0;"></td>`;
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-total-${tipo}-sem" data-semana="${sem.num}" style="background:${color};">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -571,6 +596,7 @@ function fc_renderFlujoYSaldo() {
 
     // FLUJO DEL DIA/SEMANA (Ingresos - Egresos)
     html += `<tr class="row-total" style="background:#fff9c4 !important;"><td class="col-concepto" style="background:#fff9c4 !important; font-weight:bold;">FLUJO DEL PERIODO</td>`;
+    html += '<td class="col-saldo" style="background:#fff9c4 !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-flujo-sem" data-semana="${sem.num}" style="background:#fff9c4 !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -583,6 +609,7 @@ function fc_renderFlujoYSaldo() {
 
     // SALDO FINAL PRODUBANCO
     html += `<tr class="row-total" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO FINAL PRODUBANCO</td>`;
+    html += '<td class="col-saldo" style="background:#b3e5fc !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-produbanco-sem" data-semana="${sem.num}" style="background:#b3e5fc !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -595,6 +622,7 @@ function fc_renderFlujoYSaldo() {
 
     // SALDO FINAL PICHINCHA
     html += `<tr class="row-total" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">SALDO FINAL PICHINCHA</td>`;
+    html += '<td class="col-saldo" style="background:#c8e6c9 !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-pichincha-sem" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -607,6 +635,7 @@ function fc_renderFlujoYSaldo() {
 
     // SALDO FINAL TOTAL (suma de ambos bancos)
     html += `<tr class="row-total" style="background:#81d4fa !important;"><td class="col-concepto" style="background:#81d4fa !important; font-weight:bold;">SALDO FINAL TOTAL</td>`;
+    html += '<td class="col-saldo" style="background:#81d4fa !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-sem" data-semana="${sem.num}" style="background:#81d4fa !important;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -1197,6 +1226,14 @@ function fc_agregarItem(grupo) {
         <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
         <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
     </td>`;
+    // Columna SALDO del item (editable) - después del nombre
+    celdas += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
+        <input type="text" class="fc-input fc-input-saldo" placeholder="0" onchange="fc_recalcularSaldos()" style="width:70px; text-align:right; background:#e3f2fd;">
+    </td>`;
+    // Columna DÍAS CRÉDITO del item (editable)
+    celdas += `<td class="col-dias monto" style="background:#fff3e0; min-width:50px;">
+        <input type="number" class="fc-input fc-input-dias" placeholder="0" min="0" max="365" style="width:45px; text-align:center; background:#fff3e0;">
+    </td>`;
 
     semanas.forEach(sem => {
         celdas += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
@@ -1282,6 +1319,8 @@ function fc_agregarSubgrupo(tipo) {
     headerRow.dataset.grupoHeader = `eg-${grupoId}`;
     headerRow.dataset.expanded = 'true';
     let headerCeldas = `<td class="col-concepto indent-2"><span class="fc-grupo-icon" style="margin-right:6px;">▼</span><input type="text" class="fc-input-nombre" value="NUEVO SUBGRUPO" style="font-weight:bold;text-transform:uppercase;width:120px;"> <button class="fc-btn-add" onclick="event.stopPropagation();fc_agregarItem('${grupoId}')">+</button> <button class="fc-btn-del" onclick="fc_eliminarSubgrupo(this)">x</button></td>`;
+    headerCeldas += `<td class="col-saldo monto fc-saldo-grupo-${grupoId}" style="font-weight:600; background:#e3f2fd; min-width:80px;">-</td>`;
+    headerCeldas += `<td class="col-dias" style="background:#fff3e0;"></td>`;
     semanas.forEach(sem => {
         headerCeldas += `<td class="col-semana sem-${sem.num}-header monto fc-total-${grupoId}-sem" data-semana="${sem.num}" style="font-weight:600;">-</td>`;
         sem.dias.forEach((dia, i) => {
@@ -1308,6 +1347,12 @@ function fc_agregarSubgrupo(tipo) {
         <input type="text" class="fc-input-nombre" value="Item 1">
         <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
         <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
+    </td>`;
+    itemHtml += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
+        <input type="text" class="fc-input fc-input-saldo" placeholder="0" onchange="fc_recalcularSaldos()" style="width:70px; text-align:right; background:#e3f2fd;">
+    </td>`;
+    itemHtml += `<td class="col-dias monto" style="background:#fff3e0; min-width:50px;">
+        <input type="number" class="fc-input fc-input-dias" placeholder="0" min="0" max="365" style="width:45px; text-align:center; background:#fff3e0;">
     </td>`;
     semanas.forEach(sem => {
         itemHtml += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
@@ -1375,17 +1420,18 @@ async function fc_cargarDatosGuardados() {
                         // Buscar si ya existe este item por nombre
                         let existente = egresosConsolidados[grupo].find(e => e.nombre === item.nombre);
                         if (!existente) {
-                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, valores: {} };
+                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, valores: {} };
                             egresosConsolidados[grupo].push(existente);
                         }
                         // Consolidar valores (fechas)
                         for (const [dia, valor] of Object.entries(item.valores || {})) {
                             if (valor) existente.valores[dia] = valor;
                         }
-                        // Actualizar banco, deuda y saldo si vienen
+                        // Actualizar banco, deuda, saldo y dias si vienen
                         if (item.banco) existente.banco = item.banco;
                         if (item.deuda) existente.deuda = item.deuda;
                         if (item.saldo) existente.saldo = item.saldo;
+                        if (item.dias) existente.dias = item.dias;
                     });
                 }
             }
@@ -1495,6 +1541,12 @@ async function fc_cargarDatosGuardados() {
                         if (saldoInput) saldoInput.value = item.saldo;
                     }
 
+                    // Aplicar días de crédito guardados
+                    if (item.dias) {
+                        const diasInput = rows[idx].querySelector('.fc-input-dias');
+                        if (diasInput) diasInput.value = item.dias;
+                    }
+
                     // Aplicar valores de TODAS las fechas consolidadas
                     for (const [dia, valor] of Object.entries(item.valores || {})) {
                         const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
@@ -1578,7 +1630,9 @@ async function fc_guardarDatos() {
                 const deuda = parseFloat(row.dataset.deuda) || 0;
                 const saldoInput = row.querySelector('.fc-input-saldo');
                 const saldo = saldoInput ? (parseFloat(saldoInput.value.replace(/,/g, '')) || 0) : 0;
-                const itemData = { nombre, banco, deuda, saldo, valores: {} };
+                const diasInput = row.querySelector('.fc-input-dias');
+                const dias = diasInput ? (parseInt(diasInput.value) || 0) : 0;
+                const itemData = { nombre, banco, deuda, saldo, dias, valores: {} };
                 sem.dias.forEach(dia => {
                     const input = row.querySelector(`[data-fecha="${dia}"].fc-input`);
                     if (input && input.value) {
