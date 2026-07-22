@@ -6476,9 +6476,8 @@ def carga_inicial_productos():
         cur = conn.cursor()
         total = 0
 
-        # Si es bodega operativa, cargar desde tablas de toma fisica
+        # Si es bodega operativa, cargar desde tablas de toma fisica usando INSERT directo
         if marca in BODEGAS_OPERATIVAS_MAP:
-            # Mapeo de marca a tabla de toma fisica
             TABLAS_TOMA = {
                 'BODEGA_PRINCIPAL': 'public.toma_bodega',
                 'MATERIA_PRIMA': 'public.toma_materiaprima',
@@ -6486,27 +6485,27 @@ def carga_inicial_productos():
             }
             tabla = TABLAS_TOMA.get(marca)
             if tabla:
-                # Obtener productos unicos de la toma fisica (ultimo mes)
+                # Primero borrar datos incorrectos si existen
+                cur.execute("DELETE FROM goti.productos_por_marca WHERE marca = %s", (marca,))
+
+                # INSERT directo desde la tabla de toma (evita problemas de fetch)
                 cur.execute(f"""
-                    SELECT DISTINCT codigo, producto, unidad
-                    FROM {tabla}
-                    WHERE fecha >= CURRENT_DATE - INTERVAL '30 days'
-                    ORDER BY codigo
-                """)
-                rows = cur.fetchall()
-                for row in rows:
-                    codigo, producto, unidad = row
-                    # Determinar equivalencia por defecto segun unidad
-                    equiv = 1
-                    if unidad and 'kg' in unidad.lower():
-                        equiv = 1000  # Kg a gramos
-                    cur.execute("""
-                        INSERT INTO goti.productos_por_marca (marca, codigo, nombre, activo, unidad, equivalencia)
-                        VALUES (%s, %s, %s, TRUE, %s, %s)
-                        ON CONFLICT (marca, codigo) DO UPDATE
-                        SET nombre = EXCLUDED.nombre
-                    """, (marca, codigo, producto, unidad or 'Unidad', equiv))
-                    total += 1
+                    INSERT INTO goti.productos_por_marca (marca, codigo, nombre, activo, unidad, equivalencia)
+                    SELECT DISTINCT
+                        %s as marca,
+                        t.codigo,
+                        t.producto,
+                        TRUE as activo,
+                        COALESCE(t.unidad, 'Unidad') as unidad,
+                        CASE WHEN LOWER(COALESCE(t.unidad,'')) LIKE '%%kg%%' THEN 1000 ELSE 1 END as equivalencia
+                    FROM {tabla} t
+                    WHERE t.fecha >= CURRENT_DATE - INTERVAL '90 days'
+                      AND t.codigo IS NOT NULL
+                      AND t.codigo != ''
+                    ON CONFLICT (marca, codigo) DO UPDATE
+                    SET nombre = EXCLUDED.nombre, unidad = EXCLUDED.unidad
+                """, (marca,))
+                total = cur.rowcount
         else:
             # Cargar desde lista hardcodeada para locales
             marcas_cargar = [marca] if marca else list(PRODUCTOS_LOCALES.keys())
