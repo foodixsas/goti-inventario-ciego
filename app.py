@@ -6415,8 +6415,8 @@ def toggle_producto_marca(prod_id):
 
 @app.route('/api/admin/productos-marca/carga-inicial', methods=['POST'])
 def carga_inicial_productos():
-    """Carga los productos hardcodeados actuales como punto de partida"""
-    PRODUCTOS = {
+    """Carga los productos hardcodeados o desde equivalencias_conteo para bodegas operativas"""
+    PRODUCTOS_LOCALES = {
         'CHIOS': {
             'ALCH002': 'CLUB PEQ', 'ALMP001': 'PILSENER 600 ML', 'BEB019': 'AGUA DASANI',
             'BEB020': 'GUITIG', 'BEB021': 'COCA PEQ', 'BEB023': 'SPRITE PEQ',
@@ -6462,23 +6462,52 @@ def carga_inicial_productos():
             'MAR006': 'CAMARON PAQ 76 GR', 'PASN010': 'CHIFLES', 'ZUM003': 'ZUMO DE FRESA',
         },
     }
+    # Mapeo de marca a bodega en equivalencias_conteo
+    BODEGAS_OPERATIVAS_MAP = {
+        'BODEGA_PRINCIPAL': 'bodega_principal',
+        'MATERIA_PRIMA': 'materia_prima',
+        'PLANTA': 'planta',
+    }
+
     marca = request.json.get('marca', '') if request.json else ''
-    marcas_cargar = [marca] if marca else list(PRODUCTOS.keys())
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
         total = 0
-        for m in marcas_cargar:
-            if m not in PRODUCTOS:
-                continue
-            for codigo, nombre in PRODUCTOS[m].items():
+
+        # Si es bodega operativa, cargar desde equivalencias_conteo
+        if marca in BODEGAS_OPERATIVAS_MAP:
+            bodega = BODEGAS_OPERATIVAS_MAP[marca]
+            cur.execute("""
+                SELECT codigo, producto, unidad_toma, factor, unidad_destino
+                FROM goti.equivalencias_conteo
+                WHERE bodega = %s
+            """, (bodega,))
+            rows = cur.fetchall()
+            for row in rows:
+                codigo, producto, unidad_toma, factor, unidad_destino = row
                 cur.execute("""
-                    INSERT INTO goti.productos_por_marca (marca, codigo, nombre, activo)
-                    VALUES (%s, %s, %s, TRUE)
-                    ON CONFLICT (marca, codigo) DO NOTHING
-                """, (m, codigo, nombre))
+                    INSERT INTO goti.productos_por_marca (marca, codigo, nombre, activo, unidad, equivalencia)
+                    VALUES (%s, %s, %s, TRUE, %s, %s)
+                    ON CONFLICT (marca, codigo) DO UPDATE
+                    SET nombre = EXCLUDED.nombre, unidad = EXCLUDED.unidad, equivalencia = EXCLUDED.equivalencia
+                """, (marca, codigo, producto, unidad_toma, factor))
                 total += 1
+        else:
+            # Cargar desde lista hardcodeada para locales
+            marcas_cargar = [marca] if marca else list(PRODUCTOS_LOCALES.keys())
+            for m in marcas_cargar:
+                if m not in PRODUCTOS_LOCALES:
+                    continue
+                for codigo, nombre in PRODUCTOS_LOCALES[m].items():
+                    cur.execute("""
+                        INSERT INTO goti.productos_por_marca (marca, codigo, nombre, activo)
+                        VALUES (%s, %s, %s, TRUE)
+                        ON CONFLICT (marca, codigo) DO NOTHING
+                    """, (m, codigo, nombre))
+                    total += 1
+
         conn.commit()
         return jsonify({'ok': True, 'insertados': total})
     except Exception as e:
