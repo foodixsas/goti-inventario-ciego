@@ -6534,6 +6534,32 @@ def carga_inicial_productos():
         if conn: release_db(conn)
 
 
+@app.route('/api/admin/productos-marca/fix-equivalencias-kg', methods=['POST'])
+def fix_equivalencias_kg():
+    """Pone equivalencia=1000 a todos los productos con unidad Kg, excepto DETERGENTE y JACK DANIELS"""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        # Actualizar equivalencia a 1000 para productos en Kg (excepto excepciones)
+        cur.execute("""
+            UPDATE goti.productos_por_marca
+            SET equivalencia = 1000
+            WHERE LOWER(unidad) LIKE '%kg%'
+              AND UPPER(nombre) NOT LIKE '%DETERGENTE%'
+              AND UPPER(nombre) NOT LIKE '%JACK DANIEL%'
+              AND equivalencia != 1000
+        """)
+        actualizados = cur.rowcount
+        conn.commit()
+        return jsonify({'ok': True, 'actualizados': actualizados})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: release_db(conn)
+
+
 # ============================================================
 # MODULO FLUJO DE CAJA
 # ============================================================
