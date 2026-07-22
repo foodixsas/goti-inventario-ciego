@@ -6489,19 +6489,24 @@ def carga_inicial_productos():
                 cur.execute("DELETE FROM goti.productos_por_marca WHERE marca = %s", (marca,))
 
                 # INSERT directo desde la tabla de toma (evita problemas de fetch)
+                # Usamos subquery con ROW_NUMBER para deduplicar por codigo
                 cur.execute(f"""
                     INSERT INTO goti.productos_por_marca (marca, codigo, nombre, activo, unidad, equivalencia)
-                    SELECT DISTINCT
+                    SELECT
                         %s as marca,
-                        t.codigo,
-                        t.producto,
+                        sub.codigo,
+                        sub.producto,
                         TRUE as activo,
-                        COALESCE(t.unidad, 'Unidad') as unidad,
-                        CASE WHEN LOWER(COALESCE(t.unidad,'')) LIKE '%%kg%%' THEN 1000 ELSE 1 END as equivalencia
-                    FROM {tabla} t
-                    WHERE t.fecha >= CURRENT_DATE - INTERVAL '90 days'
-                      AND t.codigo IS NOT NULL
-                      AND t.codigo != ''
+                        COALESCE(sub.unidad, 'Unidad') as unidad,
+                        CASE WHEN LOWER(COALESCE(sub.unidad,'')) LIKE '%%kg%%' THEN 1000 ELSE 1 END as equivalencia
+                    FROM (
+                        SELECT codigo, producto, unidad,
+                               ROW_NUMBER() OVER (PARTITION BY codigo ORDER BY fecha DESC) as rn
+                        FROM {tabla}
+                        WHERE fecha >= CURRENT_DATE - INTERVAL '90 days'
+                          AND codigo IS NOT NULL AND codigo != ''
+                    ) sub
+                    WHERE sub.rn = 1
                     ON CONFLICT (marca, codigo) DO UPDATE
                     SET nombre = EXCLUDED.nombre, unidad = EXCLUDED.unidad
                 """, (marca,))
