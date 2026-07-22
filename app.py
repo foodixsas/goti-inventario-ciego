@@ -7202,8 +7202,7 @@ def vs_cortesias():
 # ============================================================
 # INVENTARIO LOCALES (actualizar cantidad / toma fisica)
 # ============================================================
-
-WORKER_TOKEN = os.environ.get('WORKER_TOKEN', 'worker-foodix-2026-changeme')
+# NOTA: WORKER_TOKEN ya definido arriba (linea ~4159)
 
 @app.route('/api/inventario-locales/solicitar', methods=['POST'])
 def inventario_locales_solicitar():
@@ -7341,6 +7340,42 @@ def inventario_locales_estado(tarea_id):
             return jsonify({'error': 'no encontrado'}), 404
         return jsonify(dict(r))
     except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/inventario-locales/borrar', methods=['POST'])
+def inventario_locales_borrar():
+    """Borra datos de inventario (cantidad + conteos) para un local y fecha."""
+    data = request.json or {}
+    bodega = data.get('bodega')
+    fecha = data.get('fecha')
+    usuario = data.get('usuario', 'admin')
+
+    if not bodega or not fecha:
+        return jsonify({'error': 'bodega y fecha son requeridos'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Borrar registros
+        cur.execute("""
+            DELETE FROM goti.inventario_ciego_conteos
+            WHERE local = %s AND fecha = %s::date
+        """, (bodega, fecha))
+        borrados = cur.rowcount
+        conn.commit()
+
+        return jsonify({
+            'ok': True,
+            'borrados': borrados,
+            'mensaje': f'Borrados {borrados} registros de {bodega} fecha {fecha}'
+        })
+    except Exception as e:
+        if conn: conn.rollback()
         return jsonify({'error': str(e)[:200]}), 500
     finally:
         if conn: release_db(conn)

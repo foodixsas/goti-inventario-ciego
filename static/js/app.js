@@ -10490,47 +10490,76 @@ async function clEnviarTarea() {
     if (!accion) { showToast('Selecciona una accion', 'error'); return; }
 
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enviando...';
-    statusEl.textContent = 'Enviando solicitud al worker...';
-    statusEl.className = 'cl-status-info';
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Procesando...';
     statusEl.style.display = 'block';
 
-    try {
-        const bodegas = bodega === 'TODAS'
-            ? ['real_audiencia', 'floreana', 'portugal', 'santo_cachon_real', 'santo_cachon_portugal', 'simon_bolon']
-            : [bodega];
+    const bodegas = bodega === 'TODAS'
+        ? ['real_audiencia', 'floreana', 'portugal', 'santo_cachon_real', 'santo_cachon_portugal', 'simon_bolon']
+        : [bodega];
 
-        const resultados = [];
-        for (const b of bodegas) {
-            const res = await fetch(`${CONFIG.API_URL}/api/inventario-locales/solicitar`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    bodega: b,
-                    fecha: fecha,
-                    accion: accion,
-                    usuario: state.user?.nombre || 'admin'
-                })
-            });
-            const data = await res.json();
-            if (data.ok) {
-                resultados.push(data.id);
+    try {
+        // BORRAR DATOS: se hace directo sin worker
+        if (accion === 'borrar_datos') {
+            if (!confirm(`ATENCION: Vas a BORRAR todos los datos (cantidad + conteos) de ${bodega === 'TODAS' ? 'TODAS las bodegas' : bodega} para la fecha ${fecha}.\n\nEsta accion NO se puede deshacer.\n\nContinuar?`)) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar al Worker';
+                statusEl.style.display = 'none';
+                return;
+            }
+
+            statusEl.textContent = 'Borrando datos...';
+            statusEl.className = 'cl-status-info';
+
+            let totalBorrados = 0;
+            for (const b of bodegas) {
+                const res = await fetch(`${CONFIG.API_URL}/api/inventario-locales/borrar`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bodega: b, fecha: fecha, usuario: state.user?.nombre || 'admin' })
+                });
+                const data = await res.json();
+                if (data.ok) totalBorrados += data.borrados;
+            }
+
+            statusEl.textContent = `Borrados ${totalBorrados} registros`;
+            statusEl.className = 'cl-status-ok';
+            showToast(`Borrados ${totalBorrados} registros`, 'success');
+
+        } else {
+            // ACTUALIZAR CANTIDAD o TOMA FISICA: enviar al worker
+            statusEl.textContent = 'Enviando solicitud al worker...';
+            statusEl.className = 'cl-status-info';
+
+            const resultados = [];
+            for (const b of bodegas) {
+                const res = await fetch(`${CONFIG.API_URL}/api/inventario-locales/solicitar`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bodega: b,
+                        fecha: fecha,
+                        accion: accion,
+                        usuario: state.user?.nombre || 'admin'
+                    })
+                });
+                const data = await res.json();
+                if (data.ok) resultados.push(data.id);
+            }
+
+            if (resultados.length > 0) {
+                statusEl.textContent = `${resultados.length} tarea(s) creada(s). IDs: ${resultados.join(', ')}. Esperando worker...`;
+                statusEl.className = 'cl-status-ok';
+                showToast(`${resultados.length} tarea(s) enviada(s) al worker`, 'success');
+                clCargarHistorial();
+                clIniciarPolling();
+            } else {
+                statusEl.textContent = 'No se crearon tareas';
+                statusEl.className = 'cl-status-err';
+                showToast('Error al crear tareas', 'error');
             }
         }
-
-        if (resultados.length > 0) {
-            statusEl.textContent = `${resultados.length} tarea(s) creada(s). IDs: ${resultados.join(', ')}. Esperando worker...`;
-            statusEl.className = 'cl-status-ok';
-            showToast(`${resultados.length} tarea(s) enviada(s) al worker`, 'success');
-            clCargarHistorial();
-            clIniciarPolling();
-        } else {
-            statusEl.textContent = 'No se crearon tareas';
-            statusEl.className = 'cl-status-err';
-            showToast('Error al crear tareas', 'error');
-        }
     } catch (e) {
-        statusEl.textContent = 'Error de conexion: ' + e.message;
+        statusEl.textContent = 'Error: ' + e.message;
         statusEl.className = 'cl-status-err';
         showToast('Error: ' + e.message, 'error');
     } finally {
