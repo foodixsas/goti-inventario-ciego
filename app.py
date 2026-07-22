@@ -6541,14 +6541,14 @@ def fix_equivalencias_kg():
     try:
         conn = get_db()
         cur = conn.cursor()
-        # Actualizar equivalencia a 1000 para productos en Kg (excepto excepciones)
+        # Actualizar equivalencia a 1000 para productos en Kg/Kilogramos SOLO en bodegas operativas
         cur.execute("""
             UPDATE goti.productos_por_marca
             SET equivalencia = 1000
-            WHERE LOWER(unidad) LIKE '%kg%'
+            WHERE marca IN ('BODEGA_PRINCIPAL', 'MATERIA_PRIMA', 'PLANTA')
+              AND (LOWER(unidad) LIKE '%kg%' OR LOWER(unidad) LIKE '%kilogramo%')
               AND UPPER(nombre) NOT LIKE '%DETERGENTE%'
               AND UPPER(nombre) NOT LIKE '%JACK DANIEL%'
-              AND equivalencia != 1000
         """)
         actualizados = cur.rowcount
         conn.commit()
