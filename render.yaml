@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: inventario-ciego
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: CRUCE_WORKER_TOKEN
+        value: worker-foodix-2026-7K3xR9pL2qN8mZ4w
+      - key: PYTHON_VERSION
+        value: "3.11"
