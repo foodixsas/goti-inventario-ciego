@@ -4194,10 +4194,7 @@ def cruce_op_solicitar():
             return jsonify({'id': existente['id'], 'estado': existente['estado'], 'reused': True})
 
         if existente and existente['estado'] == 'completado':
-            # Solo admin puede re-ejecutar un cruce ya completado
-            if rol != 'admin':
-                return jsonify({'error': 'Este cruce ya fue ejecutado. Solo el administrador puede re-ejecutarlo.', 'ya_completado': True}), 409
-            # Admin: resetear
+            # Cualquier usuario puede re-ejecutar un cruce completado
             cur.execute("DELETE FROM goti.cruce_operativo_detalle WHERE ejecucion_id = %s", (existente['id'],))
             cur.execute("""
                 UPDATE goti.cruce_operativo_ejecuciones
