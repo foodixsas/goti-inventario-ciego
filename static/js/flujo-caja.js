@@ -549,8 +549,7 @@ function fc_renderSubgrupoEgreso(sg) {
                 <option value="pichincha">PICH</option>
             </select>
             <input type="text" class="fc-input-nombre" value="${item}">
-            <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
-            <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
+                <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
         </td>`;
         // Columna SALDO del item (editable) - después del nombre
         html += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
@@ -1224,7 +1223,6 @@ function fc_agregarItem(grupo) {
             <option value="pichincha">PICH</option>
         </select>
         <input type="text" class="fc-input-nombre" value="Nuevo Item">
-        <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
         <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
     </td>`;
     // Columna SALDO del item (editable) - después del nombre
@@ -1346,7 +1344,6 @@ function fc_agregarSubgrupo(tipo) {
             <option value="pichincha">PICH</option>
         </select>
         <input type="text" class="fc-input-nombre" value="Item 1">
-        <span class="fc-saldo-badge" onclick="fc_abrirDeuda(this)" title="Click para agregar deuda"></span>
         <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
     </td>`;
     itemHtml += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
