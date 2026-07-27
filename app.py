@@ -7008,6 +7008,7 @@ def flujo_caja_cargar_guardado():
                    egresos, updated_at
             FROM flujo_caja_guardado
             WHERE fecha_semana = ANY(%s::date[])
+            ORDER BY updated_at ASC NULLS FIRST
         ''', (lista_fechas,))
 
         guardados = {}
