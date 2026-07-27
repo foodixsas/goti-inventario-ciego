@@ -1952,6 +1952,29 @@ function fc_recalcularSaldos() {
         row.dataset.saldoIngresado = saldoIngresado;
         row.dataset.saldoRestante = saldoRestante;
 
+        // Mostrar "resta por pagar" debajo del input (el input conserva el total digitado)
+        const saldoCell = saldoInput.closest('td');
+        let restaEl = saldoCell ? saldoCell.querySelector('.fc-saldo-resta') : null;
+        if (saldoIngresado > 0) {
+            if (!restaEl && saldoCell) {
+                restaEl = document.createElement('div');
+                restaEl.className = 'fc-saldo-resta';
+                restaEl.style.cssText = 'font-size:9px; font-weight:600; text-align:right; margin-top:2px;';
+                saldoCell.appendChild(restaEl);
+            }
+            if (restaEl) {
+                if (saldoRestante <= 0) {
+                    restaEl.textContent = 'Pagado';
+                    restaEl.style.color = '#2e7d32';
+                } else {
+                    restaEl.textContent = 'Resta: ' + fc_formatMonto(saldoRestante);
+                    restaEl.style.color = '#c62828';
+                }
+            }
+        } else if (restaEl) {
+            restaEl.remove();
+        }
+
         // Actualizar color del input según saldo
         if (saldoIngresado > 0) {
             if (saldoRestante <= 0) {
