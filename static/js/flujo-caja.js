@@ -154,6 +154,7 @@ function fc_formatFlujo(v) {
 
 // Renderizar tabla completa
 function fc_renderTabla() {
+    fc_asegurarEstilosFlujo();
     const container = document.getElementById('fc-tabla-container');
     const meses = ['', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
     const dias = ['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab', 'Dom'];
@@ -2103,11 +2104,20 @@ function fc_abrirRecurrencia(btn) {
         modal.className = 'fc-modal';
         document.body.appendChild(modal);
 
-        // Agregar estilos
-        if (!document.getElementById('fc-modal-styles')) {
-            const styles = document.createElement('style');
-            styles.id = 'fc-modal-styles';
-            styles.textContent = `
+        fc_asegurarEstilosFlujo();
+    }
+
+    fc_prepararModalRecurrencia(modal, valor);
+}
+
+// Estilos del modulo (badge $, boton de recurrencia oculto hasta hover, popups).
+// Se inyectan desde fc_renderTabla para que el diseño sea consistente desde el
+// inicio, no solo despues de abrir el modal de recurrencia.
+function fc_asegurarEstilosFlujo() {
+    if (document.getElementById('fc-modal-styles')) return;
+    const styles = document.createElement('style');
+    styles.id = 'fc-modal-styles';
+    styles.textContent = `
                 .fc-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
                 .fc-modal.active { display: block; }
                 .fc-modal-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); }
@@ -2164,11 +2174,11 @@ function fc_abrirRecurrencia(btn) {
                 .fc-popup-btns button { flex: 1; padding: 8px; border: none; border-radius: 6px; font-size: 11px; cursor: pointer; }
                 .fc-popup-btns button:first-child { background: #f5f5f5; color: #666; }
                 .fc-popup-btns button.primary { background: #1565c0; color: white; }
-            `;
-            document.head.appendChild(styles);
-        }
-    }
+    `;
+    document.head.appendChild(styles);
+}
 
+function fc_prepararModalRecurrencia(modal, valor) {
     // Llenar info de la fecha seleccionada
     const d = new Date(fc_recurrente_fecha + 'T12:00:00');
     const dias = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
