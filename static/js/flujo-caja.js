@@ -1410,9 +1410,13 @@ async function fc_cargarDatosGuardados() {
         const data = await response.json();
         if (!data.ok || !data.guardados) return;
 
-        // Consolidar egresos de todas las semanas antes de aplicar
+        // Consolidar egresos de todas las semanas antes de aplicar.
+        // Orden: por fecha de actualizacion ascendente, para que los campos
+        // escalares (saldo, dias, banco, deuda) del guardado MAS RECIENTE ganen.
+        const entradasOrdenadas = Object.entries(data.guardados).sort((a, b) =>
+            String(a[1].updated_at || '').localeCompare(String(b[1].updated_at || '')));
         const egresosConsolidados = {};
-        for (const [fechaSemana, guardado] of Object.entries(data.guardados)) {
+        for (const [fechaSemana, guardado] of entradasOrdenadas) {
             if (guardado.egresos) {
                 for (const [grupo, items] of Object.entries(guardado.egresos)) {
                     if (!egresosConsolidados[grupo]) egresosConsolidados[grupo] = [];
