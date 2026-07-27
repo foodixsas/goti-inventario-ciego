@@ -1510,11 +1510,17 @@ async function fc_cargarDatosGuardados() {
 
         // Aplicar egresos consolidados (fuera del loop para evitar duplicados)
         for (const [grupo, items] of Object.entries(egresosConsolidados)) {
-            // Crear items faltantes
+            // Crear items faltantes (con tope de intentos para evitar bucle infinito
+            // si el grupo no existe en la pagina y fc_agregarItem no puede crear filas)
             let rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
-            while (rows.length < items.length) {
+            let intentos = 0;
+            while (rows.length < items.length && intentos < items.length + 5) {
                 fc_agregarItem(grupo);
+                intentos++;
                 rows = document.querySelectorAll(`.fc-egreso-item-${grupo}`);
+            }
+            if (rows.length < items.length) {
+                console.warn(`Grupo ${grupo}: no se pudieron crear todas las filas (${rows.length}/${items.length})`);
             }
 
             items.forEach((item, idx) => {
@@ -1561,13 +1567,19 @@ async function fc_cargarDatosGuardados() {
 }
 
 // ============ GUARDAR DATOS ============
+let fc_guardando = false;
 async function fc_guardarDatos() {
+    if (fc_guardando) {
+        alert('Ya hay un guardado en curso, espere a que termine');
+        return;
+    }
     const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
     if (!semanas || semanas.length === 0) {
         alert('No hay datos para guardar');
         return;
     }
 
+    fc_guardando = true;
     try {
         // Guardar cada semana por separado
         for (const sem of semanas) {
@@ -1642,6 +1654,20 @@ async function fc_guardarDatos() {
                 egresos[grupo].push(itemData);
             });
 
+            // PROTECCION: no sobrescribir una semana guardada con datos vacios.
+            // Una semana se considera vacia si no tiene ningun valor de egreso,
+            // ajuste, traspaso, plataforma ni saldo/dias en items.
+            const tieneValoresEgresos = Object.values(egresos).some(items =>
+                items.some(it => Object.keys(it.valores).length > 0 || it.saldo > 0 || it.dias > 0 || it.deuda > 0));
+            const tieneAjustes = Object.keys(ajustes_tc).length || Object.keys(ajustes_efectivo).length ||
+                Object.keys(ajustes_deuna).length || Object.keys(traspasos).length ||
+                Object.values(plataformas).some(p => Object.keys(p).length);
+            const tieneSaldos = (sem === semanas[0]) && (saldoProdubanco !== 0 || saldoPichincha !== 0);
+            if (!tieneValoresEgresos && !tieneAjustes && !tieneSaldos) {
+                console.log(`Semana ${semanaNum} (${fechaSemana}) sin datos - se omite para no sobrescribir`);
+                continue;
+            }
+
             // Enviar al servidor
             const response = await fetch('/api/flujo-caja/guardar', {
                 method: 'POST',
@@ -1672,6 +1698,8 @@ async function fc_guardarDatos() {
     } catch (error) {
         console.error('Error guardando:', error);
         alert('Error al guardar: ' + error.message);
+    } finally {
+        fc_guardando = false;
     }
 }
 

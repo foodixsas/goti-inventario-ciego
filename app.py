@@ -6921,13 +6921,23 @@ def flujo_caja_guardar():
         ajustes_deuna = json.dumps(data.get('ajustes_deuna', {}))
         traspasos = json.dumps(data.get('traspasos', {}))
         plataformas = json.dumps(data.get('plataformas', {}))
-        egresos = json.dumps(data.get('egresos', {}))
+        egresos_dict = data.get('egresos', {})
+        egresos = json.dumps(egresos_dict)
         usuario = data.get('usuario', 'admin')
+
+        # PROTECCION contra perdida de datos: si los egresos entrantes no traen
+        # ningun valor/saldo/dias/deuda, NO sobrescribir egresos ya guardados.
+        egresos_entrantes_vacios = not any(
+            (it.get('valores') or it.get('saldo') or it.get('dias') or it.get('deuda'))
+            for items in egresos_dict.values() for it in items
+        )
 
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
 
-        # Upsert: insertar o actualizar si ya existe
+        # Upsert: insertar o actualizar si ya existe.
+        # Si los egresos entrantes estan vacios y la fila existente tiene datos,
+        # se conservan los egresos existentes.
         cur.execute('''
             INSERT INTO flujo_caja_guardado
                 (fecha_semana, semana_num, saldo_produbanco, saldo_pichincha, ajustes_tc, ajustes_efectivo,
@@ -6942,11 +6952,15 @@ def flujo_caja_guardar():
                 ajustes_deuna = EXCLUDED.ajustes_deuna,
                 traspasos = EXCLUDED.traspasos,
                 plataformas = EXCLUDED.plataformas,
-                egresos = EXCLUDED.egresos,
+                egresos = CASE
+                    WHEN %s AND COALESCE(flujo_caja_guardado.egresos::text, '{}') NOT IN ('{}', 'null')
+                    THEN flujo_caja_guardado.egresos
+                    ELSE EXCLUDED.egresos
+                END,
                 updated_at = NOW()
             RETURNING id
         ''', (fecha_semana, semana_num, saldo_produbanco, saldo_pichincha, ajustes_tc, ajustes_efectivo,
-              ajustes_deuna, traspasos, plataformas, egresos, usuario))
+              ajustes_deuna, traspasos, plataformas, egresos, usuario, egresos_entrantes_vacios))
 
         row_id = cur.fetchone()[0]
         conn.commit()
