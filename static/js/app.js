@@ -6411,39 +6411,55 @@ async function semanalCargarSemanaById(id) {
 }
 
 // Reconstruye _semGrupos desde las asignaciones ya guardadas en BD
-// Usa grupo_idx para preservar la estructura original de grupos
+// Usa grupo_idx si hay datos nuevos, o agrupa por set de personas para datos viejos
 function _semReconstruirGruposDesdeAsignaciones() {
     _semGrupos = [];
     const esCerrada = _semanalSemanaActual && _semanalSemanaActual.estado === 'cerrada';
-    const gruposMap = {}; // grupo_idx -> { productos: [], personas: Set }
 
+    // Detectar si hay datos con grupo_idx real (nuevos) o todo es 0 (viejos)
+    let tieneGrupoIdx = false;
     _semanalDiferencias.forEach(prod => {
-        if (prod.justificado) return;
-        const asignaciones = prod.asignaciones || [];
-        if (asignaciones.length === 0) return;
-
-        asignaciones.forEach(asig => {
-            if (!asig.personas || asig.personas.length === 0) return;
-            const gIdx = asig.grupo_idx || 0;
-            const cantidadTotal = asig.personas.reduce((s, p) => s + (parseFloat(p.cantidad) || 0), 0);
-
-            if (!gruposMap[gIdx]) {
-                gruposMap[gIdx] = { productos: [], personasSet: new Set() };
-            }
-            gruposMap[gIdx].productos.push({ codigo: prod.codigo, cantidad: cantidadTotal });
-            asig.personas.forEach(p => gruposMap[gIdx].personasSet.add(p.persona));
+        (prod.asignaciones || []).forEach(asig => {
+            if (asig.grupo_idx && asig.grupo_idx > 0) tieneGrupoIdx = true;
         });
     });
 
-    // Convertir map a array ordenado por grupo_idx
-    const indices = Object.keys(gruposMap).map(Number).sort((a, b) => a - b);
-    indices.forEach(gIdx => {
-        const g = gruposMap[gIdx];
-        _semGrupos.push({
-            productos: g.productos,
-            personas: Array.from(g.personasSet).sort()
+    if (tieneGrupoIdx) {
+        // Datos nuevos: reconstruir por grupo_idx
+        const gruposMap = {};
+        _semanalDiferencias.forEach(prod => {
+            if (prod.justificado) return;
+            (prod.asignaciones || []).forEach(asig => {
+                if (!asig.personas || asig.personas.length === 0) return;
+                const gIdx = asig.grupo_idx || 0;
+                const cantidadTotal = asig.personas.reduce((s, p) => s + (parseFloat(p.cantidad) || 0), 0);
+                if (!gruposMap[gIdx]) gruposMap[gIdx] = { productos: [], personasSet: new Set() };
+                gruposMap[gIdx].productos.push({ codigo: prod.codigo, cantidad: cantidadTotal });
+                asig.personas.forEach(p => gruposMap[gIdx].personasSet.add(p.persona));
+            });
         });
-    });
+        Object.keys(gruposMap).map(Number).sort((a, b) => a - b).forEach(gIdx => {
+            const g = gruposMap[gIdx];
+            _semGrupos.push({ productos: g.productos, personas: Array.from(g.personasSet).sort() });
+        });
+    } else {
+        // Datos viejos (grupo_idx=0): agrupar por set de personas (comportamiento original)
+        _semanalDiferencias.forEach(prod => {
+            if (prod.justificado) return;
+            (prod.asignaciones || []).forEach(asig => {
+                if (!asig.personas || asig.personas.length === 0) return;
+                const personas = asig.personas.map(p => p.persona).sort();
+                const cantidadTotal = asig.personas.reduce((s, p) => s + (parseFloat(p.cantidad) || 0), 0);
+                const keyPersonas = personas.join('|');
+                let grupo = _semGrupos.find(g => g.personas.slice().sort().join('|') === keyPersonas);
+                if (!grupo) {
+                    grupo = { productos: [], personas: personas };
+                    _semGrupos.push(grupo);
+                }
+                grupo.productos.push({ codigo: prod.codigo, cantidad: cantidadTotal });
+            });
+        });
+    }
 
     // Agregar grupo vacio al final para nuevas asignaciones (si no esta cerrada)
     if (!esCerrada) {
