@@ -6426,9 +6426,9 @@ function _semReconstruirGruposDesdeAsignaciones() {
 
     if (tieneGrupoIdx) {
         // Datos nuevos: reconstruir por grupo_idx
+        // No excluir justificados — se preservan en grupos para no perder asignaciones al guardar
         const gruposMap = {};
         _semanalDiferencias.forEach(prod => {
-            if (prod.justificado) return;
             (prod.asignaciones || []).forEach(asig => {
                 if (!asig.personas || asig.personas.length === 0) return;
                 const gIdx = asig.grupo_idx || 0;
@@ -6445,7 +6445,6 @@ function _semReconstruirGruposDesdeAsignaciones() {
     } else {
         // Datos viejos (grupo_idx=0): agrupar por set de personas (comportamiento original)
         _semanalDiferencias.forEach(prod => {
-            if (prod.justificado) return;
             (prod.asignaciones || []).forEach(asig => {
                 if (!asig.personas || asig.personas.length === 0) return;
                 const personas = asig.personas.map(p => p.persona).sort();
@@ -7351,18 +7350,20 @@ async function semanalGuardarTodo() {
         return;
     }
 
-    // Enviar grupos tal cual (sin consolidar por producto) para preservar la estructura
+    // Enviar grupos tal cual — NO filtrar por justificado para no perder asignaciones
     const gruposPayload = gruposValidos.map(g => {
         const productos = g.productos.map(p => {
+            const cant = parseFloat(p.cantidad) || 0;
+            if (cant <= 0) return null;
             const prodOrig = _semanalDiferencias.find(d => d.codigo === p.codigo);
-            if (!prodOrig || prodOrig.justificado) return null;
+            if (!prodOrig) return null;
             return {
                 codigo: p.codigo,
                 nombre: prodOrig.nombre,
                 unidad: prodOrig.unidad || '',
                 diferencia_semanal: parseFloat(prodOrig.diferencia) || 0,
                 costo_unitario: parseFloat(prodOrig.costo_unitario) || 0,
-                cantidad: parseFloat(p.cantidad) || 0
+                cantidad: cant
             };
         }).filter(Boolean);
         return { productos, personas: g.personas };

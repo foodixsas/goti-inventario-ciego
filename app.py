@@ -3998,6 +3998,57 @@ def asignar_semana(semana_id):
             release_db(conn)
 
 
+@app.route('/api/semanas/<int:semana_id>/justificar-producto', methods=['POST'])
+def justificar_producto_semanal(semana_id):
+    """Justifica TODOS los dias de un producto en una semana (marca justificado=TRUE y cantidad_justificada=abs(dif))"""
+    data = request.get_json()
+    codigo = data.get('codigo')
+    justificar = data.get('justificar', True)  # True=justificar, False=quitar justificacion
+
+    if not codigo:
+        return jsonify({'error': 'Falta codigo de producto'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("SELECT * FROM goti.semanas_inventario WHERE id = %s", (semana_id,))
+        semana = cur.fetchone()
+        if not semana:
+            return jsonify({'error': 'Semana no encontrada'}), 404
+
+        if justificar:
+            # Justificar: marcar justificado=TRUE y cantidad_justificada=abs(diferencia) en todos los dias
+            cur.execute("""
+                UPDATE goti.inventario_ciego_conteos
+                SET justificado = TRUE,
+                    cantidad_justificada = ABS(COALESCE(cantidad_contada_2, cantidad_contada) - cantidad)
+                WHERE local = %s AND codigo = %s
+                  AND fecha BETWEEN %s AND %s
+                  AND COALESCE(cantidad_contada_2, cantidad_contada) IS NOT NULL
+            """, (semana['local'], codigo, semana['fecha_inicio'], semana['fecha_fin']))
+        else:
+            # Quitar justificacion
+            cur.execute("""
+                UPDATE goti.inventario_ciego_conteos
+                SET justificado = FALSE, cantidad_justificada = 0
+                WHERE local = %s AND codigo = %s
+                  AND fecha BETWEEN %s AND %s
+            """, (semana['local'], codigo, semana['fecha_inicio'], semana['fecha_fin']))
+
+        rows = cur.rowcount
+        conn.commit()
+        return jsonify({'ok': True, 'dias_actualizados': rows})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 @app.route('/api/semanas/<int:semana_id>/cerrar', methods=['POST'])
 def cerrar_semana(semana_id):
     """Cierra una semana de inventario"""
