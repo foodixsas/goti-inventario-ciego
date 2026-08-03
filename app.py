@@ -3887,6 +3887,34 @@ def asignar_semana(semana_id):
     data = request.get_json()
     grupos = data.get('grupos', [])
 
+    # Compatibilidad: si el frontend envia formato viejo {asignaciones:[...]},
+    # convertir a formato nuevo {grupos:[...]} para no perder datos
+    if not grupos and 'asignaciones' in data:
+        asignaciones_viejas = data.get('asignaciones', [])
+        if asignaciones_viejas:
+            # Agrupar por set de personas (mismo comportamiento que tenia el frontend viejo)
+            from collections import defaultdict
+            grupos_temp = defaultdict(lambda: {'productos': [], 'personas_set': set()})
+            for asig in asignaciones_viejas:
+                personas = sorted([p.get('persona', '') for p in asig.get('personas', [])])
+                key = '|'.join(personas)
+                grupos_temp[key]['productos'].append({
+                    'codigo': asig.get('codigo'),
+                    'nombre': asig.get('nombre'),
+                    'unidad': asig.get('unidad'),
+                    'diferencia_semanal': asig.get('diferencia_semanal', 0),
+                    'costo_unitario': asig.get('costo_unitario', 0),
+                    'cantidad': sum(float(p.get('cantidad', 0)) for p in asig.get('personas', []))
+                })
+                for p in personas:
+                    grupos_temp[key]['personas_set'].add(p)
+            grupos = []
+            for key, g in grupos_temp.items():
+                grupos.append({
+                    'productos': g['productos'],
+                    'personas': sorted(g['personas_set'])
+                })
+
     conn = None
     try:
         conn = get_db()
