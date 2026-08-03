@@ -3738,7 +3738,7 @@ def diferencias_semana(semana_id):
         cur.execute("""
             WITH diferencias_diarias AS (
                 SELECT
-                    codigo, nombre, unidad, fecha,
+                    codigo, nombre, COALESCE(unidad, '') as unidad, fecha,
                     cantidad as stock_sistema,
                     COALESCE(cantidad_contada_2, cantidad_contada) as contado,
                     COALESCE(cantidad_contada_2, cantidad_contada) - cantidad as dif_dia,
