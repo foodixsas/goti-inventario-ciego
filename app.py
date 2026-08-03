@@ -243,6 +243,7 @@ def init_db():
                 local VARCHAR(50),
                 diferencia_semanal NUMERIC(12,4) DEFAULT 0,
                 costo_unitario NUMERIC(12,4) DEFAULT 0,
+                grupo_idx INT DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -254,6 +255,11 @@ def init_db():
                 cantidad NUMERIC(12,4) DEFAULT 0,
                 monto NUMERIC(12,2) DEFAULT 0
             )
+        """)
+        # ---- Columna grupo_idx para preservar estructura de grupos ----
+        cur.execute("""
+            ALTER TABLE goti.asignacion_semanal
+                ADD COLUMN IF NOT EXISTS grupo_idx INT DEFAULT 0
         """)
         # ---- Columnas de auditoria: quien contó y quien modificó ----
         cur.execute("""
@@ -3789,9 +3795,10 @@ def diferencias_semana(semana_id):
                     dd['contado'] = float(dd['contado']) if dd['contado'] else 0
                     dd['dif'] = float(dd['dif']) if dd['dif'] else 0
 
-        # Obtener asignaciones existentes para esta semana
+        # Obtener asignaciones existentes para esta semana (con grupo_idx)
         cur.execute("""
             SELECT a.id, a.codigo, a.nombre, a.unidad, a.diferencia_semanal, a.costo_unitario,
+                   COALESCE(a.grupo_idx, 0) as grupo_idx,
                    json_agg(json_build_object(
                        'id', ap.id,
                        'persona', ap.persona,
@@ -3802,21 +3809,25 @@ def diferencias_semana(semana_id):
             LEFT JOIN goti.asignacion_semanal_personas ap
                 ON ap.asignacion_semanal_id = a.id
             WHERE a.semana_id = %s
-            GROUP BY a.id, a.codigo, a.nombre, a.unidad, a.diferencia_semanal, a.costo_unitario
+            GROUP BY a.id, a.codigo, a.nombre, a.unidad, a.diferencia_semanal, a.costo_unitario, a.grupo_idx
         """, (semana_id,))
         asignaciones = cur.fetchall()
 
-        # Mapear asignaciones por codigo
+        # Mapear asignaciones por codigo (lista, puede haber multiples por grupo)
         asig_map = {}
         for a in asignaciones:
-            asig_map[a['codigo']] = {
+            entry = {
                 'id': a['id'],
                 'nombre': a['nombre'],
                 'unidad': a['unidad'],
                 'diferencia_semanal': float(a['diferencia_semanal']) if a['diferencia_semanal'] else 0,
                 'costo_unitario': float(a['costo_unitario']) if a['costo_unitario'] else 0,
+                'grupo_idx': a['grupo_idx'],
                 'personas': a['personas'] or []
             }
+            if a['codigo'] not in asig_map:
+                asig_map[a['codigo']] = []
+            asig_map[a['codigo']].append(entry)
 
         # Combinar diferencias con asignaciones
         codigos_en_resultado = set()
@@ -3824,29 +3835,29 @@ def diferencias_semana(semana_id):
         for d in diferencias:
             item = dict(d)
             if d['codigo'] in asig_map:
-                item['asignacion'] = asig_map[d['codigo']]
+                item['asignaciones'] = asig_map[d['codigo']]
             else:
-                item['asignacion'] = None
+                item['asignaciones'] = []
             resultado.append(item)
             codigos_en_resultado.add(d['codigo'])
 
         # Para semanas cerradas: incluir tambien productos asignados que ya no tienen diferencia neta
-        # (puede ocurrir si se agregaron conteos retroactivos despues del cierre)
         if semana['estado'] == 'cerrada':
-            for codigo, asig in asig_map.items():
-                if codigo not in codigos_en_resultado and asig['personas']:
+            for codigo, asig_list in asig_map.items():
+                if codigo not in codigos_en_resultado and any(a['personas'] for a in asig_list):
+                    first = asig_list[0]
                     resultado.append({
                         'codigo': codigo,
-                        'nombre': asig['nombre'],
-                        'unidad': asig['unidad'],
-                        'diferencia': asig['diferencia_semanal'],
-                        'costo_unitario': asig['costo_unitario'],
+                        'nombre': first['nombre'],
+                        'unidad': first['unidad'],
+                        'diferencia': first['diferencia_semanal'],
+                        'costo_unitario': first['costo_unitario'],
                         'dias_contados': 0,
                         'justificado': False,
                         'total_justificado': 0,
                         'tiene_correccion': False,
                         'detalle_diario': [],
-                        'asignacion': asig,
+                        'asignaciones': asig_list,
                     })
 
         semana_info = {
@@ -3872,9 +3883,9 @@ def diferencias_semana(semana_id):
 
 @app.route('/api/semanas/<int:semana_id>/asignar', methods=['POST'])
 def asignar_semana(semana_id):
-    """Guarda asignaciones semanales de diferencias"""
+    """Guarda asignaciones semanales de diferencias preservando estructura de grupos"""
     data = request.get_json()
-    asignaciones = data.get('asignaciones', [])
+    grupos = data.get('grupos', [])
 
     conn = None
     try:
@@ -3902,36 +3913,48 @@ def asignar_semana(semana_id):
             DELETE FROM goti.asignacion_semanal WHERE semana_id = %s
         """, (semana_id,))
 
-        # Insertar nuevas asignaciones
+        # Insertar por grupo preservando la estructura original
         total_insertadas = 0
-        for asig in asignaciones:
-            cur.execute("""
-                INSERT INTO goti.asignacion_semanal
-                    (semana_id, codigo, nombre, unidad, local, diferencia_semanal, costo_unitario)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                semana_id,
-                asig.get('codigo'),
-                asig.get('nombre'),
-                asig.get('unidad'),
-                semana['local'],
-                asig.get('diferencia_semanal', 0),
-                asig.get('costo_unitario', 0)
-            ))
-            asig_id = cur.fetchone()['id']
+        for grupo_idx, grupo in enumerate(grupos):
+            personas = grupo.get('personas', [])
+            num_personas = len(personas)
+            if num_personas == 0:
+                continue
 
-            for persona in asig.get('personas', []):
-                cantidad = persona.get('cantidad', 0)
-                costo = asig.get('costo_unitario', 0)  # ya viene con 20% desde frontend
-                monto = float(cantidad) * float(costo) if cantidad and costo else 0
+            for prod in grupo.get('productos', []):
+                cantidad_total = float(prod.get('cantidad', 0))
+                if cantidad_total <= 0:
+                    continue
+                costo = float(prod.get('costo_unitario', 0))
+
                 cur.execute("""
-                    INSERT INTO goti.asignacion_semanal_personas
-                        (asignacion_semanal_id, persona, cantidad, monto)
-                    VALUES (%s, %s, %s, %s)
-                """, (asig_id, persona.get('persona'), cantidad, round(monto, 2)))
+                    INSERT INTO goti.asignacion_semanal
+                        (semana_id, codigo, nombre, unidad, local, diferencia_semanal, costo_unitario, grupo_idx)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    semana_id,
+                    prod.get('codigo'),
+                    prod.get('nombre'),
+                    prod.get('unidad'),
+                    semana['local'],
+                    prod.get('diferencia_semanal', 0),
+                    costo,
+                    grupo_idx
+                ))
+                asig_id = cur.fetchone()['id']
 
-            total_insertadas += 1
+                # Dividir cantidad equitativamente entre personas del grupo
+                cant_por_persona = cantidad_total / num_personas
+                for persona_nombre in personas:
+                    monto = cant_por_persona * costo
+                    cur.execute("""
+                        INSERT INTO goti.asignacion_semanal_personas
+                            (asignacion_semanal_id, persona, cantidad, monto)
+                        VALUES (%s, %s, %s, %s)
+                    """, (asig_id, persona_nombre, round(cant_por_persona, 4), round(monto, 2)))
+
+                total_insertadas += 1
 
         conn.commit()
         return jsonify({

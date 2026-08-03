@@ -6411,32 +6411,41 @@ async function semanalCargarSemanaById(id) {
 }
 
 // Reconstruye _semGrupos desde las asignaciones ya guardadas en BD
-// Agrupa productos que tienen el mismo conjunto de personas
+// Usa grupo_idx para preservar la estructura original de grupos
 function _semReconstruirGruposDesdeAsignaciones() {
     _semGrupos = [];
     const esCerrada = _semanalSemanaActual && _semanalSemanaActual.estado === 'cerrada';
+    const gruposMap = {}; // grupo_idx -> { productos: [], personas: Set }
 
     _semanalDiferencias.forEach(prod => {
         if (prod.justificado) return;
-        if (!prod.asignacion || !prod.asignacion.personas || prod.asignacion.personas.length === 0) return;
+        const asignaciones = prod.asignaciones || [];
+        if (asignaciones.length === 0) return;
 
-        // Personas del producto (nombres ordenados para comparar)
-        const personas = prod.asignacion.personas.map(p => p.persona).sort();
-        const cantidadTotal = prod.asignacion.personas.reduce((s, p) => s + (parseFloat(p.cantidad) || 0), 0);
+        asignaciones.forEach(asig => {
+            if (!asig.personas || asig.personas.length === 0) return;
+            const gIdx = asig.grupo_idx || 0;
+            const cantidadTotal = asig.personas.reduce((s, p) => s + (parseFloat(p.cantidad) || 0), 0);
 
-        // Buscar un grupo existente con las mismas personas
-        const keyPersonas = personas.join('|');
-        let grupo = _semGrupos.find(g => g.personas.slice().sort().join('|') === keyPersonas);
-
-        if (!grupo) {
-            grupo = { productos: [], personas: personas };
-            _semGrupos.push(grupo);
-        }
-
-        grupo.productos.push({ codigo: prod.codigo, cantidad: cantidadTotal });
+            if (!gruposMap[gIdx]) {
+                gruposMap[gIdx] = { productos: [], personasSet: new Set() };
+            }
+            gruposMap[gIdx].productos.push({ codigo: prod.codigo, cantidad: cantidadTotal });
+            asig.personas.forEach(p => gruposMap[gIdx].personasSet.add(p.persona));
+        });
     });
 
-    // Agregar grupo vacío al final para nuevas asignaciones (si no está cerrada)
+    // Convertir map a array ordenado por grupo_idx
+    const indices = Object.keys(gruposMap).map(Number).sort((a, b) => a - b);
+    indices.forEach(gIdx => {
+        const g = gruposMap[gIdx];
+        _semGrupos.push({
+            productos: g.productos,
+            personas: Array.from(g.personasSet).sort()
+        });
+    });
+
+    // Agregar grupo vacio al final para nuevas asignaciones (si no esta cerrada)
     if (!esCerrada) {
         _semGrupos.push({ productos: [], personas: [] });
     }
@@ -7326,43 +7335,29 @@ async function semanalGuardarTodo() {
         return;
     }
 
-    // Consolidar: por cada producto (código) sumar todas las personas de los grupos donde aparece
-    // Estructura: { codigo: { codigo, nombre, unidad, diferencia_semanal, costo_unitario, personas: [{persona, cantidad}] } }
-    const consolidado = {};
-    gruposValidos.forEach(g => {
-        g.productos.forEach(p => {
+    // Enviar grupos tal cual (sin consolidar por producto) para preservar la estructura
+    const gruposPayload = gruposValidos.map(g => {
+        const productos = g.productos.map(p => {
             const prodOrig = _semanalDiferencias.find(d => d.codigo === p.codigo);
-            if (!prodOrig || prodOrig.justificado) return;
-            if (!consolidado[p.codigo]) {
-                consolidado[p.codigo] = {
-                    codigo: p.codigo,
-                    nombre: prodOrig.nombre,
-                    unidad: prodOrig.unidad || '',
-                    diferencia_semanal: parseFloat(prodOrig.diferencia) || 0,
-                    costo_unitario: parseFloat(prodOrig.costo_unitario) || 0,
-                    personas: []
-                };
-            }
-            // Dividir la cantidad entre las personas del grupo
-            const cantPorPersona = (parseFloat(p.cantidad) || 0) / g.personas.length;
-            g.personas.forEach(nombre => {
-                // Si la persona ya existe, sumar; si no, agregar
-                const existe = consolidado[p.codigo].personas.find(x => x.persona === nombre);
-                if (existe) {
-                    existe.cantidad = parseFloat((existe.cantidad + cantPorPersona).toFixed(4));
-                } else {
-                    consolidado[p.codigo].personas.push({ persona: nombre, cantidad: parseFloat(cantPorPersona.toFixed(4)) });
-                }
-            });
-        });
-    });
+            if (!prodOrig || prodOrig.justificado) return null;
+            return {
+                codigo: p.codigo,
+                nombre: prodOrig.nombre,
+                unidad: prodOrig.unidad || '',
+                diferencia_semanal: parseFloat(prodOrig.diferencia) || 0,
+                costo_unitario: parseFloat(prodOrig.costo_unitario) || 0,
+                cantidad: parseFloat(p.cantidad) || 0
+            };
+        }).filter(Boolean);
+        return { productos, personas: g.personas };
+    }).filter(g => g.productos.length > 0);
 
-    const asignaciones = Object.values(consolidado);
-    if (asignaciones.length === 0) {
+    if (gruposPayload.length === 0) {
         showToast('No hay asignaciones válidas para guardar', 'error');
         return;
     }
 
+    const totalProds = gruposPayload.reduce((s, g) => s + g.productos.length, 0);
     const btn = document.getElementById('btn-sem-guardar-todo');
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Guardando...'; }
 
@@ -7370,14 +7365,14 @@ async function semanalGuardarTodo() {
         const res = await fetch(`${CONFIG.API_URL}/api/semanas/${_semanalSemanaActual.id}/asignar`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ asignaciones })
+            body: JSON.stringify({ grupos: gruposPayload })
         });
         const data = await res.json();
         if (data.error) {
             showToast(data.error, 'error');
             return;
         }
-        showToast(`Guardado: ${asignaciones.length} producto(s) asignado(s)`, 'success');
+        showToast(`Guardado: ${totalProds} producto(s) en ${gruposPayload.length} grupo(s)`, 'success');
         semanalCargarSemanaById(_semanalSemanaActual.id);
     } catch (error) {
         console.error('Error guardando asignaciones:', error);
