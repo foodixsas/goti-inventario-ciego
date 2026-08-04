@@ -7140,6 +7140,51 @@ def flujo_caja_cargar_guardado():
             fc_release_movimientos_db(conn)
 
 
+@app.route('/api/flujo-caja/facturas-proveedor', methods=['GET'])
+def flujo_caja_facturas_proveedor():
+    """Buscar facturas de compras pendientes de un proveedor"""
+    conn = None
+    try:
+        nombre = request.args.get('nombre', '')
+        if not nombre or len(nombre) < 3:
+            return jsonify({'ok': False, 'error': 'Nombre muy corto (min 3 caracteres)'})
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+
+        # Buscar en fact_detallada_compras (facturas de compra de proveedores)
+        cur.execute('''
+            SELECT DISTINCT numero_documento, fecha_emision::date, total,
+                   razon_social, autorizacion
+            FROM fact_detallada_compras
+            WHERE razon_social ILIKE %s
+            AND fecha_emision >= CURRENT_DATE - INTERVAL '6 months'
+            ORDER BY fecha_emision DESC
+            LIMIT 100
+        ''', (f'%{nombre}%',))
+
+        facturas = []
+        for r in cur.fetchall():
+            facturas.append({
+                'num': r[0] or '',
+                'fecha': str(r[1]) if r[1] else '',
+                'monto': float(r[2]) if r[2] else 0,
+                'proveedor': r[3] or '',
+                'autorizacion': r[4] or '',
+                'vencimiento': ''
+            })
+
+        return jsonify({'ok': True, 'facturas': facturas, 'total': len(facturas)})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
+
+
 # =====================================================
 # VOUCHER SCANNER - Endpoint comparacion Azure
 # =====================================================

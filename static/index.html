@@ -2542,6 +2542,8 @@
                         <button class="fc-btn" style="background:#1565c0;" onclick="fc_cargarDatos()"><i class="fas fa-search"></i> Consultar</button>
                         <button class="fc-btn" style="background:#2e7d32;" onclick="fc_guardarDatos()"><i class="fas fa-save"></i> Guardar</button>
                         <button class="fc-btn" style="background:#f57c00;" onclick="fc_descargarExcel()"><i class="fas fa-file-excel"></i> Excel</button>
+                        <button class="fc-btn" style="background:#7b1fa2;" onclick="fc_cargarCarteraXLS()"><i class="fas fa-upload"></i> Cargar Cartera</button>
+                        <input type="file" id="fc-input-cartera" accept=".xls,.xlsx" style="display:none;" onchange="fc_procesarCarteraXLS(this)">
                     </div>
 
                     <div class="fc-resumen" id="fc-resumen" style="display:none">

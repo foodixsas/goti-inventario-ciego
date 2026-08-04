@@ -542,13 +542,14 @@ function fc_renderSubgrupoEgreso(sg) {
     });
     html += '</tr>';
 
-    sg.items.forEach(item => {
-        html += `<tr class="row-banco-item fc-egreso-item-${sg.id}" data-grupo="eg-${sg.id}" data-banco="produbanco" data-deuda="0"><td class="col-concepto indent-3">
+    sg.items.forEach((item, itemIdx) => {
+        html += `<tr class="row-banco-item fc-egreso-item-${sg.id}" data-grupo="eg-${sg.id}" data-banco="produbanco" data-deuda="0" data-fc-row-id="fcr-${sg.id}-${itemIdx}"><td class="col-concepto indent-3">
             <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
                 <option value="produbanco" selected>PRO</option>
                 <option value="pichincha">PICH</option>
             </select>
             <input type="text" class="fc-input-nombre" value="${item}">
+                <button class="fc-btn-facturas" onclick="event.stopPropagation();fc_abrirFacturas(this.closest('tr'))" title="Facturas pendientes"><span class="fc-icon-fac">F</span><span class="fc-badge-facturas"></span></button>
                 <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
         </td>`;
         // Columna SALDO del item (editable) - después del nombre
@@ -564,7 +565,7 @@ function fc_renderSubgrupoEgreso(sg) {
             sem.dias.forEach((dia, i) => {
                 const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
                 html += `<td class="dia-col sem-${sem.num}${sab} monto fc-celda-egreso">
-                    <input type="text" class="fc-input fc-input-egreso-${sg.id}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()">
+                    <input type="text" class="fc-input fc-input-egreso-${sg.id}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()" onfocus="fc_onFocusEgreso(this)">
                     <button class="fc-btn-rep" onclick="fc_abrirRecurrencia(this)" title="Repetir desde aqui">&#x21bb;</button>
                 </td>`;
             });
@@ -1213,9 +1214,11 @@ function fc_agregarItem(grupo) {
     }
 
     const newRow = document.createElement('tr');
+    const dynRowId = 'fcr-dyn-' + (++fc_row_id_counter);
     newRow.className = `row-banco-item fc-egreso-item-${grupo}`;
     newRow.dataset.grupo = `eg-${grupo}`;
     newRow.dataset.banco = 'produbanco';
+    newRow.dataset.fcRowId = dynRowId;
 
     let celdas = `<td class="col-concepto indent-3">
         <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
@@ -1223,6 +1226,7 @@ function fc_agregarItem(grupo) {
             <option value="pichincha">PICH</option>
         </select>
         <input type="text" class="fc-input-nombre" value="Nuevo Item">
+        <button class="fc-btn-facturas" onclick="event.stopPropagation();fc_abrirFacturas(this.closest('tr'))" title="Facturas pendientes"><span class="fc-icon-fac">F</span><span class="fc-badge-facturas"></span></button>
         <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
     </td>`;
     // Columna SALDO del item (editable) - después del nombre
@@ -1334,9 +1338,11 @@ function fc_agregarSubgrupo(tipo) {
 
     // Crear item row con selector de banco
     const itemRow = document.createElement('tr');
+    const sgRowId = 'fcr-dyn-' + (++fc_row_id_counter);
     itemRow.className = `row-banco-item fc-egreso-item-${grupoId}`;
     itemRow.dataset.grupo = `eg-${grupoId}`;
     itemRow.dataset.banco = 'produbanco';
+    itemRow.dataset.fcRowId = sgRowId;
 
     let itemHtml = `<td class="col-concepto indent-3">
         <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
@@ -1344,6 +1350,7 @@ function fc_agregarSubgrupo(tipo) {
             <option value="pichincha">PICH</option>
         </select>
         <input type="text" class="fc-input-nombre" value="Item 1">
+        <button class="fc-btn-facturas" onclick="event.stopPropagation();fc_abrirFacturas(this.closest('tr'))" title="Facturas pendientes"><span class="fc-icon-fac">F</span><span class="fc-badge-facturas"></span></button>
         <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
     </td>`;
     itemHtml += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
@@ -1392,15 +1399,8 @@ async function fc_cargarDatosGuardados() {
         const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
         if (!semanas || semanas.length === 0) return;
 
-        // Generar rango amplio: desde primera semana visible hasta +52 semanas
-        // Esto asegura que datos guardados en proyecciones largas se carguen en proyecciones cortas
-        const primeraFecha = new Date(semanas[0].inicio + 'T12:00:00');
-        const todasLasFechas = [];
-        for (let i = 0; i < 52; i++) {
-            const fecha = new Date(primeraFecha);
-            fecha.setDate(primeraFecha.getDate() + (i * 7));
-            todasLasFechas.push(fecha.toISOString().split('T')[0]);
-        }
+        // Solo cargar semanas visibles (evita que items borrados reaparezcan de semanas anteriores)
+        const todasLasFechas = semanas.map(s => s.inicio);
         const fechas = todasLasFechas.join(',');
         const response = await fetch(`/api/flujo-caja/cargar-guardado?fechas=${fechas}`);
         if (!response.ok) return;
@@ -1555,6 +1555,15 @@ async function fc_cargarDatosGuardados() {
                         if (diasInput) diasInput.value = item.dias;
                     }
 
+                    // Cargar facturas pendientes
+                    if (item.facturas && item.facturas.length > 0) {
+                        const loadedRowId = rows[idx].dataset.fcRowId;
+                        if (loadedRowId) {
+                            fc_facturas_data[loadedRowId] = item.facturas;
+                            fc_actualizarBadgeFacturas(rows[idx]);
+                        }
+                    }
+
                     // Aplicar valores de TODAS las fechas consolidadas
                     for (const [dia, valor] of Object.entries(item.valores || {})) {
                         const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
@@ -1646,7 +1655,9 @@ async function fc_guardarDatos() {
                 const saldo = saldoInput ? (parseFloat(saldoInput.value.replace(/,/g, '')) || 0) : 0;
                 const diasInput = row.querySelector('.fc-input-dias');
                 const dias = diasInput ? (parseInt(diasInput.value) || 0) : 0;
-                const itemData = { nombre, banco, deuda, saldo, dias, valores: {} };
+                const rowId = row.dataset.fcRowId || '';
+                const facturas = rowId ? (fc_facturas_data[rowId] || []) : [];
+                const itemData = { nombre, banco, deuda, saldo, dias, valores: {}, facturas };
                 sem.dias.forEach(dia => {
                     const input = row.querySelector(`[data-fecha="${dia}"].fc-input`);
                     if (input && input.value) {
@@ -2303,6 +2314,859 @@ function fc_aplicarRecurrencia() {
     fc_cerrarModalRecurrente();
 
     alert(`$${valor} aplicado a ${aplicados} fecha(s) desde ${fc_recurrente_fecha}`);
+}
+
+// ============ FACTURAS POR PROVEEDOR ============
+let fc_facturas_data = {}; // key: rowId -> [{num, fecha, monto, vencimiento, fecha_pago}]
+let fc_row_id_counter = 1000;
+
+function fc_getFacturas(rowId) {
+    if (!fc_facturas_data[rowId]) fc_facturas_data[rowId] = [];
+    return fc_facturas_data[rowId];
+}
+
+// Abrir modal de facturas para un item de egreso
+function fc_abrirFacturas(row) {
+    const rowId = row.dataset.fcRowId;
+    if (!rowId) return;
+    const nombre = row.querySelector('.fc-input-nombre')?.value || 'Proveedor';
+    const facturas = fc_getFacturas(rowId);
+
+    // Opciones de fecha desde semanas visibles
+    const meses = ['','ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+    const diasSem = ['Dom','Lun','Mar','Mie','Jue','Vie','Sab'];
+    let opcionesFechas = '<option value="">-- Pendiente --</option>';
+    fc_todasFechas.forEach(f => {
+        const d = new Date(f + 'T12:00:00');
+        opcionesFechas += `<option value="${f}">${diasSem[d.getDay()]} ${d.getDate()}-${meses[d.getMonth()+1]}</option>`;
+    });
+
+    let modal = document.getElementById('fc-modal-facturas');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'fc-modal-facturas';
+        modal.className = 'fc-modal';
+        document.body.appendChild(modal);
+    }
+
+    let facturasHtml = '';
+    let totalPendiente = 0;
+    let totalProgramado = 0;
+
+    const hoy = new Date();
+    hoy.setHours(0,0,0,0);
+
+    // Obtener dias de credito del item (columna DIAS)
+    const diasCredito = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
+
+    facturas.forEach((fac, idx) => {
+        const esPendiente = !fac.fecha_pago;
+        if (esPendiente) totalPendiente += (fac.monto || 0);
+        else totalProgramado += (fac.monto || 0);
+
+        // Calcular vencimiento real: fecha emision + dias de credito
+        // Si hay dias de credito configurados, usarlos; si no, usar el vencimiento del XLS
+        let fechaVencReal = fac.vencimiento;
+        if (diasCredito > 0 && fac.fecha) {
+            const fEmision = new Date(fac.fecha + 'T12:00:00');
+            fEmision.setDate(fEmision.getDate() + diasCredito);
+            fechaVencReal = fEmision.toISOString().split('T')[0];
+        }
+
+        // Calcular dias vencidos
+        let diasVencido = '';
+        let claseVencido = '';
+        if (fechaVencReal) {
+            const fVenc = new Date(fechaVencReal + 'T12:00:00');
+            const diff = Math.round((hoy - fVenc) / (1000*60*60*24));
+            if (diff > 0) {
+                diasVencido = `${diff}d`;
+                if (diff > 60) claseVencido = 'fc-venc-critico';
+                else if (diff > 30) claseVencido = 'fc-venc-alto';
+                else claseVencido = 'fc-venc-medio';
+            } else if (diff === 0) {
+                diasVencido = 'Hoy';
+                claseVencido = 'fc-venc-medio';
+            } else {
+                diasVencido = `${Math.abs(diff)}d`;
+                claseVencido = 'fc-venc-ok';
+            }
+        }
+
+        facturasHtml += `<tr class="${esPendiente ? 'fc-fac-pendiente' : 'fc-fac-programada'}">
+            <td><input type="text" class="fc-fac-input fc-fac-num" value="${fac.num || ''}" data-idx="${idx}" data-field="num" placeholder="Nro factura"></td>
+            <td><input type="date" class="fc-fac-input" value="${fac.fecha || ''}" data-idx="${idx}" data-field="fecha"></td>
+            <td><input type="text" class="fc-fac-input fc-fac-monto" value="${fac.monto || ''}" data-idx="${idx}" data-field="monto" placeholder="0.00"></td>
+            <td><input type="date" class="fc-fac-input" value="${fac.vencimiento || ''}" data-idx="${idx}" data-field="vencimiento"></td>
+            <td class="fc-col-vencido ${claseVencido}">${diasVencido}</td>
+            <td><select class="fc-fac-select-fecha" data-idx="${idx}" onchange="fc_cambiarFechaPagoFactura(this)">
+                ${opcionesFechas.replace(`value="${fac.fecha_pago}"`, `value="${fac.fecha_pago}" selected`)}
+            </select></td>
+            <td><button class="fc-btn-del-fac" onclick="fc_eliminarFactura('${rowId}', ${idx})">x</button></td>
+        </tr>`;
+    });
+
+    if (!facturasHtml) {
+        facturasHtml = '<tr class="fc-fac-vacia"><td colspan="7">No hay facturas. Use <b>+ Agregar</b> o cargue la <b>Cartera XLS</b></td></tr>';
+    }
+
+    modal.innerHTML = `
+        <div class="fc-modal-overlay" onclick="fc_cerrarFacturas()"></div>
+        <div class="fc-modal-facturas-content">
+            <div class="fc-modal-header" style="background:#1e293b;">
+                <span class="fc-modal-icon" style="background:rgba(255,255,255,.1);">F</span>
+                <div>
+                    <h3>Facturas Pendientes</h3>
+                    <p class="fc-fecha-inicio"><strong>${nombre}</strong></p>
+                </div>
+                <button class="fc-modal-close" onclick="fc_cerrarFacturas()">&times;</button>
+            </div>
+            <div class="fc-fac-toolbar">
+                <button onclick="fc_agregarFactura('${rowId}')" class="fc-btn-add-fac">+ Agregar Factura</button>
+                ${Object.keys(fc_cartera_cargada).length > 0 ? `<button onclick="fc_mostrarBuscadorCartera('${rowId}')" class="fc-btn-buscar-cartera">Buscar en Cartera (${Object.keys(fc_cartera_cargada).length} proveedores)</button>` : ''}
+            </div>
+            <div class="fc-fac-body">
+                <table class="fc-tabla-facturas">
+                    <thead>
+                        <tr><th>Nro Factura</th><th>Fecha</th><th>Monto</th><th>Vencimiento</th><th>Vencido</th><th>Pagar el</th><th></th></tr>
+                    </thead>
+                    <tbody id="fc-facturas-body">${facturasHtml}</tbody>
+                </table>
+            </div>
+            <div class="fc-fac-footer">
+                <div class="fc-fac-totales">
+                    <span class="fc-fac-t-pend">Pendiente: $${totalPendiente.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                    <span class="fc-fac-t-prog">Programado: $${totalProgramado.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                    <span class="fc-fac-t-total">Total: $${(totalPendiente+totalProgramado).toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                </div>
+                <div class="fc-fac-btns">
+                    <button onclick="fc_cerrarFacturas()" class="fc-btn-cancelar">Cerrar</button>
+                    <button onclick="fc_aplicarFacturas('${rowId}')" class="fc-btn-aplicar">Aplicar al Flujo</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    modal.dataset.rowId = rowId;
+    modal.classList.add('active');
+    fc_inyectarEstilosFacturas();
+}
+
+function fc_cerrarFacturas() {
+    // Guardar inputs antes de cerrar
+    const modal = document.getElementById('fc-modal-facturas');
+    if (modal && modal.dataset.rowId) {
+        fc_guardarInputsFacturas(modal.dataset.rowId);
+    }
+    if (modal) modal.classList.remove('active');
+}
+
+function fc_agregarFactura(rowId) {
+    fc_guardarInputsFacturas(rowId);
+    const facturas = fc_getFacturas(rowId);
+    facturas.push({ num: '', fecha: '', monto: 0, vencimiento: '', fecha_pago: '' });
+    const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
+    if (row) fc_abrirFacturas(row);
+}
+
+function fc_eliminarFactura(rowId, idx) {
+    fc_guardarInputsFacturas(rowId);
+    const facturas = fc_getFacturas(rowId);
+    facturas.splice(idx, 1);
+    const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
+    if (row) fc_abrirFacturas(row);
+}
+
+function fc_cambiarFechaPagoFactura(select) {
+    const modal = document.getElementById('fc-modal-facturas');
+    if (!modal) return;
+    const rowId = modal.dataset.rowId;
+    const idx = parseInt(select.dataset.idx);
+    fc_guardarInputsFacturas(rowId);
+    fc_actualizarTotalesFacturasModal(rowId);
+}
+
+function fc_guardarInputsFacturas(rowId) {
+    const facturas = fc_getFacturas(rowId);
+    document.querySelectorAll('#fc-facturas-body .fc-fac-input').forEach(input => {
+        const idx = parseInt(input.dataset.idx);
+        const field = input.dataset.field;
+        if (facturas[idx] && field) {
+            if (field === 'monto') {
+                facturas[idx][field] = parseFloat(input.value.replace(/,/g, '')) || 0;
+            } else {
+                facturas[idx][field] = input.value;
+            }
+        }
+    });
+    document.querySelectorAll('#fc-facturas-body .fc-fac-select-fecha').forEach(select => {
+        const idx = parseInt(select.dataset.idx);
+        if (facturas[idx]) facturas[idx].fecha_pago = select.value;
+    });
+}
+
+function fc_actualizarTotalesFacturasModal(rowId) {
+    const facturas = fc_getFacturas(rowId);
+    let pend = 0, prog = 0;
+    facturas.forEach(f => {
+        if (!f.fecha_pago) pend += (f.monto || 0);
+        else prog += (f.monto || 0);
+    });
+    const pe = document.querySelector('.fc-fac-t-pend');
+    const pr = document.querySelector('.fc-fac-t-prog');
+    const to = document.querySelector('.fc-fac-t-total');
+    if (pe) pe.textContent = `Pendiente: $${pend.toLocaleString('en-US',{minimumFractionDigits:2})}`;
+    if (pr) pr.textContent = `Programado: $${prog.toLocaleString('en-US',{minimumFractionDigits:2})}`;
+    if (to) to.textContent = `Total: $${(pend+prog).toLocaleString('en-US',{minimumFractionDigits:2})}`;
+}
+
+// Aplicar facturas al flujo: suma por fecha_pago -> llena celdas
+function fc_aplicarFacturas(rowId) {
+    fc_guardarInputsFacturas(rowId);
+    const facturas = fc_getFacturas(rowId);
+    const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
+    if (!row) return;
+
+    // Limpiar celdas del dia de esta fila
+    row.querySelectorAll('.fc-input[data-fecha]').forEach(inp => { inp.value = ''; });
+
+    // Agrupar montos por fecha de pago
+    const montosPorFecha = {};
+    facturas.forEach(fac => {
+        if (fac.fecha_pago && fac.monto > 0) {
+            if (!montosPorFecha[fac.fecha_pago]) montosPorFecha[fac.fecha_pago] = 0;
+            montosPorFecha[fac.fecha_pago] += fac.monto;
+        }
+    });
+
+    // Llenar celdas
+    for (const [fecha, monto] of Object.entries(montosPorFecha)) {
+        const input = row.querySelector(`.fc-input[data-fecha="${fecha}"]`);
+        if (input) input.value = monto.toFixed(2);
+    }
+
+    // Actualizar saldo con total de facturas
+    const totalFac = facturas.reduce((s, f) => s + (f.monto || 0), 0);
+    const saldoInput = row.querySelector('.fc-input-saldo');
+    if (saldoInput && totalFac > 0) saldoInput.value = totalFac.toFixed(2);
+
+    fc_actualizarBadgeFacturas(row);
+    fc_recalcularTodo();
+    fc_cerrarFacturas();
+}
+
+// Badge en el boton de facturas
+function fc_actualizarBadgeFacturas(row) {
+    const rowId = row.dataset.fcRowId;
+    if (!rowId) return;
+    const facturas = fc_facturas_data[rowId] || [];
+    const badge = row.querySelector('.fc-badge-facturas');
+    if (!badge) return;
+
+    const pendientes = facturas.filter(f => !f.fecha_pago).length;
+    const total = facturas.length;
+
+    if (total === 0) {
+        badge.textContent = '';
+        badge.className = 'fc-badge-facturas';
+    } else if (pendientes === 0) {
+        badge.textContent = total;
+        badge.className = 'fc-badge-facturas fc-badge-ok';
+    } else {
+        badge.textContent = pendientes;
+        badge.className = 'fc-badge-facturas fc-badge-pend';
+    }
+}
+
+// Buscar facturas desde BD (fact_detallada_compras)
+async function fc_buscarFacturasBD(rowId) {
+    const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
+    const nombre = row?.querySelector('.fc-input-nombre')?.value || '';
+
+    if (!nombre || nombre === 'Nuevo Item' || nombre === 'Item 1' || nombre.length < 3) {
+        alert('Ingrese el nombre del proveedor primero (min 3 caracteres)');
+        return;
+    }
+
+    const btn = document.querySelector('.fc-btn-buscar-bd');
+    const textoOrig = btn.textContent;
+    btn.textContent = 'Buscando...';
+    btn.disabled = true;
+
+    try {
+        const response = await fetch(`/api/flujo-caja/facturas-proveedor?nombre=${encodeURIComponent(nombre)}`);
+        if (!response.ok) throw new Error('Error en la busqueda');
+
+        const data = await response.json();
+        if (!data.ok || !data.facturas || data.facturas.length === 0) {
+            alert(`No se encontraron facturas para "${nombre}"`);
+            return;
+        }
+
+        fc_guardarInputsFacturas(rowId);
+        const facturas = fc_getFacturas(rowId);
+        const existentes = new Set(facturas.map(f => f.num));
+        let agregadas = 0;
+
+        data.facturas.forEach(fac => {
+            if (!existentes.has(fac.num)) {
+                facturas.push({
+                    num: fac.num,
+                    fecha: fac.fecha,
+                    monto: fac.monto,
+                    vencimiento: fac.vencimiento || '',
+                    fecha_pago: ''
+                });
+                agregadas++;
+            }
+        });
+
+        if (agregadas === 0) {
+            alert('Todas las facturas encontradas ya estan en la lista');
+        } else {
+            alert(`${agregadas} factura(s) agregada(s) de ${data.total} encontrada(s)`);
+            fc_abrirFacturas(row);
+        }
+    } catch (error) {
+        console.error('Error buscando facturas:', error);
+        alert('Error al buscar: ' + error.message);
+    } finally {
+        if (btn) { btn.textContent = textoOrig; btn.disabled = false; }
+    }
+}
+
+// Estilos del modulo de facturas
+function fc_inyectarEstilosFacturas() {
+    if (document.getElementById('fc-facturas-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'fc-facturas-styles';
+    s.textContent = `
+        .fc-btn-facturas { background:none; border:1px solid #90caf9; cursor:pointer; padding:1px 4px; margin-left:3px; border-radius:3px; font-size:10px; position:relative; vertical-align:middle; transition:all .15s; }
+        .fc-btn-facturas:hover { background:#e3f2fd; border-color:#1565c0; }
+        .fc-icon-fac { font-weight:700; color:#1565c0; font-size:9px; }
+        .fc-badge-facturas { position:absolute; top:-6px; right:-6px; min-width:14px; height:14px; line-height:14px; text-align:center; font-size:8px; font-weight:700; border-radius:7px; display:none; }
+        .fc-badge-facturas.fc-badge-pend { display:block; background:#e53935; color:#fff; }
+        .fc-badge-facturas.fc-badge-ok { display:block; background:#1565c0; color:#fff; }
+
+        .fc-modal-facturas-content { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; border-radius:10px; width:780px; max-width:95vw; max-height:88vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,.2); overflow:hidden; border:1px solid #e0e0e0; }
+        .fc-fac-toolbar { display:flex; gap:8px; padding:8px 16px; background:#f8fafc; border-bottom:1px solid #e2e8f0; align-items:center; }
+        .fc-btn-add-fac { padding:6px 14px; border:1px solid #1565c0; border-radius:6px; cursor:pointer; font-size:11px; font-weight:600; background:#fff; color:#1565c0; transition:all .15s; }
+        .fc-btn-add-fac:hover { background:#1565c0; color:#fff; }
+        .fc-btn-buscar-cartera { padding:6px 14px; border:1px solid #1565c0; border-radius:6px; cursor:pointer; font-size:11px; font-weight:600; background:#1565c0; color:#fff; transition:all .15s; }
+        .fc-btn-buscar-cartera:hover { background:#0d47a1; }
+
+        .fc-fac-body { overflow-y:auto; max-height:55vh; padding:0; }
+        .fc-tabla-facturas { width:100%; border-collapse:collapse; font-size:11px; }
+        .fc-tabla-facturas thead th { position:sticky; top:0; background:#1e293b; padding:8px 8px; text-align:left; font-weight:600; color:#fff; font-size:10px; text-transform:uppercase; letter-spacing:.5px; z-index:1; }
+        .fc-tabla-facturas tbody tr { border-bottom:1px solid #f1f5f9; transition:background .1s; }
+        .fc-tabla-facturas tbody tr:hover { background:#eff6ff; }
+        .fc-tabla-facturas tbody tr:nth-child(even) { background:#f8fafc; }
+        .fc-tabla-facturas tbody tr:nth-child(even):hover { background:#eff6ff; }
+        .fc-fac-pendiente { }
+        .fc-fac-programada { background:#f0fdf4 !important; }
+        .fc-fac-programada:hover { background:#dcfce7 !important; }
+        .fc-fac-vacia td { text-align:center; padding:40px 20px; color:#94a3b8; font-size:12px; }
+        .fc-fac-input { border:1px solid #e2e8f0; border-radius:4px; padding:5px 6px; font-size:11px; width:100%; box-sizing:border-box; background:#fff; color:#1e293b; }
+        .fc-fac-input:focus { outline:none; border-color:#1565c0; box-shadow:0 0 0 2px rgba(21,101,192,.15); }
+        .fc-fac-num { width:130px; font-family:'Courier New',monospace; font-size:10px; }
+        .fc-fac-monto { width:85px; text-align:right; font-weight:700; color:#1e293b; }
+        .fc-fac-select-fecha { border:1px solid #e2e8f0; border-radius:4px; padding:5px 4px; font-size:10px; background:#fff; cursor:pointer; min-width:120px; color:#1e293b; }
+        .fc-fac-select-fecha:focus { outline:none; border-color:#1565c0; }
+        .fc-btn-del-fac { background:none; color:#94a3b8; border:none; cursor:pointer; padding:4px 6px; font-size:14px; font-weight:400; border-radius:4px; transition:all .15s; }
+        .fc-btn-del-fac:hover { background:#fee2e2; color:#dc2626; }
+        .fc-fac-footer { padding:12px 16px; border-top:1px solid #e2e8f0; background:#f8fafc; }
+        .fc-fac-totales { display:flex; gap:20px; margin-bottom:10px; font-size:11px; }
+        .fc-fac-t-pend { color:#dc2626; font-weight:600; background:#fef2f2; padding:3px 8px; border-radius:4px; }
+        .fc-fac-t-prog { color:#16a34a; font-weight:600; background:#f0fdf4; padding:3px 8px; border-radius:4px; }
+        .fc-fac-t-total { color:#1565c0; font-weight:700; background:#eff6ff; padding:3px 8px; border-radius:4px; }
+        .fc-fac-btns { display:flex; gap:8px; justify-content:flex-end; }
+        .fc-fac-btns .fc-btn-cancelar { padding:8px 20px; background:#fff; color:#64748b; border:1px solid #e2e8f0; border-radius:6px; font-size:12px; font-weight:500; cursor:pointer; }
+        .fc-fac-btns .fc-btn-cancelar:hover { background:#f1f5f9; }
+        .fc-fac-btns .fc-btn-aplicar { padding:8px 20px; background:#1565c0; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; }
+        .fc-fac-btns .fc-btn-aplicar:hover { background:#0d47a1; }
+        .fc-tabla-facturas td { padding:6px 8px; }
+
+        .fc-cartera-item:hover td { background:#eff6ff !important; }
+        .fc-cartera-item td { border-bottom:1px solid #f1f5f9; padding:8px 10px !important; }
+
+        .fc-col-vencido { text-align:center; font-size:10px; font-weight:600; padding:3px 6px; white-space:nowrap; }
+        .fc-venc-critico { color:#dc2626; }
+        .fc-venc-critico::before { content:''; display:inline-block; width:6px; height:6px; border-radius:50%; background:#dc2626; margin-right:3px; }
+        .fc-venc-alto { color:#ea580c; }
+        .fc-venc-alto::before { content:''; display:inline-block; width:6px; height:6px; border-radius:50%; background:#ea580c; margin-right:3px; }
+        .fc-venc-medio { color:#ca8a04; }
+        .fc-venc-medio::before { content:''; display:inline-block; width:6px; height:6px; border-radius:50%; background:#ca8a04; margin-right:3px; }
+        .fc-venc-ok { color:#16a34a; }
+        .fc-venc-ok::before { content:''; display:inline-block; width:6px; height:6px; border-radius:50%; background:#16a34a; margin-right:3px; }
+
+        .fc-picker-facturas { position:absolute; z-index:9999; background:#fff; border:1px solid #e2e8f0; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.15); min-width:300px; max-height:280px; overflow-y:auto; font-size:11px; }
+        .fc-picker-facturas .fc-picker-header { padding:10px 12px; background:#1e293b; color:#fff; font-weight:600; font-size:11px; display:flex; justify-content:space-between; align-items:center; border-radius:7px 7px 0 0; }
+        .fc-picker-facturas .fc-picker-item { display:flex; align-items:center; padding:8px 12px; border-bottom:1px solid #f1f5f9; cursor:pointer; gap:8px; transition:background .1s; }
+        .fc-picker-facturas .fc-picker-item:hover { background:#eff6ff; }
+        .fc-picker-facturas .fc-picker-item.checked { background:#eff6ff; border-left:3px solid #1565c0; }
+        .fc-picker-facturas .fc-picker-item input[type=checkbox] { accent-color:#1565c0; }
+        .fc-picker-facturas .fc-picker-footer { padding:8px 12px; background:#f8fafc; display:flex; justify-content:space-between; align-items:center; border-top:1px solid #e2e8f0; position:sticky; bottom:0; border-radius:0 0 7px 7px; }
+    `;
+    document.head.appendChild(s);
+}
+
+// ============ BUSCADOR EN CARTERA CARGADA ============
+
+function fc_mostrarBuscadorCartera(rowId) {
+    const contenedor = document.querySelector('.fc-fac-body');
+    if (!contenedor) return;
+
+    // Construir lista de proveedores de la cartera
+    const proveedores = Object.entries(fc_cartera_cargada)
+        .map(([k, v]) => ({ key: k, nombre: v.nombre, cant: v.facturas.length, total: v.facturas.reduce((s,f) => s + f.monto, 0) }))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+    let listaHtml = '';
+    proveedores.forEach(p => {
+        listaHtml += `<tr class="fc-cartera-item" onclick="fc_seleccionarProveedorCartera('${rowId}','${p.key}')" style="cursor:pointer;">
+            <td style="padding:6px 8px; font-size:11px;">${p.nombre}</td>
+            <td style="padding:6px 8px; font-size:11px; text-align:center;">${p.cant}</td>
+            <td style="padding:6px 8px; font-size:11px; text-align:right; font-weight:600;">$${p.total.toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+        </tr>`;
+    });
+
+    contenedor.innerHTML = `
+        <div style="padding:10px;">
+            <input type="text" id="fc-filtro-cartera" placeholder="Filtrar proveedor..."
+                oninput="fc_filtrarCartera()"
+                style="width:100%;padding:8px 12px;border:1.5px solid #ccc;border-radius:6px;font-size:12px;margin-bottom:8px;box-sizing:border-box;">
+            <div style="max-height:45vh;overflow-y:auto;">
+                <table style="width:100%;border-collapse:collapse;" id="fc-tabla-cartera">
+                    <thead><tr style="background:#e8eaf6;">
+                        <th style="padding:6px 8px;text-align:left;font-size:11px;">Proveedor</th>
+                        <th style="padding:6px 8px;text-align:center;font-size:11px;">Facturas</th>
+                        <th style="padding:6px 8px;text-align:right;font-size:11px;">Total Pend.</th>
+                    </tr></thead>
+                    <tbody>${listaHtml}</tbody>
+                </table>
+            </div>
+            <button onclick="fc_volverListaFacturas('${rowId}')" style="margin-top:8px;padding:6px 12px;background:#607d8b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;">Volver a facturas</button>
+        </div>
+    `;
+
+    setTimeout(() => document.getElementById('fc-filtro-cartera')?.focus(), 100);
+}
+
+function fc_filtrarCartera() {
+    const filtro = (document.getElementById('fc-filtro-cartera')?.value || '').toUpperCase();
+    document.querySelectorAll('.fc-cartera-item').forEach(row => {
+        const nombre = row.cells[0].textContent.toUpperCase();
+        row.style.display = nombre.includes(filtro) ? '' : 'none';
+    });
+}
+
+function fc_seleccionarProveedorCartera(rowId, provKey) {
+    const cartera = fc_cartera_cargada[provKey];
+    if (!cartera) return;
+
+    const facturas = fc_getFacturas(rowId);
+    const existentes = new Set(facturas.map(f => f.num));
+    let agregadas = 0;
+
+    cartera.facturas.forEach(fac => {
+        if (!existentes.has(fac.num)) {
+            facturas.push({ ...fac });
+            agregadas++;
+        }
+    });
+
+    // Actualizar nombre del item con el del proveedor
+    const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
+    if (row) {
+        const nombreInput = row.querySelector('.fc-input-nombre');
+        if (nombreInput && (nombreInput.value === 'Nuevo Item' || nombreInput.value === 'Item 1' || nombreInput.value === 'Proveedor 1')) {
+            nombreInput.value = cartera.nombre;
+        }
+        fc_actualizarBadgeFacturas(row);
+        fc_abrirFacturas(row); // Reabrir modal con las facturas cargadas
+    }
+}
+
+function fc_volverListaFacturas(rowId) {
+    const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
+    if (row) fc_abrirFacturas(row);
+}
+
+// Cuando un input de egreso recibe foco, si tiene facturas abre el picker
+function fc_onFocusEgreso(input) {
+    const row = input.closest('tr');
+    if (!row) return;
+    const rowId = row.dataset.fcRowId;
+    if (!rowId) return;
+    const facturas = fc_facturas_data[rowId];
+    if (facturas && facturas.length > 0) {
+        input.blur();
+        fc_abrirPickerFacturas(input);
+    }
+}
+
+// ============ PICKER DE FACTURAS EN CELDA DEL DIA ============
+
+function fc_abrirPickerFacturas(inputEgreso) {
+    // Cerrar picker existente
+    fc_cerrarPickerFacturas();
+
+    const row = inputEgreso.closest('tr');
+    if (!row) return;
+    const rowId = row.dataset.fcRowId;
+    if (!rowId) return;
+
+    const facturas = fc_facturas_data[rowId];
+    if (!facturas || facturas.length === 0) return; // Sin facturas, input normal
+
+    const fecha = inputEgreso.dataset.fecha;
+    if (!fecha) return;
+
+    // Facturas disponibles: sin fecha_pago O asignadas a esta misma fecha
+    const disponibles = facturas.map((fac, idx) => ({ ...fac, idx }))
+        .filter(f => !f.fecha_pago || f.fecha_pago === fecha);
+
+    if (disponibles.length === 0) return;
+
+    const picker = document.createElement('div');
+    picker.className = 'fc-picker-facturas';
+    picker.id = 'fc-picker-activo';
+
+    const meses = ['','ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+    const d = new Date(fecha + 'T12:00:00');
+    const fechaLabel = `${d.getDate()}-${meses[d.getMonth()+1]}`;
+
+    let itemsHtml = '';
+    disponibles.forEach(fac => {
+        const checked = fac.fecha_pago === fecha;
+        const vencInfo = fac.vencimiento ? ` | Venc: ${fac.vencimiento.substring(5)}` : '';
+        itemsHtml += `<div class="fc-picker-item ${checked ? 'checked' : ''}" data-fac-idx="${fac.idx}" onclick="fc_toggleFacturaPicker(this, '${rowId}', '${fecha}')">
+            <input type="checkbox" ${checked ? 'checked' : ''} style="pointer-events:none;">
+            <span style="flex:1;">${fac.num || '(sin nro)'}</span>
+            <span style="font-weight:600;">$${(fac.monto||0).toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+            <span style="font-size:9px;color:#888;">${vencInfo}</span>
+        </div>`;
+    });
+
+    picker.innerHTML = `
+        <div class="fc-picker-header">
+            <span>Facturas para ${fechaLabel}</span>
+            <button onclick="fc_cerrarPickerFacturas()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:14px;">&times;</button>
+        </div>
+        ${itemsHtml}
+        <div class="fc-picker-footer">
+            <span id="fc-picker-total">$0.00</span>
+            <button onclick="fc_aplicarPickerFacturas('${rowId}','${fecha}')" style="background:#1565c0;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:11px;">OK</button>
+        </div>
+    `;
+
+    // Posicionar cerca del input
+    const rect = inputEgreso.getBoundingClientRect();
+    picker.style.position = 'fixed';
+    picker.style.top = (rect.bottom + 2) + 'px';
+    picker.style.left = Math.max(rect.left - 100, 10) + 'px';
+    document.body.appendChild(picker);
+
+    // Actualizar total
+    fc_actualizarTotalPicker(rowId, fecha);
+
+    // Cerrar al hacer clic fuera
+    setTimeout(() => {
+        document.addEventListener('click', fc_clickFueraPicker, true);
+    }, 50);
+}
+
+function fc_clickFueraPicker(e) {
+    const picker = document.getElementById('fc-picker-activo');
+    if (picker && !picker.contains(e.target)) {
+        fc_cerrarPickerFacturas();
+    }
+}
+
+function fc_cerrarPickerFacturas() {
+    const picker = document.getElementById('fc-picker-activo');
+    if (picker) picker.remove();
+    document.removeEventListener('click', fc_clickFueraPicker, true);
+}
+
+function fc_toggleFacturaPicker(div, rowId, fecha) {
+    const facturas = fc_facturas_data[rowId];
+    const idx = parseInt(div.dataset.facIdx);
+    if (!facturas || !facturas[idx]) return;
+
+    const cb = div.querySelector('input[type="checkbox"]');
+    const isChecked = cb.checked;
+
+    if (isChecked) {
+        // Desmarcar: quitar fecha_pago
+        facturas[idx].fecha_pago = '';
+        cb.checked = false;
+        div.classList.remove('checked');
+    } else {
+        // Marcar: asignar fecha_pago
+        facturas[idx].fecha_pago = fecha;
+        cb.checked = true;
+        div.classList.add('checked');
+    }
+
+    fc_actualizarTotalPicker(rowId, fecha);
+}
+
+function fc_actualizarTotalPicker(rowId, fecha) {
+    const facturas = fc_facturas_data[rowId] || [];
+    const total = facturas.filter(f => f.fecha_pago === fecha).reduce((s, f) => s + (f.monto || 0), 0);
+    const el = document.getElementById('fc-picker-total');
+    if (el) {
+        el.textContent = `$${total.toLocaleString('en-US',{minimumFractionDigits:2})}`;
+        el.style.fontWeight = '700';
+        el.style.color = total > 0 ? '#1565c0' : '#666';
+    }
+}
+
+function fc_aplicarPickerFacturas(rowId, fecha) {
+    const facturas = fc_facturas_data[rowId] || [];
+    const total = facturas.filter(f => f.fecha_pago === fecha).reduce((s, f) => s + (f.monto || 0), 0);
+
+    // Buscar el input de esa fecha en la fila
+    const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
+    if (row) {
+        const input = row.querySelector(`.fc-input[data-fecha="${fecha}"]`);
+        if (input) {
+            input.value = total > 0 ? total.toFixed(2) : '';
+        }
+        fc_actualizarBadgeFacturas(row);
+    }
+
+    fc_cerrarPickerFacturas();
+    fc_recalcularTodo();
+}
+
+// ============ CARGA MASIVA CARTERA POR PAGAR (XLS) ============
+
+// Almacen global de cartera cargada: { proveedorNorm: [facturas] }
+let fc_cartera_cargada = {};
+
+// Dias de credito por proveedor (nombre parcial -> dias)
+const fc_dias_credito = {
+    'A TU PUERTA':7,'AGROVOLCANES':15,'ALIMANDUCARE':7,'ARCA CONTINENTAL':1,
+    'AROMAPISOS':30,'CARSNACK':30,'CHIRAPI':7,'CITROFSANT':15,'CLEAN CORI':30,
+    'COOK ALIMENTOS':0,'CORPORACION FAVORITA':0,'DELI WOOF':7,'DIHERKA':30,
+    'DINADEC':7,'DISTRIBUIDORA LM':15,'DURAGAS':15,'EL HUEVITO FELIZ':7,
+    'FLORALP':30,'FOODS BUSINESS':30,'FULL PACKING':30,'GRAN VERDE':7,
+    'GRUPO JERUSALEN':30,'HERMINIA SANCHEZ':30,'IBD':30,
+    'INTEGRACION AVICOLA':8,'ISOLATOT':30,'JM SERVICIOS':7,
+    'JORGE PADILLA':7,'PADILLA URQUIZO':7,'KRUPY':7,'KYPROSS':7,
+    'LA FABRIL':21,'LA REINA MIEL':7,'LUDY CHIFLES':0,'LUMER':45,'CLASSIC BUN':45,
+    'MALDONADO LANDAZO':30,'GLOBAL FLEXO':30,'MARCELLOS':7,'MASTER MEAT':21,
+    'MIGAPAN':15,'NIRSA':20,'OLMEDO':7,'ALBACORA':7,
+    'OSCAR CASTILLO':7,'PAPEL ART':30,'POLYPAPELES':15,'PROADA':30,'DOBLE A':30,
+    'PROALCO':0,'PROALMEX':30,'PRONACA':30,'PUBLIJOB':30,'RONALS PAPAS':15,
+    'SIGMA':21,'SOLUCIONES INDUSTRIALES':15,'TRESCO':15,'UNILIMPIO':15,'XPERTPLAG':30
+};
+
+function fc_buscarDiasCredito(nombreProveedor) {
+    const upper = nombreProveedor.toUpperCase();
+    for (const [key, dias] of Object.entries(fc_dias_credito)) {
+        if (upper.includes(key)) return dias;
+    }
+    return 0;
+}
+
+function fc_cargarCarteraXLS() {
+    document.getElementById('fc-input-cartera').click();
+}
+
+function fc_procesarCarteraXLS(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+            // Buscar fila de headers (contiene "Proveedor" y "# Documento")
+            let headerIdx = -1;
+            for (let i = 0; i < Math.min(rows.length, 10); i++) {
+                const fila = rows[i].map(c => String(c).trim());
+                if (fila.some(c => c === 'Proveedor') && fila.some(c => c.includes('Documento'))) {
+                    headerIdx = i;
+                    break;
+                }
+            }
+            if (headerIdx === -1) {
+                alert('No se reconoce el formato del archivo. Asegurese de usar CarteraPorPagar de Contifico.');
+                return;
+            }
+
+            const headers = rows[headerIdx].map(c => String(c).trim());
+            const colProv = headers.indexOf('Proveedor');
+            const colRazon = headers.findIndex(h => h.includes('Social'));
+            const colTipo = headers.findIndex(h => h.includes('Tipo'));
+            const colDoc = headers.findIndex(h => h.includes('Documento') && !h.includes('Tipo') && !h.includes('Valor') && !h.includes('modificado'));
+            const colEmision = headers.findIndex(h => h.includes('Emisi'));
+            const colVenc = headers.findIndex(h => h.includes('Vencimiento'));
+            const colTotal = headers.indexOf('Total');
+            const colValDoc = headers.findIndex(h => h.includes('Valor documento'));
+            const colRet = headers.findIndex(h => h.includes('Retenciones'));
+            const colPagos = headers.findIndex(h => h.includes('Pagos'));
+
+            // Parsear facturas (solo tipo FAC)
+            fc_cartera_cargada = {};
+            let totalFacturas = 0;
+            let proveedoresSet = new Set();
+
+            for (let i = headerIdx + 1; i < rows.length; i++) {
+                const r = rows[i];
+                const tipo = String(r[colTipo] || '').trim();
+                if (tipo !== 'FAC') continue; // Solo facturas
+
+                const proveedor = String(r[colProv] || '').trim();
+                if (!proveedor) continue;
+
+                const numDoc = String(r[colDoc] || '').trim();
+                const total = parseFloat(r[colTotal]) || 0;
+                if (total <= 0) continue; // Solo pendientes con saldo
+
+                // Parsear fechas (pueden venir como DD/MM/YYYY o como numero Excel)
+                const fechaEmision = fc_parsearFechaXLS(r[colEmision]);
+                const fechaVenc = fc_parsearFechaXLS(r[colVenc]);
+
+                const key = fc_normalizarNombre(proveedor);
+                if (!fc_cartera_cargada[key]) fc_cartera_cargada[key] = { nombre: proveedor, facturas: [] };
+
+                fc_cartera_cargada[key].facturas.push({
+                    num: numDoc,
+                    fecha: fechaEmision,
+                    monto: total,
+                    vencimiento: fechaVenc,
+                    fecha_pago: ''
+                });
+                totalFacturas++;
+                proveedoresSet.add(key);
+            }
+
+            // El XLS manda: eliminar todos los items de proveedores y recrear desde la cartera
+            // Primero, eliminar TODOS los items del grupo prov-principales
+            document.querySelectorAll('.fc-egreso-item-prov-principales').forEach(row => row.remove());
+
+            // Crear un item por cada proveedor de la cartera
+            const grupoId = 'prov-principales';
+            const headerRow = document.getElementById(`fc-grupo-${grupoId}`);
+            if (!headerRow) {
+                alert('No se encontro el grupo PROVEEDORES PRINCIPALES en egresos');
+                return;
+            }
+
+            // Ordenar proveedores por total descendente
+            const proveedoresOrdenados = Object.entries(fc_cartera_cargada)
+                .map(([k, v]) => ({ key: k, nombre: v.nombre, facturas: v.facturas, total: v.facturas.reduce((s,f) => s + f.monto, 0) }))
+                .sort((a, b) => b.total - a.total);
+
+            let facturasAsignadas = 0;
+            const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
+            if (!semanas || semanas.length === 0) {
+                alert('Primero consulte los datos (boton Consultar)');
+                return;
+            }
+
+            // Referencia para insertar despues del header
+            let insertAfter = headerRow;
+
+            proveedoresOrdenados.forEach(prov => {
+                const dynRowId = 'fcr-dyn-' + (++fc_row_id_counter);
+                const diasCred = fc_buscarDiasCredito(prov.nombre);
+
+                const newRow = document.createElement('tr');
+                newRow.className = `row-banco-item fc-egreso-item-${grupoId}`;
+                newRow.dataset.grupo = `eg-${grupoId}`;
+                newRow.dataset.banco = 'produbanco';
+                newRow.dataset.fcRowId = dynRowId;
+
+                let celdas = `<td class="col-concepto indent-3">
+                    <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
+                        <option value="produbanco" selected>PRO</option>
+                        <option value="pichincha">PICH</option>
+                    </select>
+                    <input type="text" class="fc-input-nombre" value="${prov.nombre}">
+                    <button class="fc-btn-facturas" onclick="event.stopPropagation();fc_abrirFacturas(this.closest('tr'))" title="Facturas pendientes"><span class="fc-icon-fac">F</span><span class="fc-badge-facturas fc-badge-pend">${prov.facturas.length}</span></button>
+                    <button class="fc-btn-del" onclick="fc_eliminarItem(this)">x</button>
+                </td>`;
+                celdas += `<td class="col-saldo monto" style="background:#e3f2fd; min-width:80px;">
+                    <input type="text" class="fc-input fc-input-saldo" value="${prov.total.toFixed(2)}" onchange="fc_recalcularSaldos()" style="width:70px; text-align:right; background:#e3f2fd;">
+                </td>`;
+                celdas += `<td class="col-dias monto" style="background:#fff3e0; min-width:50px;">
+                    <input type="number" class="fc-input fc-input-dias" value="${diasCred}" min="0" max="365" style="width:45px; text-align:center; background:#fff3e0;">
+                </td>`;
+
+                semanas.forEach(sem => {
+                    celdas += `<td class="col-semana sem-${sem.num}-header monto fc-item-sem" data-semana="${sem.num}">-</td>`;
+                    sem.dias.forEach((dia, i) => {
+                        const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+                        celdas += `<td class="dia-col sem-${sem.num}${sab} monto fc-celda-egreso">
+                            <input type="text" class="fc-input fc-input-egreso-${grupoId}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()" onfocus="fc_onFocusEgreso(this)">
+                            <button class="fc-btn-rep" onclick="fc_abrirRecurrencia(this)" title="Repetir desde aqui">&#x21bb;</button>
+                        </td>`;
+                    });
+                    celdas += `<td class="dia-col sem-${sem.num} total-col monto fc-item-total" data-semana="${sem.num}">-</td>`;
+                });
+
+                newRow.innerHTML = celdas;
+                insertAfter.parentNode.insertBefore(newRow, insertAfter.nextSibling);
+                insertAfter = newRow;
+
+                // Cargar facturas
+                fc_facturas_data[dynRowId] = prov.facturas.map(f => ({...f}));
+                facturasAsignadas += prov.facturas.length;
+
+                // Aplicar visibilidad correcta
+                fc_aplicarVisibilidadNuevoItem(newRow);
+            });
+
+            fc_recalcularTodo();
+
+            // Resumen
+            let msg = `Cartera cargada:\n`;
+            msg += `- ${totalFacturas} facturas de ${proveedoresOrdenados.length} proveedores\n`;
+            msg += `- Todos creados en PROVEEDORES PRINCIPALES\n`;
+            msg += `- Ordenados por monto (mayor a menor)\n`;
+            msg += `\nUse el boton F en cada proveedor para ver facturas y asignar fechas de pago.`;
+            alert(msg);
+
+        } catch (err) {
+            console.error('Error procesando XLS:', err);
+            alert('Error al procesar archivo: ' + err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+    input.value = ''; // Reset para permitir cargar mismo archivo
+}
+
+function fc_parsearFechaXLS(val) {
+    if (!val) return '';
+    // Si es numero (fecha Excel)
+    if (typeof val === 'number') {
+        const fecha = new Date((val - 25569) * 86400 * 1000);
+        return fecha.toISOString().split('T')[0];
+    }
+    // Si es string DD/MM/YYYY
+    const str = String(val).trim();
+    const m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    // Si ya es YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    return str;
+}
+
+function fc_normalizarNombre(nombre) {
+    return nombre.toUpperCase().trim()
+        .replace(/[.,\-_\/\\]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/\b(S\.?A\.?S\.?|S\.?A\.?|CIA\.?\s*LTDA\.?|CIA\.?|LTDA\.?)\b/gi, '')
+        .trim();
 }
 
 // Registrar en el sistema de vistas
