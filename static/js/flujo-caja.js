@@ -2870,13 +2870,16 @@ function fc_abrirPickerFacturas(inputEgreso) {
     // Actualizar total
     fc_actualizarTotalPicker(rowId, fecha);
 
-    // Cerrar al hacer clic fuera
-    setTimeout(() => {
-        document.addEventListener('click', fc_clickFueraPicker, true);
-    }, 50);
+    // Cerrar al hacer clic fuera (delay para que el click de apertura no lo cierre)
+    fc_pickerAbierto = Date.now();
+    document.addEventListener('mousedown', fc_clickFueraPicker, true);
 }
 
+let fc_pickerAbierto = 0;
+
 function fc_clickFueraPicker(e) {
+    // Ignorar si el picker acaba de abrirse (< 300ms)
+    if (Date.now() - fc_pickerAbierto < 300) return;
     const picker = document.getElementById('fc-picker-activo');
     if (picker && !picker.contains(e.target)) {
         fc_cerrarPickerFacturas();
@@ -2886,7 +2889,7 @@ function fc_clickFueraPicker(e) {
 function fc_cerrarPickerFacturas() {
     const picker = document.getElementById('fc-picker-activo');
     if (picker) picker.remove();
-    document.removeEventListener('click', fc_clickFueraPicker, true);
+    document.removeEventListener('mousedown', fc_clickFueraPicker, true);
 }
 
 function fc_toggleFacturaPicker(div, rowId, fecha) {
