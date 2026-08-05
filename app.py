@@ -5271,7 +5271,7 @@ SMTP_CONFIG = {
     'server': os.environ.get('SMTP_SERVER', 'smtp.gmail.com'),
     'port': int(os.environ.get('SMTP_PORT', '587')),
     'user': os.environ.get('SMTP_USER', 'ortiz.medranda@gmail.com'),
-    'password': os.environ.get('SMTP_PASSWORD', 'curahoyg mkxzkbwz'),
+    'password': os.environ.get('SMTP_PASSWORD', 'cikp vxlq zlim dzzc'),
 }
 APP_URL = os.environ.get('APP_URL', 'https://inventario-ciego-5bdr.onrender.com')
 
@@ -7130,6 +7130,58 @@ def flujo_caja_cargar_guardado():
             }
 
         return jsonify({'ok': True, 'guardados': guardados})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/ventas-por-local', methods=['GET'])
+def flujo_caja_ventas_por_local():
+    """Ventas mensuales por centro de costo para grafico"""
+    conn = None
+    try:
+        meses = int(request.args.get('meses', '12'))
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+
+        cur.execute('''
+            WITH unicos AS (
+                SELECT DISTINCT ON (documento_id, fecha, valor) fecha, centro_costo, valor
+                FROM contifico_cobrospagos
+                WHERE tipo_registro = 'CLI'
+                AND fecha >= CURRENT_DATE - (%s || ' months')::interval
+                AND centro_costo IS NOT NULL AND centro_costo != ''
+            )
+            SELECT TO_CHAR(fecha, 'YYYY-MM') as mes,
+                   centro_costo,
+                   SUM(valor) as total
+            FROM unicos
+            GROUP BY mes, centro_costo
+            ORDER BY mes, centro_costo
+        ''', (meses,))
+
+        datos = {}
+        locales_set = set()
+        for r in cur.fetchall():
+            mes = r[0]
+            local = r[1]
+            total = float(r[2])
+            if mes not in datos:
+                datos[mes] = {}
+            datos[mes][local] = total
+            locales_set.add(local)
+
+        return jsonify({
+            'ok': True,
+            'datos': datos,
+            'locales': sorted(list(locales_set)),
+            'meses': sorted(datos.keys())
+        })
 
     except Exception as e:
         import traceback
