@@ -1443,13 +1443,14 @@ def _seleccionar_productos_semana(cur, bodega, fecha_lunes):
 
 @app.route('/api/inventario/generar-conteo-operativo', methods=['POST'])
 def generar_conteo_operativo():
-    """Genera conteo semanal para bodegas operativas.
-    BP: 14 fijos diarios | MP/Planta: 10 aleatorios semanales (rotan cada lunes).
-    Crea tarea para que el worker descargue stock de Contifico.
-    Body: {bodega, fecha_lunes}"""
+    """Genera conteo DIARIO para bodegas operativas.
+    Los productos se seleccionan UNA vez por semana (lunes) y se usan todos los dias.
+    BP: 14 fijos | MP/Planta: 10 aleatorios semanales.
+    Crea una tarea POR DIA para que el worker descargue stock de Contifico.
+    Body: {bodega, fecha}"""
     data = request.json or {}
     bodega = data.get('bodega')
-    fecha = data.get('fecha') or data.get('fecha_lunes')
+    fecha = data.get('fecha')
 
     BODEGAS_VALIDAS = ('bodega_principal', 'materia_prima', 'planta')
     if bodega not in BODEGAS_VALIDAS:
@@ -1457,14 +1458,19 @@ def generar_conteo_operativo():
     if not fecha:
         return jsonify({'error': 'fecha requerida'}), 400
 
-    fecha_lunes = _get_lunes(fecha)
+    from datetime import date
+    if isinstance(fecha, str):
+        fecha_date = date.fromisoformat(fecha)
+    else:
+        fecha_date = fecha
+    fecha_lunes = _get_lunes(fecha_date)
 
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
 
-        # Seleccionar productos para la semana
+        # Seleccionar productos para la semana (solo genera rotacion nueva si es la primera vez)
         productos = _seleccionar_productos_semana(cur, bodega, fecha_lunes)
         if not productos:
             return jsonify({'error': 'No hay productos configurados para esta bodega'}), 400
@@ -1472,7 +1478,7 @@ def generar_conteo_operativo():
         n_fijos = len(productos) if bodega == 'bodega_principal' else 0
         n_aleatorios = 0 if bodega == 'bodega_principal' else len(productos)
 
-        # Crear tarea para el worker (descarga stock Contifico + inserta en inventario_ciego_conteos)
+        # Crear tabla si no existe
         cur.execute("""
             CREATE TABLE IF NOT EXISTS goti.conteo_operativo_tareas (
                 id SERIAL PRIMARY KEY,
@@ -1493,9 +1499,7 @@ def generar_conteo_operativo():
                 UNIQUE(bodega, fecha)
             )
         """)
-        # Agregar columnas nuevas si no existen
         for col in ['codigos_seleccionados TEXT[]', 'semana_inicio DATE', 'semana_fin DATE']:
-            nombre = col.split()[0]
             try:
                 cur.execute(f"ALTER TABLE goti.conteo_operativo_tareas ADD COLUMN IF NOT EXISTS {col}")
             except Exception:
@@ -1505,15 +1509,15 @@ def generar_conteo_operativo():
         codigos = [p['codigo'] for p in productos]
         domingo = fecha_lunes + timedelta(days=6)
 
-        # Verificar si ya hay tarea para esta semana+bodega
+        # Verificar si ya hay tarea para este DIA+bodega
         cur.execute("""
             SELECT id, estado FROM goti.conteo_operativo_tareas
             WHERE bodega = %s AND fecha = %s
-        """, (bodega, str(fecha_lunes)))
+        """, (bodega, str(fecha_date)))
         existente = cur.fetchone()
         if existente:
             if existente['estado'] == 'completado':
-                return jsonify({'error': 'Ya se genero el conteo para esta semana', 'ya_existe': True}), 409
+                return jsonify({'error': f'Ya se genero el conteo para {fecha} en {bodega}', 'ya_existe': True}), 409
             # Resetear si pendiente/error
             cur.execute("""
                 UPDATE goti.conteo_operativo_tareas
@@ -1526,6 +1530,7 @@ def generar_conteo_operativo():
             conn.commit()
             return jsonify({
                 'id': existente['id'], 'estado': 'pendiente', 'reset': True,
+                'fecha': str(fecha_date),
                 'productos': len(codigos), 'fijos': n_fijos, 'aleatorios': n_aleatorios,
                 'semana': f'{fecha_lunes} - {domingo}',
                 'codigos': codigos
@@ -1535,12 +1540,13 @@ def generar_conteo_operativo():
             INSERT INTO goti.conteo_operativo_tareas
                 (bodega, fecha, total_productos, fijos, aleatorios, codigos_seleccionados, semana_inicio, semana_fin)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
-        """, (bodega, str(fecha_lunes), len(codigos), n_fijos, n_aleatorios, codigos, str(fecha_lunes), str(domingo)))
+        """, (bodega, str(fecha_date), len(codigos), n_fijos, n_aleatorios, codigos, str(fecha_lunes), str(domingo)))
         new_id = cur.fetchone()['id']
         conn.commit()
 
         return jsonify({
             'id': new_id, 'estado': 'pendiente',
+            'fecha': str(fecha_date),
             'productos': len(codigos), 'fijos': n_fijos, 'aleatorios': n_aleatorios,
             'semana': f'{fecha_lunes} - {domingo}',
             'codigos': codigos,
@@ -1566,11 +1572,14 @@ def conteo_op_productos_semana():
     try:
         conn = get_db()
         cur = conn.cursor()
+        # Buscar productos: primero por fecha exacta, luego por cualquier dia de la semana
+        lunes = _get_lunes(fecha)
         cur.execute("""
             SELECT codigos_seleccionados, semana_inicio, semana_fin
             FROM goti.conteo_operativo_tareas
-            WHERE bodega = %s AND fecha = %s
-        """, (bodega, str(_get_lunes(fecha))))
+            WHERE bodega = %s AND (fecha = %s OR semana_inicio = %s)
+            ORDER BY fecha DESC LIMIT 1
+        """, (bodega, str(fecha), str(lunes)))
         r = cur.fetchone()
         if not r or not r['codigos_seleccionados']:
             return jsonify({'error': 'No hay productos seleccionados para esta semana'}), 404
@@ -7407,6 +7416,100 @@ def flujo_caja_proveedores_eliminar(prov_id):
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
         cur.execute('DELETE FROM fc_proveedores WHERE id = %s RETURNING nombre', (prov_id,))
+        row = cur.fetchone()
+        conn.commit()
+        if row: return jsonify({'ok': True, 'eliminado': row[0]})
+        return jsonify({'error': 'No encontrado'}), 404
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/recurrentes', methods=['GET'])
+def flujo_caja_recurrentes_listar():
+    """Listar pagos recurrentes"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS fc_pagos_recurrentes (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                grupo TEXT DEFAULT 'pagos-fijos',
+                monto NUMERIC(14,2) DEFAULT 0,
+                frecuencia TEXT DEFAULT 'mensual',
+                dia_mes INTEGER DEFAULT 1,
+                dia_semana INTEGER DEFAULT 0,
+                banco TEXT DEFAULT 'produbanco',
+                activo BOOLEAN DEFAULT TRUE,
+                observaciones TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        ''')
+        conn.commit()
+        cur.execute('SELECT id, nombre, grupo, monto, frecuencia, dia_mes, dia_semana, banco, activo, observaciones FROM fc_pagos_recurrentes ORDER BY grupo, nombre')
+        pagos = []
+        for r in cur.fetchall():
+            pagos.append({
+                'id': r[0], 'nombre': r[1], 'grupo': r[2], 'monto': float(r[3] or 0),
+                'frecuencia': r[4] or 'mensual', 'dia_mes': r[5] or 1,
+                'dia_semana': r[6] or 0, 'banco': r[7] or 'produbanco',
+                'activo': r[8], 'observaciones': r[9] or ''
+            })
+        return jsonify({'ok': True, 'pagos': pagos})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/recurrentes', methods=['POST'])
+def flujo_caja_recurrentes_guardar():
+    """Crear o actualizar pago recurrente"""
+    conn = None
+    try:
+        data = request.get_json()
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        pago_id = data.get('id', 0)
+        if pago_id and pago_id > 0:
+            cur.execute('''
+                UPDATE fc_pagos_recurrentes SET nombre=%s, grupo=%s, monto=%s, frecuencia=%s,
+                    dia_mes=%s, dia_semana=%s, banco=%s, activo=%s, observaciones=%s, updated_at=NOW()
+                WHERE id=%s RETURNING id
+            ''', (data.get('nombre',''), data.get('grupo','pagos-fijos'), data.get('monto',0),
+                  data.get('frecuencia','mensual'), data.get('dia_mes',1), data.get('dia_semana',0),
+                  data.get('banco','produbanco'), data.get('activo',True), data.get('observaciones',''), pago_id))
+        else:
+            cur.execute('''
+                INSERT INTO fc_pagos_recurrentes (nombre, grupo, monto, frecuencia, dia_mes, dia_semana, banco, activo, observaciones)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+            ''', (data.get('nombre',''), data.get('grupo','pagos-fijos'), data.get('monto',0),
+                  data.get('frecuencia','mensual'), data.get('dia_mes',1), data.get('dia_semana',0),
+                  data.get('banco','produbanco'), data.get('activo',True), data.get('observaciones','')))
+        pago_id = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({'ok': True, 'id': pago_id})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/recurrentes/<int:pago_id>', methods=['DELETE'])
+def flujo_caja_recurrentes_eliminar(pago_id):
+    """Eliminar pago recurrente"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute('DELETE FROM fc_pagos_recurrentes WHERE id = %s RETURNING nombre', (pago_id,))
         row = cur.fetchone()
         conn.commit()
         if row: return jsonify({'ok': True, 'eliminado': row[0]})
