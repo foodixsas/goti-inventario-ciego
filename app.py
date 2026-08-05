@@ -1366,37 +1366,113 @@ def cargar_inventario():
         if conn:
             release_db(conn)
 
+MARCA_BODEGA = {
+    'bodega_principal': 'BODEGA_PRINCIPAL',
+    'materia_prima': 'MATERIA_PRIMA',
+    'planta': 'PLANTA',
+}
+
+def _get_lunes(fecha):
+    """Retorna el lunes de la semana de la fecha dada"""
+    from datetime import date
+    if isinstance(fecha, str):
+        fecha = date.fromisoformat(fecha)
+    return fecha - timedelta(days=fecha.weekday())
+
+def _seleccionar_productos_semana(cur, bodega, fecha_lunes):
+    """Selecciona productos para conteo semanal.
+    BP: 14 fijos (tipo_conteo='fijo')
+    MP/Planta: 10 aleatorios que no se hayan usado recientemente"""
+    marca = MARCA_BODEGA.get(bodega)
+    if not marca:
+        return []
+
+    if bodega == 'bodega_principal':
+        # Fijos: siempre los mismos
+        cur.execute("""
+            SELECT codigo, nombre, unidad FROM goti.productos_por_marca
+            WHERE marca = %s AND tipo_conteo = 'fijo' AND activo = TRUE
+            ORDER BY nombre
+        """, (marca,))
+        return cur.fetchall()
+
+    # MP / Planta: 10 aleatorios sin repetir hasta agotar todos
+    cur.execute("""
+        SELECT codigo FROM goti.productos_por_marca
+        WHERE marca = %s AND activo = TRUE
+    """, (marca,))
+    todos = [r['codigo'] for r in cur.fetchall()]
+
+    # Obtener codigos usados en rotaciones recientes
+    cur.execute("""
+        SELECT codigos FROM goti.rotacion_semanal_bodegas
+        WHERE bodega = %s ORDER BY semana_inicio DESC
+    """, (bodega,))
+    usados = set()
+    for r in cur.fetchall():
+        if r['codigos']:
+            usados.update(r['codigos'])
+        if len(usados) >= len(todos) - 10:
+            break  # Ya agotamos casi todos, reset
+
+    # Si ya se usaron casi todos, resetear
+    disponibles = [c for c in todos if c not in usados]
+    if len(disponibles) < 10:
+        disponibles = todos  # Reset: todos disponibles de nuevo
+
+    # Seleccionar 10 aleatorios
+    import random
+    seleccion = random.sample(disponibles, min(10, len(disponibles)))
+
+    # Guardar rotacion
+    domingo = fecha_lunes + timedelta(days=6)
+    cur.execute("""
+        INSERT INTO goti.rotacion_semanal_bodegas (bodega, semana_inicio, semana_fin, codigos)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (bodega, semana_inicio) DO UPDATE SET codigos = EXCLUDED.codigos
+    """, (bodega, fecha_lunes, domingo, seleccion))
+
+    # Retornar datos completos
+    cur.execute("""
+        SELECT codigo, nombre, unidad FROM goti.productos_por_marca
+        WHERE marca = %s AND codigo = ANY(%s) AND activo = TRUE
+        ORDER BY nombre
+    """, (marca, seleccion))
+    return cur.fetchall()
+
+
 @app.route('/api/inventario/generar-conteo-operativo', methods=['POST'])
 def generar_conteo_operativo():
-    """Crea tarea para que el worker descargue stock de Contifico y genere conteo.
-    - Bodega Principal: 8 fijos + 5 aleatorios semanales
-    - Materia Prima / Planta: 10 aleatorios semanales
-    Body: {bodega, fecha}"""
+    """Genera conteo semanal para bodegas operativas.
+    BP: 14 fijos diarios | MP/Planta: 10 aleatorios semanales (rotan cada lunes).
+    Crea tarea para que el worker descargue stock de Contifico.
+    Body: {bodega, fecha_lunes}"""
     data = request.json or {}
     bodega = data.get('bodega')
-    fecha = data.get('fecha')
+    fecha = data.get('fecha') or data.get('fecha_lunes')
 
-    BODEGAS_VALIDAS = ('bodega_principal', 'materia_prima')
+    BODEGAS_VALIDAS = ('bodega_principal', 'materia_prima', 'planta')
     if bodega not in BODEGAS_VALIDAS:
-        return jsonify({'error': 'bodega invalida'}), 400
+        return jsonify({'error': f'bodega invalida. Validas: {BODEGAS_VALIDAS}'}), 400
     if not fecha:
         return jsonify({'error': 'fecha requerida'}), 400
+
+    fecha_lunes = _get_lunes(fecha)
 
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
 
-        # Verificar si ya existen productos para esta fecha+bodega
-        cur.execute("""
-            SELECT COUNT(*) as n FROM goti.inventario_ciego_conteos
-            WHERE fecha = %s AND local = %s
-        """, (fecha, bodega))
-        ya_existe = cur.fetchone()['n']
-        if ya_existe > 0:
-            return jsonify({'error': f'Ya existen {ya_existe} productos para {bodega} en {fecha}. No se puede regenerar.', 'ya_existe': True}), 409
+        # Seleccionar productos para la semana
+        productos = _seleccionar_productos_semana(cur, bodega, fecha_lunes)
+        if not productos:
+            return jsonify({'error': 'No hay productos configurados para esta bodega'}), 400
 
-        # Crear tarea para el worker
+        n_fijos = len(productos) if bodega == 'bodega_principal' else 0
+        n_aleatorios = 0 if bodega == 'bodega_principal' else len(productos)
+
+        # Crear tarea para el worker (descarga stock Contifico + inserta en inventario_ciego_conteos)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS goti.conteo_operativo_tareas (
                 id SERIAL PRIMARY KEY,
@@ -1411,42 +1487,105 @@ def generar_conteo_operativo():
                 fijos INT,
                 aleatorios INT,
                 error_msg TEXT,
+                codigos_seleccionados TEXT[],
+                semana_inicio DATE,
+                semana_fin DATE,
                 UNIQUE(bodega, fecha)
             )
         """)
+        # Agregar columnas nuevas si no existen
+        for col in ['codigos_seleccionados TEXT[]', 'semana_inicio DATE', 'semana_fin DATE']:
+            nombre = col.split()[0]
+            try:
+                cur.execute(f"ALTER TABLE goti.conteo_operativo_tareas ADD COLUMN IF NOT EXISTS {col}")
+            except Exception:
+                conn.rollback()
         conn.commit()
 
-        # Verificar si ya hay tarea pendiente/en_proceso
+        codigos = [p['codigo'] for p in productos]
+        domingo = fecha_lunes + timedelta(days=6)
+
+        # Verificar si ya hay tarea para esta semana+bodega
         cur.execute("""
             SELECT id, estado FROM goti.conteo_operativo_tareas
             WHERE bodega = %s AND fecha = %s
-        """, (bodega, fecha))
+        """, (bodega, str(fecha_lunes)))
         existente = cur.fetchone()
         if existente:
-            if existente['estado'] in ('pendiente', 'en_proceso'):
-                return jsonify({'id': existente['id'], 'estado': existente['estado'], 'reused': True})
             if existente['estado'] == 'completado':
-                return jsonify({'error': 'Ya se genero el conteo para esta fecha', 'ya_existe': True}), 409
-            # Error: resetear
+                return jsonify({'error': 'Ya se genero el conteo para esta semana', 'ya_existe': True}), 409
+            # Resetear si pendiente/error
             cur.execute("""
                 UPDATE goti.conteo_operativo_tareas
                 SET estado='pendiente', solicitado_at=NOW(), worker_lock=NULL, error_msg=NULL,
-                    timestamp_inicio=NULL, timestamp_fin=NULL, total_productos=NULL
+                    timestamp_inicio=NULL, timestamp_fin=NULL,
+                    total_productos=%s, fijos=%s, aleatorios=%s,
+                    codigos_seleccionados=%s, semana_inicio=%s, semana_fin=%s
                 WHERE id = %s
-            """, (existente['id'],))
+            """, (len(codigos), n_fijos, n_aleatorios, codigos, str(fecha_lunes), str(domingo), existente['id']))
             conn.commit()
-            return jsonify({'id': existente['id'], 'estado': 'pendiente', 'reset': True})
+            return jsonify({
+                'id': existente['id'], 'estado': 'pendiente', 'reset': True,
+                'productos': len(codigos), 'fijos': n_fijos, 'aleatorios': n_aleatorios,
+                'semana': f'{fecha_lunes} - {domingo}',
+                'codigos': codigos
+            })
 
         cur.execute("""
-            INSERT INTO goti.conteo_operativo_tareas (bodega, fecha)
-            VALUES (%s, %s) RETURNING id
-        """, (bodega, fecha))
+            INSERT INTO goti.conteo_operativo_tareas
+                (bodega, fecha, total_productos, fijos, aleatorios, codigos_seleccionados, semana_inicio, semana_fin)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+        """, (bodega, str(fecha_lunes), len(codigos), n_fijos, n_aleatorios, codigos, str(fecha_lunes), str(domingo)))
         new_id = cur.fetchone()['id']
         conn.commit()
-        return jsonify({'id': new_id, 'estado': 'pendiente'})
+
+        return jsonify({
+            'id': new_id, 'estado': 'pendiente',
+            'productos': len(codigos), 'fijos': n_fijos, 'aleatorios': n_aleatorios,
+            'semana': f'{fecha_lunes} - {domingo}',
+            'codigos': codigos,
+            'detalle': [{'codigo': p['codigo'], 'nombre': p['nombre'], 'unidad': p['unidad']} for p in productos]
+        })
     except Exception as e:
         print(f"Error en generar-conteo-operativo: {e}")
         if conn: conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: release_db(conn)
+
+
+@app.route('/api/conteo-op/productos-semana', methods=['GET'])
+def conteo_op_productos_semana():
+    """Retorna los productos seleccionados para conteo en una semana+bodega.
+    Usado por el worker para saber que descargar de Contifico."""
+    bodega = request.args.get('bodega')
+    fecha = request.args.get('fecha')
+    if not bodega or not fecha:
+        return jsonify({'error': 'bodega y fecha requeridos'}), 400
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT codigos_seleccionados, semana_inicio, semana_fin
+            FROM goti.conteo_operativo_tareas
+            WHERE bodega = %s AND fecha = %s
+        """, (bodega, str(_get_lunes(fecha))))
+        r = cur.fetchone()
+        if not r or not r['codigos_seleccionados']:
+            return jsonify({'error': 'No hay productos seleccionados para esta semana'}), 404
+        marca = MARCA_BODEGA.get(bodega, '')
+        cur.execute("""
+            SELECT codigo, nombre, unidad, equivalencia FROM goti.productos_por_marca
+            WHERE marca = %s AND codigo = ANY(%s) AND activo = TRUE
+            ORDER BY nombre
+        """, (marca, r['codigos_seleccionados']))
+        productos = cur.fetchall()
+        return jsonify({
+            'bodega': bodega, 'semana_inicio': str(r['semana_inicio']), 'semana_fin': str(r['semana_fin']),
+            'productos': [dict(p) for p in productos]
+        })
+    except Exception as e:
         return jsonify({'error': str(e)[:200]}), 500
     finally:
         if conn: release_db(conn)
@@ -7138,6 +7277,145 @@ def flujo_caja_cargar_guardado():
     finally:
         if conn:
             fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/proveedores', methods=['GET'])
+def flujo_caja_proveedores_listar():
+    """Listar proveedores del catalogo"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS fc_proveedores (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT UNIQUE NOT NULL,
+                nombre_comercial TEXT DEFAULT '',
+                criticidad TEXT DEFAULT 'BAJO',
+                dias_credito INTEGER DEFAULT 0,
+                dia_despacho TEXT DEFAULT '',
+                productos_servicios TEXT DEFAULT '',
+                observaciones TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        ''')
+        conn.commit()
+        cur.execute('SELECT id, nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones FROM fc_proveedores ORDER BY nombre')
+        proveedores = []
+        for r in cur.fetchall():
+            proveedores.append({
+                'id': r[0], 'nombre': r[1], 'nombre_comercial': r[2] or '',
+                'criticidad': r[3] or 'BAJO', 'dias_credito': r[4] or 0,
+                'dia_despacho': r[5] or '', 'productos_servicios': r[6] or '',
+                'observaciones': r[7] or ''
+            })
+        return jsonify({'ok': True, 'proveedores': proveedores})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/proveedores', methods=['POST'])
+def flujo_caja_proveedores_guardar():
+    """Crear o actualizar proveedor"""
+    conn = None
+    try:
+        data = request.get_json()
+        nombre = data.get('nombre', '').strip()
+        if not nombre:
+            return jsonify({'error': 'Nombre requerido'}), 400
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (nombre) DO UPDATE SET
+                nombre_comercial = EXCLUDED.nombre_comercial,
+                criticidad = EXCLUDED.criticidad,
+                dias_credito = EXCLUDED.dias_credito,
+                dia_despacho = EXCLUDED.dia_despacho,
+                productos_servicios = EXCLUDED.productos_servicios,
+                observaciones = EXCLUDED.observaciones,
+                updated_at = NOW()
+            RETURNING id
+        ''', (nombre, data.get('nombre_comercial', ''), data.get('criticidad', 'BAJO'),
+              data.get('dias_credito', 0), data.get('dia_despacho', ''),
+              data.get('productos_servicios', ''), data.get('observaciones', '')))
+        prov_id = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({'ok': True, 'id': prov_id})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/proveedores/bulk', methods=['POST'])
+def flujo_caja_proveedores_bulk():
+    """Guardar multiples proveedores de una vez"""
+    conn = None
+    try:
+        data = request.get_json()
+        proveedores = data.get('proveedores', [])
+        if not proveedores:
+            return jsonify({'error': 'Sin proveedores'}), 400
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute('''CREATE TABLE IF NOT EXISTS fc_proveedores (
+            id SERIAL PRIMARY KEY, nombre TEXT UNIQUE NOT NULL,
+            nombre_comercial TEXT DEFAULT '', criticidad TEXT DEFAULT 'BAJO',
+            dias_credito INTEGER DEFAULT 0, dia_despacho TEXT DEFAULT '',
+            productos_servicios TEXT DEFAULT '', observaciones TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW())''')
+        guardados = 0
+        for p in proveedores:
+            nombre = p.get('nombre', '').strip()
+            if not nombre: continue
+            cur.execute('''
+                INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (nombre) DO UPDATE SET
+                    nombre_comercial = COALESCE(NULLIF(EXCLUDED.nombre_comercial, ''), fc_proveedores.nombre_comercial),
+                    criticidad = CASE WHEN EXCLUDED.criticidad != 'BAJO' THEN EXCLUDED.criticidad ELSE fc_proveedores.criticidad END,
+                    dias_credito = CASE WHEN EXCLUDED.dias_credito > 0 THEN EXCLUDED.dias_credito ELSE fc_proveedores.dias_credito END,
+                    dia_despacho = COALESCE(NULLIF(EXCLUDED.dia_despacho, ''), fc_proveedores.dia_despacho),
+                    productos_servicios = COALESCE(NULLIF(EXCLUDED.productos_servicios, ''), fc_proveedores.productos_servicios),
+                    observaciones = COALESCE(NULLIF(EXCLUDED.observaciones, ''), fc_proveedores.observaciones),
+                    updated_at = NOW()
+            ''', (nombre, p.get('nombre_comercial', ''), p.get('criticidad', 'BAJO'),
+                  p.get('dias_credito', 0), p.get('dia_despacho', ''),
+                  p.get('productos_servicios', ''), p.get('observaciones', '')))
+            guardados += 1
+        conn.commit()
+        return jsonify({'ok': True, 'guardados': guardados})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/proveedores/<int:prov_id>', methods=['DELETE'])
+def flujo_caja_proveedores_eliminar(prov_id):
+    """Eliminar proveedor del catalogo"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute('DELETE FROM fc_proveedores WHERE id = %s RETURNING nombre', (prov_id,))
+        row = cur.fetchone()
+        conn.commit()
+        if row: return jsonify({'ok': True, 'eliminado': row[0]})
+        return jsonify({'error': 'No encontrado'}), 404
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
 
 
 @app.route('/api/flujo-caja/ventas-por-local', methods=['GET'])
