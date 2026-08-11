@@ -2544,6 +2544,8 @@
                         <button class="fc-btn" style="background:#f57c00;" onclick="fc_descargarExcel()"><i class="fas fa-file-excel"></i> Excel</button>
                         <button class="fc-btn" style="background:#7b1fa2;" onclick="fc_cargarCarteraXLS()"><i class="fas fa-upload"></i> Cargar Cartera</button>
                         <input type="file" id="fc-input-cartera" accept=".xls,.xlsx" style="display:none;" onchange="fc_procesarCarteraXLS(this)">
+                        <button class="fc-btn" style="background:#0d47a1;" onclick="fc_abrirProveedores()"><i class="fas fa-address-book"></i> Proveedores</button>
+                        <button class="fc-btn" style="background:#00695c;" onclick="fc_abrirRecurrentes()"><i class="fas fa-redo"></i> Recurrentes</button>
                     </div>
 
                     <div class="fc-resumen" id="fc-resumen" style="display:none">
@@ -2580,6 +2582,18 @@
                                 <div class="spinner"></div>
                                 <p>Calculando proyecciones...</p>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="fc-container" id="fc-deudas-container" style="display:none; margin-top:16px;">
+                        <div class="fc-header">
+                            <div class="fc-titulo"><i class="fas fa-balance-scale"></i> Plan de Pago de Deudas</div>
+                            <div class="fc-toolbar">
+                                <button class="fc-btn" style="background:#c62828;" onclick="fc_calcularPlanDeudas()"><i class="fas fa-sync-alt"></i> Calcular</button>
+                            </div>
+                        </div>
+                        <div id="fc-deudas-body" style="padding:16px;">
+                            <p style="color:#94a3b8;text-align:center;font-size:12px;">Haga clic en Calcular para generar el plan de pago</p>
                         </div>
                     </div>
                 </div>

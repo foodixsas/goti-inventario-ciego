@@ -1287,10 +1287,13 @@ function fc_aplicarVisibilidadNuevoItem(row) {
 
 function fc_eliminarItem(btn) {
     const row = btn.closest('tr');
-    if (row) {
-        row.remove();
-        fc_recalcularTodo();
-    }
+    if (!row) return;
+    const nombre = row.querySelector('.fc-input-nombre')?.value || 'este item';
+    if (!confirm(`¿Eliminar "${nombre}" del flujo de caja?`)) return;
+    const rowId = row.dataset.fcRowId;
+    if (rowId) delete fc_facturas_data[rowId];
+    row.remove();
+    fc_recalcularTodo();
 }
 
 let fc_subgrupoCounter = 0;
@@ -2352,12 +2355,35 @@ function fc_abrirFacturas(row) {
     let facturasHtml = '';
     let totalPendiente = 0;
     let totalProgramado = 0;
+    let totalVencidas = 0;
+    let cantVencidas = 0;
+    let totalVigentes = 0;
+    let cantVigentes = 0;
 
     const hoy = new Date();
     hoy.setHours(0,0,0,0);
 
     // Obtener dias de credito del item (columna DIAS)
     const diasCredito = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
+
+    // Calcular criticidad (basado en factura mas vencida)
+    let maxDiasVenc = 0;
+    facturas.forEach(fac => {
+        let fvr = fac.vencimiento;
+        if (diasCredito > 0 && fac.fecha) {
+            const fe = new Date(fac.fecha + 'T12:00:00');
+            fe.setDate(fe.getDate() + diasCredito);
+            fvr = fe.toISOString().split('T')[0];
+        }
+        if (fvr) {
+            const d = Math.round((hoy - new Date(fvr + 'T12:00:00')) / (1000*60*60*24));
+            if (d > maxDiasVenc) maxDiasVenc = d;
+        }
+    });
+    let criticidad = 'BAJO', criticidadStyle = 'background:#e2e8f0;color:#475569;';
+    if (maxDiasVenc > 60) { criticidad = 'CRITICO'; criticidadStyle = 'background:#dc2626;color:#fff;'; }
+    else if (maxDiasVenc > 30) { criticidad = 'ALTO'; criticidadStyle = 'background:#ea580c;color:#fff;'; }
+    else if (maxDiasVenc > 0) { criticidad = 'MEDIO'; criticidadStyle = 'background:#ca8a04;color:#fff;'; }
 
     facturas.forEach((fac, idx) => {
         const esPendiente = !fac.fecha_pago;
@@ -2393,12 +2419,22 @@ function fc_abrirFacturas(row) {
             }
         }
 
+        // Clasificar vencida o vigente
+        const estaVencida = claseVencido && claseVencido !== 'fc-venc-ok';
+        if (estaVencida) { totalVencidas += (fac.monto||0); cantVencidas++; }
+        else { totalVigentes += (fac.monto||0); cantVigentes++; }
+
+        const abono = fac.abono || 0;
+        const restante = (fac.monto || 0) - abono;
+        const restanteHtml = abono > 0 ? `<div style="font-size:9px;color:${restante<=0?'#16a34a':'#dc2626'};margin-top:2px;">${restante<=0?'Pagado':'Resta: $'+restante.toFixed(2)}</div>` : '';
+
         facturasHtml += `<tr class="${esPendiente ? 'fc-fac-pendiente' : 'fc-fac-programada'}">
             <td><input type="text" class="fc-fac-input fc-fac-num" value="${fac.num || ''}" data-idx="${idx}" data-field="num" placeholder="Nro factura"></td>
             <td><input type="date" class="fc-fac-input" value="${fac.fecha || ''}" data-idx="${idx}" data-field="fecha"></td>
-            <td><input type="text" class="fc-fac-input fc-fac-monto" value="${fac.monto || ''}" data-idx="${idx}" data-field="monto" placeholder="0.00"></td>
+            <td><input type="text" class="fc-fac-input fc-fac-monto" value="${fac.monto || ''}" data-idx="${idx}" data-field="monto" placeholder="0.00">${restanteHtml}</td>
             <td><input type="date" class="fc-fac-input" value="${fac.vencimiento || ''}" data-idx="${idx}" data-field="vencimiento"></td>
             <td class="fc-col-vencido ${claseVencido}">${diasVencido}</td>
+            <td><input type="text" class="fc-fac-input fc-fac-abono" value="${abono || ''}" data-idx="${idx}" data-field="abono" placeholder="Parcial" style="width:70px;text-align:right;"></td>
             <td><select class="fc-fac-select-fecha" data-idx="${idx}" onchange="fc_cambiarFechaPagoFactura(this)">
                 ${opcionesFechas.replace(`value="${fac.fecha_pago}"`, `value="${fac.fecha_pago}" selected`)}
             </select></td>
@@ -2407,7 +2443,7 @@ function fc_abrirFacturas(row) {
     });
 
     if (!facturasHtml) {
-        facturasHtml = '<tr class="fc-fac-vacia"><td colspan="7">No hay facturas. Use <b>+ Agregar</b> o cargue la <b>Cartera XLS</b></td></tr>';
+        facturasHtml = '<tr class="fc-fac-vacia"><td colspan="8">No hay facturas. Use <b>+ Agregar</b> o cargue la <b>Cartera XLS</b></td></tr>';
     }
 
     modal.innerHTML = `
@@ -2415,9 +2451,12 @@ function fc_abrirFacturas(row) {
         <div class="fc-modal-facturas-content">
             <div class="fc-modal-header" style="background:#1e293b;">
                 <span class="fc-modal-icon" style="background:rgba(255,255,255,.1);">F</span>
-                <div>
-                    <h3>Facturas Pendientes</h3>
-                    <p class="fc-fecha-inicio"><strong>${nombre}</strong></p>
+                <div style="flex:1;">
+                    <h3 style="margin:0;font-size:14px;">${nombre}</h3>
+                    <div style="display:flex;gap:12px;margin-top:4px;font-size:10px;opacity:.85;">
+                        <span>Credito: <b>${diasCredito} dias</b></span>
+                        <span>Facturas: <b>${facturas.length}</b></span>
+                    </div>
                 </div>
                 <button class="fc-modal-close" onclick="fc_cerrarFacturas()">&times;</button>
             </div>
@@ -2428,16 +2467,20 @@ function fc_abrirFacturas(row) {
             <div class="fc-fac-body">
                 <table class="fc-tabla-facturas">
                     <thead>
-                        <tr><th>Nro Factura</th><th>Fecha</th><th>Monto</th><th>Vencimiento</th><th>Vencido</th><th>Pagar el</th><th></th></tr>
+                        <tr><th>Nro Factura</th><th>Fecha</th><th>Monto</th><th>Vencimiento</th><th>Vencido</th><th>Abono</th><th>Pagar el</th><th></th></tr>
                     </thead>
                     <tbody id="fc-facturas-body">${facturasHtml}</tbody>
                 </table>
             </div>
             <div class="fc-fac-footer">
-                <div class="fc-fac-totales">
-                    <span class="fc-fac-t-pend">Pendiente: $${totalPendiente.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
-                    <span class="fc-fac-t-prog">Programado: $${totalProgramado.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                <div class="fc-fac-totales" style="flex-wrap:wrap;row-gap:6px;">
+                    <span class="fc-fac-t-pend" title="${cantVencidas} factura(s) vencida(s)">Vencidas (${cantVencidas}): $${totalVencidas.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                    <span class="fc-fac-t-prog" title="${cantVigentes} factura(s) vigente(s)">Vigentes (${cantVigentes}): $${totalVigentes.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
                     <span class="fc-fac-t-total">Total: $${(totalPendiente+totalProgramado).toLocaleString('en-US',{minimumFractionDigits:2})}</span>
+                </div>
+                <div style="font-size:10px;color:#64748b;margin:6px 0;">
+                    Pendiente pago: <b style="color:#dc2626;">$${totalPendiente.toLocaleString('en-US',{minimumFractionDigits:2})}</b>
+                    &nbsp;|&nbsp; Programado: <b style="color:#16a34a;">$${totalProgramado.toLocaleString('en-US',{minimumFractionDigits:2})}</b>
                 </div>
                 <div class="fc-fac-btns">
                     <button onclick="fc_cerrarFacturas()" class="fc-btn-cancelar">Cerrar</button>
@@ -2492,7 +2535,7 @@ function fc_guardarInputsFacturas(rowId) {
         const idx = parseInt(input.dataset.idx);
         const field = input.dataset.field;
         if (facturas[idx] && field) {
-            if (field === 'monto') {
+            if (field === 'monto' || field === 'abono') {
                 facturas[idx][field] = parseFloat(input.value.replace(/,/g, '')) || 0;
             } else {
                 facturas[idx][field] = input.value;
@@ -2530,12 +2573,15 @@ function fc_aplicarFacturas(rowId) {
     // Limpiar celdas del dia de esta fila
     row.querySelectorAll('.fc-input[data-fecha]').forEach(inp => { inp.value = ''; });
 
-    // Agrupar montos por fecha de pago
+    // Agrupar montos por fecha de pago (usa abono si existe, sino monto completo)
     const montosPorFecha = {};
     facturas.forEach(fac => {
-        if (fac.fecha_pago && fac.monto > 0) {
-            if (!montosPorFecha[fac.fecha_pago]) montosPorFecha[fac.fecha_pago] = 0;
-            montosPorFecha[fac.fecha_pago] += fac.monto;
+        if (fac.fecha_pago) {
+            const pago = (fac.abono && fac.abono > 0) ? fac.abono : (fac.monto || 0);
+            if (pago > 0) {
+                if (!montosPorFecha[fac.fecha_pago]) montosPorFecha[fac.fecha_pago] = 0;
+                montosPorFecha[fac.fecha_pago] += pago;
+            }
         }
     });
 
@@ -2917,7 +2963,7 @@ function fc_toggleFacturaPicker(div, rowId, fecha) {
 
 function fc_actualizarTotalPicker(rowId, fecha) {
     const facturas = fc_facturas_data[rowId] || [];
-    const total = facturas.filter(f => f.fecha_pago === fecha).reduce((s, f) => s + (f.monto || 0), 0);
+    const total = facturas.filter(f => f.fecha_pago === fecha).reduce((s, f) => s + ((f.abono && f.abono > 0) ? f.abono : (f.monto || 0)), 0);
     const el = document.getElementById('fc-picker-total');
     if (el) {
         el.textContent = `$${total.toLocaleString('en-US',{minimumFractionDigits:2})}`;
@@ -2928,7 +2974,7 @@ function fc_actualizarTotalPicker(rowId, fecha) {
 
 function fc_aplicarPickerFacturas(rowId, fecha) {
     const facturas = fc_facturas_data[rowId] || [];
-    const total = facturas.filter(f => f.fecha_pago === fecha).reduce((s, f) => s + (f.monto || 0), 0);
+    const total = facturas.filter(f => f.fecha_pago === fecha).reduce((s, f) => s + ((f.abono && f.abono > 0) ? f.abono : (f.monto || 0)), 0);
 
     // Buscar el input de esa fecha en la fila
     const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
@@ -2984,7 +3030,7 @@ function fc_procesarCarteraXLS(input) {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = async function(e) {
         try {
             const data = new Uint8Array(e.target.result);
             const wb = XLSX.read(data, { type: 'array' });
@@ -3079,9 +3125,13 @@ function fc_procesarCarteraXLS(input) {
             // Referencia para insertar despues del header
             let insertAfter = headerRow;
 
+            // Cargar catalogo de proveedores de BD antes de crear items
+            await fc_cargarProveedoresBD();
+
             proveedoresOrdenados.forEach(prov => {
                 const dynRowId = 'fcr-dyn-' + (++fc_row_id_counter);
-                const diasCred = fc_buscarDiasCredito(prov.nombre);
+                const provBD = fc_buscarProveedorBD(prov.nombre);
+                const diasCred = provBD ? provBD.dias_credito : fc_buscarDiasCredito(prov.nombre);
 
                 const newRow = document.createElement('tr');
                 newRow.className = `row-banco-item fc-egreso-item-${grupoId}`;
@@ -3171,6 +3221,687 @@ function fc_normalizarNombre(nombre) {
         .replace(/\b(S\.?A\.?S\.?|S\.?A\.?|CIA\.?\s*LTDA\.?|CIA\.?|LTDA\.?)\b/gi, '')
         .trim();
 }
+
+// ============ CATALOGO DE PROVEEDORES ============
+let fc_proveedores_bd = []; // Cache del catalogo
+
+async function fc_abrirProveedores() {
+    let modal = document.getElementById('fc-modal-proveedores');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'fc-modal-proveedores';
+        modal.className = 'fc-modal';
+        document.body.appendChild(modal);
+    }
+
+    modal.innerHTML = `
+        <div class="fc-modal-overlay" onclick="fc_cerrarProveedores()"></div>
+        <div class="fc-modal-facturas-content" style="width:950px;max-height:90vh;">
+            <div class="fc-modal-header" style="background:#0d47a1;">
+                <span class="fc-modal-icon" style="background:rgba(255,255,255,.1);"><i class="fas fa-address-book"></i></span>
+                <div style="flex:1;">
+                    <h3 style="margin:0;font-size:14px;">Catalogo de Proveedores</h3>
+                    <p style="margin:2px 0 0;font-size:10px;opacity:.85;">Gestione criticidad, dias de credito y datos de proveedores</p>
+                </div>
+                <button class="fc-modal-close" onclick="fc_cerrarProveedores()">&times;</button>
+            </div>
+            <div class="fc-fac-toolbar">
+                <button onclick="fc_provAgregar()" class="fc-btn-add-fac">+ Nuevo Proveedor</button>
+                <button onclick="fc_provSincronizarDesdeCartera()" class="fc-btn-buscar-cartera" style="background:#7b1fa2;">Sincronizar desde Cartera</button>
+                <button onclick="fc_provGuardarTodos()" class="fc-btn-buscar-cartera">Guardar Todos</button>
+                <input type="text" id="fc-prov-filtro" placeholder="Filtrar..." oninput="fc_provFiltrar()" style="margin-left:auto;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;font-size:11px;width:150px;">
+            </div>
+            <div class="fc-fac-body" style="max-height:60vh;">
+                <table class="fc-tabla-facturas" id="fc-tabla-proveedores">
+                    <thead>
+                        <tr>
+                            <th style="min-width:180px;">Proveedor</th>
+                            <th style="min-width:100px;">N. Comercial</th>
+                            <th style="min-width:80px;">Criticidad</th>
+                            <th style="width:55px;">Dias Cr.</th>
+                            <th style="width:80px;">Despacho</th>
+                            <th style="min-width:120px;">Productos/Serv.</th>
+                            <th style="min-width:120px;">Observaciones</th>
+                            <th style="width:30px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="fc-prov-body"><tr><td colspan="8" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
+                </table>
+            </div>
+            <div class="fc-fac-footer">
+                <div class="fc-fac-totales"><span class="fc-fac-t-total" id="fc-prov-count">0 proveedores</span></div>
+                <div class="fc-fac-btns">
+                    <button onclick="fc_cerrarProveedores()" class="fc-btn-cancelar">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    modal.classList.add('active');
+    fc_inyectarEstilosFacturas();
+    await fc_provCargar();
+}
+
+function fc_cerrarProveedores() {
+    const modal = document.getElementById('fc-modal-proveedores');
+    if (modal) modal.classList.remove('active');
+}
+
+async function fc_provCargar() {
+    try {
+        const res = await fetch('/api/flujo-caja/proveedores');
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        fc_proveedores_bd = data.proveedores;
+        fc_provRender();
+    } catch (e) {
+        console.error('Error cargando proveedores:', e);
+        document.getElementById('fc-prov-body').innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
+    }
+}
+
+function fc_provRender() {
+    const tbody = document.getElementById('fc-prov-body');
+    if (!tbody) return;
+
+    if (fc_proveedores_bd.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#94a3b8;">No hay proveedores. Agregue manualmente o sincronice desde la Cartera.</td></tr>';
+        document.getElementById('fc-prov-count').textContent = '0 proveedores';
+        return;
+    }
+
+    let html = '';
+    fc_proveedores_bd.forEach((p, idx) => {
+        const critOpts = ['BAJO','MEDIO','ALTO','CRITICO'].map(c =>
+            `<option value="${c}" ${p.criticidad===c?'selected':''}>${c}</option>`
+        ).join('');
+
+        const critColor = {BAJO:'#e2e8f0',MEDIO:'#fef3c7',ALTO:'#fed7aa',CRITICO:'#fecaca'}[p.criticidad] || '#e2e8f0';
+
+        html += `<tr class="fc-prov-row" data-idx="${idx}">
+            <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.nombre}" data-field="nombre" style="font-weight:600;"></td>
+            <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.nombre_comercial}" data-field="nombre_comercial"></td>
+            <td><select class="fc-fac-select-fecha fc-prov-field" data-field="criticidad" style="background:${critColor};font-weight:600;font-size:10px;" onchange="this.style.background={'BAJO':'#e2e8f0','MEDIO':'#fef3c7','ALTO':'#fed7aa','CRITICO':'#fecaca'}[this.value]">${critOpts}</select></td>
+            <td><input type="number" class="fc-fac-input fc-prov-field" value="${p.dias_credito}" data-field="dias_credito" style="width:45px;text-align:center;"></td>
+            <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.dia_despacho}" data-field="dia_despacho" style="font-size:10px;"></td>
+            <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.productos_servicios}" data-field="productos_servicios" style="font-size:10px;"></td>
+            <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.observaciones}" data-field="observaciones" style="font-size:10px;"></td>
+            <td><button class="fc-btn-del-fac" onclick="fc_provEliminar(${p.id},'${p.nombre.replace(/'/g,"\\'")}')">x</button></td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = html;
+    document.getElementById('fc-prov-count').textContent = `${fc_proveedores_bd.length} proveedores`;
+}
+
+function fc_provFiltrar() {
+    const filtro = (document.getElementById('fc-prov-filtro')?.value || '').toUpperCase();
+    document.querySelectorAll('.fc-prov-row').forEach(row => {
+        const nombre = row.querySelector('[data-field="nombre"]')?.value?.toUpperCase() || '';
+        const comercial = row.querySelector('[data-field="nombre_comercial"]')?.value?.toUpperCase() || '';
+        row.style.display = (nombre.includes(filtro) || comercial.includes(filtro)) ? '' : 'none';
+    });
+}
+
+function fc_provAgregar() {
+    fc_proveedores_bd.push({
+        id: 0, nombre: '', nombre_comercial: '', criticidad: 'BAJO',
+        dias_credito: 0, dia_despacho: '', productos_servicios: '', observaciones: ''
+    });
+    fc_provRender();
+    // Enfocar el ultimo
+    const rows = document.querySelectorAll('.fc-prov-row');
+    const last = rows[rows.length - 1];
+    if (last) last.querySelector('[data-field="nombre"]')?.focus();
+}
+
+async function fc_provEliminar(id, nombre) {
+    if (!confirm(`¿Eliminar "${nombre}" del catalogo?`)) return;
+    if (id > 0) {
+        try {
+            await fetch(`/api/flujo-caja/proveedores/${id}`, { method: 'DELETE' });
+        } catch (e) { console.error(e); }
+    }
+    await fc_provCargar();
+}
+
+async function fc_provGuardarTodos() {
+    // Leer valores del DOM
+    const proveedores = [];
+    document.querySelectorAll('.fc-prov-row').forEach(row => {
+        const p = {};
+        row.querySelectorAll('.fc-prov-field').forEach(input => {
+            const field = input.dataset.field;
+            if (field === 'dias_credito') p[field] = parseInt(input.value) || 0;
+            else if (input.tagName === 'SELECT') p[field] = input.value;
+            else p[field] = input.value;
+        });
+        if (p.nombre && p.nombre.trim()) proveedores.push(p);
+    });
+
+    if (proveedores.length === 0) { alert('No hay proveedores para guardar'); return; }
+
+    try {
+        const res = await fetch('/api/flujo-caja/proveedores/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proveedores })
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        alert(`${data.guardados} proveedor(es) guardado(s)`);
+        await fc_provCargar();
+    } catch (e) {
+        alert('Error al guardar: ' + e.message);
+    }
+}
+
+function fc_provSincronizarDesdeCartera() {
+    if (Object.keys(fc_cartera_cargada).length === 0) {
+        alert('Primero cargue la Cartera XLS desde el boton "Cargar Cartera"');
+        return;
+    }
+
+    // Agregar proveedores de la cartera que no existan
+    const existentes = new Set(fc_proveedores_bd.map(p => p.nombre.toUpperCase()));
+    let agregados = 0;
+
+    for (const [key, val] of Object.entries(fc_cartera_cargada)) {
+        if (!existentes.has(val.nombre.toUpperCase())) {
+            const diasCred = fc_buscarDiasCredito(val.nombre);
+            fc_proveedores_bd.push({
+                id: 0, nombre: val.nombre, nombre_comercial: '',
+                criticidad: 'BAJO', dias_credito: diasCred,
+                dia_despacho: '', productos_servicios: '', observaciones: ''
+            });
+            agregados++;
+        }
+    }
+
+    fc_provRender();
+    if (agregados > 0) alert(`${agregados} proveedor(es) agregado(s) desde la cartera. Recuerde dar clic en "Guardar Todos".`);
+    else alert('Todos los proveedores de la cartera ya estan en el catalogo');
+}
+
+// Obtener datos de proveedor desde BD al cargar cartera
+async function fc_cargarProveedoresBD() {
+    try {
+        const res = await fetch('/api/flujo-caja/proveedores');
+        const data = await res.json();
+        if (data.ok) fc_proveedores_bd = data.proveedores;
+    } catch (e) { console.error(e); }
+}
+
+// Buscar proveedor en catalogo BD por nombre
+function fc_buscarProveedorBD(nombre) {
+    const upper = nombre.toUpperCase();
+    return fc_proveedores_bd.find(p => p.nombre.toUpperCase() === upper) ||
+           fc_proveedores_bd.find(p => upper.includes(p.nombre.toUpperCase()) || p.nombre.toUpperCase().includes(upper));
+}
+
+// ============ PAGOS RECURRENTES ============
+let fc_recurrentes_bd = [];
+
+async function fc_abrirRecurrentes() {
+    let modal = document.getElementById('fc-modal-recurrentes');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'fc-modal-recurrentes';
+        modal.className = 'fc-modal';
+        document.body.appendChild(modal);
+    }
+
+    const diasSemNombres = ['Dom','Lun','Mar','Mie','Jue','Vie','Sab'];
+    const frecuencias = [
+        {v:'semanal',t:'Semanal'},
+        {v:'quincenal',t:'Quincenal (1 y 15)'},
+        {v:'mensual',t:'Mensual'},
+        {v:'ultimo-mes',t:'Fin de mes'},
+        {v:'dias-habiles',t:'Dias habiles (L-V)'}
+    ];
+    const grupos = [
+        {v:'inst-pub',t:'Instituciones Publicas'},
+        {v:'arriendos',t:'Arriendos'},
+        {v:'prestamos',t:'Prestamos'},
+        {v:'nomina',t:'Nomina'},
+        {v:'colaboradores',t:'Colaboradores'},
+        {v:'cajas',t:'Cajas Chicas'},
+        {v:'servicios',t:'Servicios Basicos'},
+        {v:'debitos',t:'Debitos Automaticos'},
+        {v:'tarjetas',t:'Tarjetas de Credito'},
+        {v:'entrenamiento',t:'Entrenamiento'},
+        {v:'tasas',t:'Tasas y Contribuciones'},
+        {v:'prov-principales',t:'Proveedores'}
+    ];
+
+    modal.innerHTML = `
+        <div class="fc-modal-overlay" onclick="fc_cerrarRecurrentes()"></div>
+        <div class="fc-modal-facturas-content" style="width:900px;max-height:90vh;">
+            <div class="fc-modal-header" style="background:#00695c;">
+                <span class="fc-modal-icon" style="background:rgba(255,255,255,.1);"><i class="fas fa-redo"></i></span>
+                <div style="flex:1;">
+                    <h3 style="margin:0;font-size:14px;">Pagos Recurrentes</h3>
+                    <p style="margin:2px 0 0;font-size:10px;opacity:.85;">Se proyectan automaticamente en cualquier semana que visualice</p>
+                </div>
+                <button class="fc-modal-close" onclick="fc_cerrarRecurrentes()">&times;</button>
+            </div>
+            <div class="fc-fac-toolbar">
+                <button onclick="fc_recAgregar()" class="fc-btn-add-fac" style="border-color:#00695c;color:#00695c;">+ Nuevo Pago</button>
+                <button onclick="fc_recGuardarTodos()" class="fc-btn-buscar-cartera" style="background:#00695c;">Guardar Todos</button>
+                <span style="margin-left:auto;font-size:10px;color:#64748b;" id="fc-rec-count">0 pagos</span>
+            </div>
+            <div class="fc-fac-body" style="max-height:60vh;">
+                <table class="fc-tabla-facturas" id="fc-tabla-recurrentes">
+                    <thead>
+                        <tr>
+                            <th style="min-width:150px;">Nombre</th>
+                            <th style="min-width:100px;">Grupo</th>
+                            <th style="width:80px;">Monto</th>
+                            <th style="min-width:100px;">Frecuencia</th>
+                            <th style="width:55px;">Dia Mes</th>
+                            <th style="width:70px;">Dia Sem.</th>
+                            <th style="width:60px;">Banco</th>
+                            <th style="width:40px;">Activo</th>
+                            <th style="min-width:100px;">Observaciones</th>
+                            <th style="width:30px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="fc-rec-body"><tr><td colspan="10" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
+                </table>
+            </div>
+            <div class="fc-fac-footer">
+                <div style="font-size:10px;color:#64748b;">Los pagos activos se proyectan automaticamente al consultar el flujo de caja.</div>
+                <div class="fc-fac-btns">
+                    <button onclick="fc_cerrarRecurrentes()" class="fc-btn-cancelar">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    modal.classList.add('active');
+    fc_inyectarEstilosFacturas();
+    await fc_recCargar();
+}
+
+function fc_cerrarRecurrentes() {
+    const modal = document.getElementById('fc-modal-recurrentes');
+    if (modal) modal.classList.remove('active');
+}
+
+async function fc_recCargar() {
+    try {
+        const res = await fetch('/api/flujo-caja/recurrentes');
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        fc_recurrentes_bd = data.pagos;
+        fc_recRender();
+    } catch (e) {
+        document.getElementById('fc-rec-body').innerHTML = `<tr><td colspan="10" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
+    }
+}
+
+function fc_recRender() {
+    const tbody = document.getElementById('fc-rec-body');
+    if (!tbody) return;
+
+    const frecOpts = (sel) => ['semanal','quincenal','mensual','ultimo-mes','dias-habiles']
+        .map(f => `<option value="${f}" ${f===sel?'selected':''}>${f}</option>`).join('');
+    const grupoOpts = (sel) => [
+        ['inst-pub','Inst. Publicas'],['arriendos','Arriendos'],['prestamos','Prestamos'],
+        ['nomina','Nomina'],['colaboradores','Colaboradores'],['cajas','Cajas Chicas'],
+        ['servicios','Serv. Basicos'],['debitos','Debitos Auto.'],['tarjetas','Tarjetas Cred.'],
+        ['entrenamiento','Entrenamiento'],['tasas','Tasas/Contrib.'],['prov-principales','Proveedores']
+    ].map(([v,t]) => `<option value="${v}" ${v===sel?'selected':''}>${t}</option>`).join('');
+    const diaSemOpts = (sel) => ['Dom','Lun','Mar','Mie','Jue','Vie','Sab']
+        .map((d,i) => `<option value="${i}" ${i===sel?'selected':''}>${d}</option>`).join('');
+
+    if (fc_recurrentes_bd.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">No hay pagos recurrentes configurados.</td></tr>';
+        document.getElementById('fc-rec-count').textContent = '0 pagos';
+        return;
+    }
+
+    let html = '';
+    fc_recurrentes_bd.forEach((p, idx) => {
+        html += `<tr class="fc-rec-row" data-idx="${idx}" data-id="${p.id}" style="${!p.activo?'opacity:.5':''}">
+            <td><input type="text" class="fc-fac-input fc-rec-field" value="${p.nombre}" data-field="nombre" style="font-weight:600;"></td>
+            <td><select class="fc-fac-select-fecha fc-rec-field" data-field="grupo">${grupoOpts(p.grupo)}</select></td>
+            <td><input type="text" class="fc-fac-input fc-rec-field" value="${p.monto}" data-field="monto" style="text-align:right;font-weight:600;width:70px;"></td>
+            <td><select class="fc-fac-select-fecha fc-rec-field" data-field="frecuencia">${frecOpts(p.frecuencia)}</select></td>
+            <td><input type="number" class="fc-fac-input fc-rec-field" value="${p.dia_mes}" data-field="dia_mes" min="1" max="31" style="width:45px;text-align:center;"></td>
+            <td><select class="fc-fac-select-fecha fc-rec-field" data-field="dia_semana">${diaSemOpts(p.dia_semana)}</select></td>
+            <td><select class="fc-fac-select-fecha fc-rec-field" data-field="banco">
+                <option value="produbanco" ${p.banco==='produbanco'?'selected':''}>PRO</option>
+                <option value="pichincha" ${p.banco==='pichincha'?'selected':''}>PICH</option>
+            </select></td>
+            <td><input type="checkbox" class="fc-rec-field" data-field="activo" ${p.activo?'checked':''}></td>
+            <td><input type="text" class="fc-fac-input fc-rec-field" value="${p.observaciones}" data-field="observaciones" style="font-size:10px;"></td>
+            <td><button class="fc-btn-del-fac" onclick="fc_recEliminar(${p.id},'${p.nombre.replace(/'/g,"\\'")}')">x</button></td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = html;
+    document.getElementById('fc-rec-count').textContent = `${fc_recurrentes_bd.length} pagos`;
+}
+
+function fc_recAgregar() {
+    fc_recurrentes_bd.push({
+        id: 0, nombre: '', grupo: 'pagos-fijos', monto: 0, frecuencia: 'mensual',
+        dia_mes: 1, dia_semana: 1, banco: 'produbanco', activo: true, observaciones: ''
+    });
+    fc_recRender();
+    const rows = document.querySelectorAll('.fc-rec-row');
+    rows[rows.length - 1]?.querySelector('[data-field="nombre"]')?.focus();
+}
+
+async function fc_recEliminar(id, nombre) {
+    if (!confirm(`¿Eliminar pago recurrente "${nombre}"?`)) return;
+    if (id > 0) {
+        try { await fetch(`/api/flujo-caja/recurrentes/${id}`, { method: 'DELETE' }); } catch (e) { console.error(e); }
+    }
+    await fc_recCargar();
+}
+
+async function fc_recGuardarTodos() {
+    const pagos = [];
+    document.querySelectorAll('.fc-rec-row').forEach(row => {
+        const p = { id: parseInt(row.dataset.id) || 0 };
+        row.querySelectorAll('.fc-rec-field').forEach(el => {
+            const field = el.dataset.field;
+            if (field === 'activo') p[field] = el.checked;
+            else if (field === 'monto') p[field] = parseFloat(el.value.replace(/,/g,'')) || 0;
+            else if (field === 'dia_mes' || field === 'dia_semana') p[field] = parseInt(el.value) || 0;
+            else if (el.tagName === 'SELECT') p[field] = el.value;
+            else p[field] = el.value;
+        });
+        if (p.nombre && p.nombre.trim()) pagos.push(p);
+    });
+
+    if (pagos.length === 0) { alert('No hay pagos para guardar'); return; }
+
+    try {
+        let guardados = 0;
+        for (const p of pagos) {
+            const res = await fetch('/api/flujo-caja/recurrentes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(p)
+            });
+            const data = await res.json();
+            if (data.ok) guardados++;
+        }
+        alert(`${guardados} pago(s) recurrente(s) guardado(s)`);
+        await fc_recCargar();
+    } catch (e) {
+        alert('Error al guardar: ' + e.message);
+    }
+}
+
+// Proyectar pagos recurrentes en las celdas del flujo
+async function fc_proyectarRecurrentes() {
+    try {
+        const res = await fetch('/api/flujo-caja/recurrentes');
+        const data = await res.json();
+        if (!data.ok || !data.pagos) return;
+
+        const pagosActivos = data.pagos.filter(p => p.activo);
+        if (pagosActivos.length === 0) return;
+
+        const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
+        if (!semanas || semanas.length === 0) return;
+
+        pagosActivos.forEach(pago => {
+            // Buscar la fila de egreso que coincida por nombre
+            let targetRow = null;
+            document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
+                const nombre = row.querySelector('.fc-input-nombre')?.value || '';
+                if (nombre.toUpperCase() === pago.nombre.toUpperCase()) targetRow = row;
+            });
+
+            // Si no existe, crear el item en el grupo correspondiente
+            if (!targetRow) {
+                const grupoHeader = document.getElementById(`fc-grupo-${pago.grupo}`);
+                if (!grupoHeader) return;
+                fc_agregarItem(pago.grupo);
+                const items = document.querySelectorAll(`.fc-egreso-item-${pago.grupo}`);
+                targetRow = items[items.length - 1];
+                if (targetRow) {
+                    const nombreInput = targetRow.querySelector('.fc-input-nombre');
+                    if (nombreInput) nombreInput.value = pago.nombre;
+                    targetRow.dataset.banco = pago.banco;
+                    const selectBanco = targetRow.querySelector('.fc-select-banco');
+                    if (selectBanco) selectBanco.value = pago.banco;
+                }
+            }
+            if (!targetRow) return;
+
+            // Calcular fechas donde aplica el pago
+            fc_todasFechas.forEach(fecha => {
+                const d = new Date(fecha + 'T12:00:00');
+                let aplica = false;
+
+                if (pago.frecuencia === 'mensual') {
+                    aplica = d.getDate() === pago.dia_mes;
+                } else if (pago.frecuencia === 'quincenal') {
+                    aplica = d.getDate() === 1 || d.getDate() === 15;
+                } else if (pago.frecuencia === 'semanal') {
+                    aplica = d.getDay() === pago.dia_semana;
+                } else if (pago.frecuencia === 'ultimo-mes') {
+                    const ultimoDia = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+                    aplica = d.getDate() === ultimoDia;
+                } else if (pago.frecuencia === 'dias-habiles') {
+                    aplica = d.getDay() >= 1 && d.getDay() <= 5;
+                }
+
+                if (aplica) {
+                    const input = targetRow.querySelector(`.fc-input[data-fecha="${fecha}"]`);
+                    if (input && !input.value) {
+                        input.value = pago.monto.toFixed(2);
+                    }
+                }
+            });
+        });
+
+        fc_recalcularTodo();
+    } catch (e) {
+        console.error('Error proyectando recurrentes:', e);
+    }
+}
+
+// ============ PLAN DE PAGO DE DEUDAS ============
+
+function fc_calcularPlanDeudas() {
+    const container = document.getElementById('fc-deudas-container');
+    const body = document.getElementById('fc-deudas-body');
+    container.style.display = '';
+
+    const hoy = new Date();
+    hoy.setHours(0,0,0,0);
+
+    // Recopilar todas las facturas vencidas +60 dias de todos los proveedores
+    const deudasCriticas = [];
+
+    document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
+        const rowId = row.dataset.fcRowId;
+        if (!rowId) return;
+        const facturas = fc_facturas_data[rowId] || [];
+        if (facturas.length === 0) return;
+
+        const nombre = row.querySelector('.fc-input-nombre')?.value || 'Proveedor';
+        const diasCredito = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
+
+        facturas.forEach(fac => {
+            let fechaVencReal = fac.vencimiento;
+            if (diasCredito > 0 && fac.fecha) {
+                const fe = new Date(fac.fecha + 'T12:00:00');
+                fe.setDate(fe.getDate() + diasCredito);
+                fechaVencReal = fe.toISOString().split('T')[0];
+            }
+            if (!fechaVencReal) return;
+
+            const fVenc = new Date(fechaVencReal + 'T12:00:00');
+            const diasVenc = Math.round((hoy - fVenc) / (1000*60*60*24));
+
+            if (diasVenc > 0) {
+                const abono = fac.abono || 0;
+                const pendiente = (fac.monto || 0) - abono;
+                if (pendiente <= 0) return;
+
+                deudasCriticas.push({
+                    proveedor: nombre,
+                    factura: fac.num || '(sin nro)',
+                    monto: fac.monto || 0,
+                    abonado: abono,
+                    pendiente: pendiente,
+                    diasVencido: diasVenc,
+                    vencimiento: fechaVencReal,
+                    programado: !!fac.fecha_pago,
+                    rowId: rowId
+                });
+            }
+        });
+    });
+
+    // Ordenar por dias vencido (mas antiguo primero)
+    deudasCriticas.sort((a, b) => b.diasVencido - a.diasVencido);
+
+    // Calcular flujo disponible (ahorro proyectado de las semanas visibles)
+    let totalIngresos = 0;
+    let totalEgresos = 0;
+    fc_semanasNums.forEach(sem => {
+        const ingCell = document.querySelector(`.fc-total-ingresos-sem[data-semana="${sem}"]`);
+        if (ingCell && ingCell.textContent !== '-') totalIngresos += parseFloat(ingCell.textContent.replace(/,/g,'')) || 0;
+        const egrCell = document.querySelector(`.fc-total-egresos-sem[data-semana="${sem}"]`);
+        if (egrCell && egrCell.textContent !== '-') totalEgresos += parseFloat(egrCell.textContent.replace(/,/g,'')) || 0;
+    });
+    const flujoDisponible = totalIngresos - totalEgresos;
+
+    // Totales
+    const totalDeudaCritica = deudasCriticas.reduce((s, d) => s + d.pendiente, 0);
+    const deudas60 = deudasCriticas.filter(d => d.diasVencido > 60);
+    const deudas30 = deudasCriticas.filter(d => d.diasVencido <= 60 && d.diasVencido > 30);
+    const deudas0 = deudasCriticas.filter(d => d.diasVencido <= 30);
+    const total60 = deudas60.reduce((s, d) => s + d.pendiente, 0);
+    const total30 = deudas30.reduce((s, d) => s + d.pendiente, 0);
+    const total0 = deudas0.reduce((s, d) => s + d.pendiente, 0);
+
+    // Estimar meses para pagar con ahorro
+    const mesesParaPagar = flujoDisponible > 0 ? Math.ceil(totalDeudaCritica / flujoDisponible * (fc_semanas?.length || 4) / 4.3) : 0;
+
+    // Agrupar por proveedor para resumen
+    const porProveedor = {};
+    deudasCriticas.forEach(d => {
+        if (!porProveedor[d.proveedor]) porProveedor[d.proveedor] = { total: 0, facturas: 0, maxDias: 0 };
+        porProveedor[d.proveedor].total += d.pendiente;
+        porProveedor[d.proveedor].facturas++;
+        if (d.diasVencido > porProveedor[d.proveedor].maxDias) porProveedor[d.proveedor].maxDias = d.diasVencido;
+    });
+
+    let html = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px;">
+            <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;">
+                <div style="font-size:10px;color:#991b1b;font-weight:600;">DEUDA VENCIDA TOTAL</div>
+                <div style="font-size:20px;font-weight:700;color:#dc2626;">$${totalDeudaCritica.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+                <div style="font-size:10px;color:#991b1b;">${deudasCriticas.length} facturas de ${Object.keys(porProveedor).length} proveedores</div>
+            </div>
+            <div style="background:${flujoDisponible>=0?'#f0fdf4':'#fef2f2'};border:1px solid ${flujoDisponible>=0?'#bbf7d0':'#fecaca'};border-radius:8px;padding:12px;">
+                <div style="font-size:10px;color:#64748b;font-weight:600;">FLUJO DISPONIBLE (${fc_semanas?.length||0} sem)</div>
+                <div style="font-size:20px;font-weight:700;color:${flujoDisponible>=0?'#16a34a':'#dc2626'};">$${flujoDisponible.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+                <div style="font-size:10px;color:#64748b;">Ingresos - Egresos proyectados</div>
+            </div>
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;">
+                <div style="font-size:10px;color:#1e40af;font-weight:600;">TIEMPO ESTIMADO</div>
+                <div style="font-size:20px;font-weight:700;color:#1565c0;">${mesesParaPagar > 0 ? mesesParaPagar + ' mes(es)' : 'N/A'}</div>
+                <div style="font-size:10px;color:#1e40af;">Para cancelar deuda vencida</div>
+            </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px;">
+            <div style="background:#dc2626;color:#fff;border-radius:6px;padding:8px 12px;text-align:center;">
+                <div style="font-size:10px;opacity:.8;">+60 dias (${deudas60.length} fac)</div>
+                <div style="font-size:16px;font-weight:700;">$${total60.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+            </div>
+            <div style="background:#ea580c;color:#fff;border-radius:6px;padding:8px 12px;text-align:center;">
+                <div style="font-size:10px;opacity:.8;">30-60 dias (${deudas30.length} fac)</div>
+                <div style="font-size:16px;font-weight:700;">$${total30.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+            </div>
+            <div style="background:#ca8a04;color:#fff;border-radius:6px;padding:8px 12px;text-align:center;">
+                <div style="font-size:10px;opacity:.8;">1-30 dias (${deudas0.length} fac)</div>
+                <div style="font-size:16px;font-weight:700;">$${total0.toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+            </div>
+        </div>
+
+        <h4 style="margin:0 0 8px;font-size:12px;color:#1e293b;">Facturas vencidas +60 dias (prioridad de pago)</h4>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead>
+                <tr style="background:#1e293b;color:#fff;">
+                    <th style="padding:8px;text-align:left;">Proveedor</th>
+                    <th style="padding:8px;text-align:left;">Factura</th>
+                    <th style="padding:8px;text-align:right;">Monto</th>
+                    <th style="padding:8px;text-align:right;">Abonado</th>
+                    <th style="padding:8px;text-align:right;">Pendiente</th>
+                    <th style="padding:8px;text-align:center;">Dias Venc.</th>
+                    <th style="padding:8px;text-align:center;">Estado</th>
+                </tr>
+            </thead>
+            <tbody>`;
+
+    if (deudas60.length === 0) {
+        html += '<tr><td colspan="7" style="text-align:center;padding:20px;color:#16a34a;">No hay facturas vencidas +60 dias</td></tr>';
+    } else {
+        deudas60.forEach(d => {
+            const estadoHtml = d.programado
+                ? '<span style="background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:3px;font-size:9px;font-weight:600;">PROGRAMADO</span>'
+                : '<span style="background:#fef2f2;color:#dc2626;padding:2px 8px;border-radius:3px;font-size:9px;font-weight:600;">PENDIENTE</span>';
+            html += `<tr style="border-bottom:1px solid #f1f5f9;">
+                <td style="padding:6px 8px;font-weight:600;">${d.proveedor}</td>
+                <td style="padding:6px 8px;font-family:monospace;font-size:10px;">${d.factura}</td>
+                <td style="padding:6px 8px;text-align:right;">$${d.monto.toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+                <td style="padding:6px 8px;text-align:right;color:#16a34a;">${d.abonado > 0 ? '$'+d.abonado.toLocaleString('en-US',{minimumFractionDigits:2}) : '-'}</td>
+                <td style="padding:6px 8px;text-align:right;font-weight:700;color:#dc2626;">$${d.pendiente.toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+                <td style="padding:6px 8px;text-align:center;font-weight:700;color:#dc2626;">${d.diasVencido}d</td>
+                <td style="padding:6px 8px;text-align:center;">${estadoHtml}</td>
+            </tr>`;
+        });
+    }
+
+    html += `</tbody></table>`;
+
+    // Tabla resumen por proveedor
+    const provOrdenado = Object.entries(porProveedor).sort((a, b) => b[1].total - a[1].total);
+    html += `
+        <h4 style="margin:16px 0 8px;font-size:12px;color:#1e293b;">Resumen por Proveedor (todas las vencidas)</h4>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead>
+                <tr style="background:#f1f5f9;">
+                    <th style="padding:6px 8px;text-align:left;">Proveedor</th>
+                    <th style="padding:6px 8px;text-align:center;">Facturas</th>
+                    <th style="padding:6px 8px;text-align:right;">Total Pendiente</th>
+                    <th style="padding:6px 8px;text-align:center;">Max Dias Venc.</th>
+                </tr>
+            </thead>
+            <tbody>`;
+
+    provOrdenado.forEach(([prov, datos]) => {
+        const critColor = datos.maxDias > 60 ? '#dc2626' : datos.maxDias > 30 ? '#ea580c' : '#ca8a04';
+        html += `<tr style="border-bottom:1px solid #f1f5f9;">
+            <td style="padding:6px 8px;font-weight:600;">${prov}</td>
+            <td style="padding:6px 8px;text-align:center;">${datos.facturas}</td>
+            <td style="padding:6px 8px;text-align:right;font-weight:700;color:#dc2626;">$${datos.total.toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+            <td style="padding:6px 8px;text-align:center;font-weight:700;color:${critColor};">${datos.maxDias}d</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    body.innerHTML = html;
+}
+
+// Mostrar plan de deudas automaticamente al cargar datos del flujo
+const fc_origCargarDatos = fc_cargarDatos;
+fc_cargarDatos = async function(reintentos) {
+    await fc_origCargarDatos(reintentos);
+    await fc_proyectarRecurrentes();
+};
 
 // Registrar en el sistema de vistas
 if (typeof window.viewInitializers === 'undefined') {
