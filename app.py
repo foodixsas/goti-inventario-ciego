@@ -7427,6 +7427,29 @@ def flujo_caja_proveedores_eliminar(prov_id):
         if conn: fc_release_movimientos_db(conn)
 
 
+def _fc_crear_tabla_recurrentes(cur):
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS fc_pagos_recurrentes (
+            id SERIAL PRIMARY KEY,
+            nombre TEXT NOT NULL,
+            grupo TEXT DEFAULT 'pagos-fijos',
+            monto NUMERIC(14,2) DEFAULT 0,
+            frecuencia TEXT DEFAULT 'mensual',
+            dia_mes INTEGER DEFAULT 1,
+            dia_semana INTEGER DEFAULT 0,
+            banco TEXT DEFAULT 'produbanco',
+            activo BOOLEAN DEFAULT TRUE,
+            observaciones TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )
+    ''')
+    # Vigencia: desde cuando rige, hasta cuando (NULL = indefinido) y cuotas pactadas
+    cur.execute("ALTER TABLE fc_pagos_recurrentes ADD COLUMN IF NOT EXISTS fecha_inicio DATE")
+    cur.execute("ALTER TABLE fc_pagos_recurrentes ADD COLUMN IF NOT EXISTS fecha_fin DATE")
+    cur.execute("ALTER TABLE fc_pagos_recurrentes ADD COLUMN IF NOT EXISTS total_cuotas INTEGER DEFAULT 0")
+
+
 @app.route('/api/flujo-caja/recurrentes', methods=['GET'])
 def flujo_caja_recurrentes_listar():
     """Listar pagos recurrentes"""
@@ -7434,31 +7457,21 @@ def flujo_caja_recurrentes_listar():
     try:
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS fc_pagos_recurrentes (
-                id SERIAL PRIMARY KEY,
-                nombre TEXT NOT NULL,
-                grupo TEXT DEFAULT 'pagos-fijos',
-                monto NUMERIC(14,2) DEFAULT 0,
-                frecuencia TEXT DEFAULT 'mensual',
-                dia_mes INTEGER DEFAULT 1,
-                dia_semana INTEGER DEFAULT 0,
-                banco TEXT DEFAULT 'produbanco',
-                activo BOOLEAN DEFAULT TRUE,
-                observaciones TEXT DEFAULT '',
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW()
-            )
-        ''')
+        _fc_crear_tabla_recurrentes(cur)
         conn.commit()
-        cur.execute('SELECT id, nombre, grupo, monto, frecuencia, dia_mes, dia_semana, banco, activo, observaciones FROM fc_pagos_recurrentes ORDER BY grupo, nombre')
+        cur.execute('''SELECT id, nombre, grupo, monto, frecuencia, dia_mes, dia_semana, banco,
+                       activo, observaciones, fecha_inicio, fecha_fin, total_cuotas
+                       FROM fc_pagos_recurrentes ORDER BY grupo, nombre''')
         pagos = []
         for r in cur.fetchall():
             pagos.append({
                 'id': r[0], 'nombre': r[1], 'grupo': r[2], 'monto': float(r[3] or 0),
                 'frecuencia': r[4] or 'mensual', 'dia_mes': r[5] or 1,
                 'dia_semana': r[6] or 0, 'banco': r[7] or 'produbanco',
-                'activo': r[8], 'observaciones': r[9] or ''
+                'activo': r[8], 'observaciones': r[9] or '',
+                'fecha_inicio': r[10].isoformat() if r[10] else '',
+                'fecha_fin': r[11].isoformat() if r[11] else '',
+                'total_cuotas': r[12] or 0
             })
         return jsonify({'ok': True, 'pagos': pagos})
     except Exception as e:
@@ -7476,22 +7489,30 @@ def flujo_caja_recurrentes_guardar():
         data = request.get_json()
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
+        _fc_crear_tabla_recurrentes(cur)
         pago_id = data.get('id', 0)
+        f_ini = (data.get('fecha_inicio') or '').strip() or None
+        f_fin = (data.get('fecha_fin') or '').strip() or None
+        cuotas = int(data.get('total_cuotas') or 0)
         if pago_id and pago_id > 0:
             cur.execute('''
                 UPDATE fc_pagos_recurrentes SET nombre=%s, grupo=%s, monto=%s, frecuencia=%s,
-                    dia_mes=%s, dia_semana=%s, banco=%s, activo=%s, observaciones=%s, updated_at=NOW()
+                    dia_mes=%s, dia_semana=%s, banco=%s, activo=%s, observaciones=%s,
+                    fecha_inicio=%s, fecha_fin=%s, total_cuotas=%s, updated_at=NOW()
                 WHERE id=%s RETURNING id
             ''', (data.get('nombre',''), data.get('grupo','pagos-fijos'), data.get('monto',0),
                   data.get('frecuencia','mensual'), data.get('dia_mes',1), data.get('dia_semana',0),
-                  data.get('banco','produbanco'), data.get('activo',True), data.get('observaciones',''), pago_id))
+                  data.get('banco','produbanco'), data.get('activo',True), data.get('observaciones',''),
+                  f_ini, f_fin, cuotas, pago_id))
         else:
             cur.execute('''
-                INSERT INTO fc_pagos_recurrentes (nombre, grupo, monto, frecuencia, dia_mes, dia_semana, banco, activo, observaciones)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+                INSERT INTO fc_pagos_recurrentes (nombre, grupo, monto, frecuencia, dia_mes, dia_semana,
+                    banco, activo, observaciones, fecha_inicio, fecha_fin, total_cuotas)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
             ''', (data.get('nombre',''), data.get('grupo','pagos-fijos'), data.get('monto',0),
                   data.get('frecuencia','mensual'), data.get('dia_mes',1), data.get('dia_semana',0),
-                  data.get('banco','produbanco'), data.get('activo',True), data.get('observaciones','')))
+                  data.get('banco','produbanco'), data.get('activo',True), data.get('observaciones',''),
+                  f_ini, f_fin, cuotas))
         pago_id = cur.fetchone()[0]
         conn.commit()
         return jsonify({'ok': True, 'id': pago_id})

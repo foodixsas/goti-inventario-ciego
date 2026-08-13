@@ -3516,6 +3516,144 @@ function fc_buscarProveedorBD(nombre) {
 // ============ PAGOS RECURRENTES ============
 let fc_recurrentes_bd = [];
 
+// Frecuencias soportadas. 'ciclo' = cada cuantos meses se repite (para bimestral,
+// trimestral, semestral y anual el ciclo se cuenta desde el mes de fecha_inicio).
+const FC_REC_FRECUENCIAS = [
+    {v:'semanal',      t:'Semanal'},
+    {v:'quincenal',    t:'Quincenal (1 y 15)'},
+    {v:'quincenal-fin',t:'Quincenal (15 y fin)'},
+    {v:'mensual',      t:'Mensual'},
+    {v:'bimestral',    t:'Bimestral (cada 2 meses)'},
+    {v:'trimestral',   t:'Trimestral'},
+    {v:'semestral',    t:'Semestral'},
+    {v:'anual',        t:'Anual'},
+    {v:'ultimo-mes',   t:'Fin de mes'},
+    {v:'dias-habiles', t:'Dias habiles (L-V)'},
+    {v:'unica',        t:'Pago unico'}
+];
+
+const FC_REC_CICLO_MESES = { mensual:1, bimestral:2, trimestral:3, semestral:6, anual:12 };
+
+function fc_recFrecTexto(v) {
+    const f = FC_REC_FRECUENCIAS.find(x => x.v === v);
+    return f ? f.t : v;
+}
+
+// Ultimo dia del mes de una fecha dada
+function fc_recUltimoDia(d) {
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+}
+
+// Decide si un pago recurrente cae en una fecha concreta (sin considerar vigencia
+// ni cuotas: eso lo resuelve fc_recFechasAplicables).
+function fc_recAplicaEnFecha(pago, fechaISO, inicioISO) {
+    const d = new Date(fechaISO + 'T12:00:00');
+    const dia = d.getDate();
+    const ultimo = fc_recUltimoDia(d);
+    // Si el dia pactado no existe en el mes (31 en febrero), se corre al ultimo dia
+    const diaPactado = Math.min(Math.max(parseInt(pago.dia_mes) || 1, 1), ultimo);
+
+    switch (pago.frecuencia) {
+        case 'semanal':
+            return d.getDay() === (parseInt(pago.dia_semana) || 0);
+        case 'quincenal':
+            return dia === 1 || dia === 15;
+        case 'quincenal-fin':
+            return dia === 15 || dia === ultimo;
+        case 'ultimo-mes':
+            return dia === ultimo;
+        case 'dias-habiles':
+            return d.getDay() >= 1 && d.getDay() <= 5;
+        case 'unica':
+            return !!inicioISO && fechaISO === inicioISO;
+        case 'mensual':
+        case 'bimestral':
+        case 'trimestral':
+        case 'semestral':
+        case 'anual': {
+            if (dia !== diaPactado) return false;
+            const ciclo = FC_REC_CICLO_MESES[pago.frecuencia] || 1;
+            if (ciclo === 1) return true;
+            // El ciclo se ancla al mes de inicio; sin inicio se ancla a enero
+            let mesAncla = 0, anioAncla = d.getFullYear();
+            if (inicioISO) {
+                const di = new Date(inicioISO + 'T12:00:00');
+                mesAncla = di.getMonth();
+                anioAncla = di.getFullYear();
+            }
+            const delta = (d.getFullYear() - anioAncla) * 12 + (d.getMonth() - mesAncla);
+            return delta >= 0 && delta % ciclo === 0;
+        }
+        default:
+            return false;
+    }
+}
+
+// Cuenta cuotas ya devengadas antes de la primera fecha visible, para que el tope
+// de cuotas siga siendo correcto aunque se consulte una semana futura.
+function fc_recCuotasPrevias(pago, inicioISO, primeraFechaISO) {
+    if (!inicioISO || inicioISO >= primeraFechaISO) return 0;
+    let cuenta = 0;
+    const cursor = new Date(inicioISO + 'T12:00:00');
+    const limite = new Date(primeraFechaISO + 'T12:00:00');
+    let guarda = 0;
+    while (cursor < limite && guarda < 3660) {
+        const iso = fc_recISO(cursor);
+        if (fc_recAplicaEnFecha(pago, iso, inicioISO)) cuenta++;
+        cursor.setDate(cursor.getDate() + 1);
+        guarda++;
+    }
+    return cuenta;
+}
+
+function fc_recISO(d) {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${dd}`;
+}
+
+// Fechas del rango visible en las que corresponde pagar, respetando vigencia
+// (fecha_inicio / fecha_fin) y el tope de cuotas pactadas.
+function fc_recFechasAplicables(pago, fechas) {
+    if (!fechas || fechas.length === 0) return [];
+    const inicio = (pago.fecha_inicio || '').trim();
+    const fin = (pago.fecha_fin || '').trim();
+    const tope = parseInt(pago.total_cuotas) || 0;
+
+    let cuota = tope > 0 ? fc_recCuotasPrevias(pago, inicio, fechas[0]) : 0;
+    const aplicables = [];
+    for (const fecha of fechas) {
+        if (inicio && fecha < inicio) continue;
+        if (fin && fecha > fin) break;
+        if (!fc_recAplicaEnFecha(pago, fecha, inicio)) continue;
+        if (tope > 0) {
+            cuota++;
+            if (cuota > tope) break;
+        }
+        aplicables.push(fecha);
+    }
+    return aplicables;
+}
+
+// Resumen legible del estado de un pago: cuando termina o cuantas cuotas quedan
+function fc_recResumenVigencia(pago) {
+    const inicio = (pago.fecha_inicio || '').trim();
+    const fin = (pago.fecha_fin || '').trim();
+    const tope = parseInt(pago.total_cuotas) || 0;
+    const hoy = fc_recISO(new Date());
+
+    if (fin && fin < hoy) return { txt: 'Terminado ' + fin, color: '#94a3b8' };
+    if (tope > 0 && inicio) {
+        const pagadas = fc_recCuotasPrevias(pago, inicio, hoy);
+        const restantes = Math.max(tope - pagadas, 0);
+        if (restantes === 0) return { txt: `Completado (${tope}/${tope})`, color: '#94a3b8' };
+        return { txt: `${pagadas}/${tope} · faltan ${restantes}`, color: '#0f766e' };
+    }
+    if (fin) return { txt: 'Hasta ' + fin, color: '#0f766e' };
+    if (inicio && inicio > hoy) return { txt: 'Inicia ' + inicio, color: '#b45309' };
+    return { txt: 'Indefinido', color: '#64748b' };
+}
+
 async function fc_abrirRecurrentes() {
     let modal = document.getElementById('fc-modal-recurrentes');
     if (!modal) {
@@ -3526,13 +3664,7 @@ async function fc_abrirRecurrentes() {
     }
 
     const diasSemNombres = ['Dom','Lun','Mar','Mie','Jue','Vie','Sab'];
-    const frecuencias = [
-        {v:'semanal',t:'Semanal'},
-        {v:'quincenal',t:'Quincenal (1 y 15)'},
-        {v:'mensual',t:'Mensual'},
-        {v:'ultimo-mes',t:'Fin de mes'},
-        {v:'dias-habiles',t:'Dias habiles (L-V)'}
-    ];
+    const frecuencias = FC_REC_FRECUENCIAS;
     const grupos = [
         {v:'inst-pub',t:'Instituciones Publicas'},
         {v:'arriendos',t:'Arriendos'},
@@ -3574,17 +3706,21 @@ async function fc_abrirRecurrentes() {
                             <th style="min-width:100px;">Frecuencia</th>
                             <th style="width:55px;">Dia Mes</th>
                             <th style="width:70px;">Dia Sem.</th>
+                            <th style="width:110px;" title="Desde cuando rige el pago">Desde</th>
+                            <th style="width:110px;" title="Ultima fecha en que se paga (vacio = indefinido)">Hasta</th>
+                            <th style="width:55px;" title="Numero de cuotas pactadas (0 = sin tope)">Cuotas</th>
+                            <th style="width:100px;">Estado</th>
                             <th style="width:60px;">Banco</th>
                             <th style="width:40px;">Activo</th>
                             <th style="min-width:100px;">Observaciones</th>
                             <th style="width:30px;"></th>
                         </tr>
                     </thead>
-                    <tbody id="fc-rec-body"><tr><td colspan="10" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
+                    <tbody id="fc-rec-body"><tr><td colspan="14" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
                 </table>
             </div>
             <div class="fc-fac-footer">
-                <div style="font-size:10px;color:#64748b;">Los pagos activos se proyectan automaticamente al consultar el flujo de caja.</div>
+                <div style="font-size:10px;color:#64748b;">Los pagos activos se proyectan solos al consultar cualquier semana. <b>Hasta</b> vacio = indefinido. <b>Cuotas</b> 0 = sin tope; con cuotas el pago se corta solo al llegar a la ultima. Nunca se pisa un valor ya digitado.</div>
                 <div class="fc-fac-btns">
                     <button onclick="fc_cerrarRecurrentes()" class="fc-btn-cancelar">Cerrar</button>
                 </div>
@@ -3618,8 +3754,8 @@ function fc_recRender() {
     const tbody = document.getElementById('fc-rec-body');
     if (!tbody) return;
 
-    const frecOpts = (sel) => ['semanal','quincenal','mensual','ultimo-mes','dias-habiles']
-        .map(f => `<option value="${f}" ${f===sel?'selected':''}>${f}</option>`).join('');
+    const frecOpts = (sel) => FC_REC_FRECUENCIAS
+        .map(f => `<option value="${f.v}" ${f.v===sel?'selected':''}>${f.t}</option>`).join('');
     const grupoOpts = (sel) => [
         ['inst-pub','Inst. Publicas'],['arriendos','Arriendos'],['prestamos','Prestamos'],
         ['nomina','Nomina'],['colaboradores','Colaboradores'],['cajas','Cajas Chicas'],
@@ -3630,13 +3766,14 @@ function fc_recRender() {
         .map((d,i) => `<option value="${i}" ${i===sel?'selected':''}>${d}</option>`).join('');
 
     if (fc_recurrentes_bd.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;color:#94a3b8;">No hay pagos recurrentes configurados.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:30px;color:#94a3b8;">No hay pagos recurrentes configurados.</td></tr>';
         document.getElementById('fc-rec-count').textContent = '0 pagos';
         return;
     }
 
     let html = '';
     fc_recurrentes_bd.forEach((p, idx) => {
+        const vig = fc_recResumenVigencia(p);
         html += `<tr class="fc-rec-row" data-idx="${idx}" data-id="${p.id}" style="${!p.activo?'opacity:.5':''}">
             <td><input type="text" class="fc-fac-input fc-rec-field" value="${p.nombre}" data-field="nombre" style="font-weight:600;"></td>
             <td><select class="fc-fac-select-fecha fc-rec-field" data-field="grupo">${grupoOpts(p.grupo)}</select></td>
@@ -3644,6 +3781,10 @@ function fc_recRender() {
             <td><select class="fc-fac-select-fecha fc-rec-field" data-field="frecuencia">${frecOpts(p.frecuencia)}</select></td>
             <td><input type="number" class="fc-fac-input fc-rec-field" value="${p.dia_mes}" data-field="dia_mes" min="1" max="31" style="width:45px;text-align:center;"></td>
             <td><select class="fc-fac-select-fecha fc-rec-field" data-field="dia_semana">${diaSemOpts(p.dia_semana)}</select></td>
+            <td><input type="date" class="fc-fac-input fc-rec-field" value="${p.fecha_inicio || ''}" data-field="fecha_inicio" style="width:105px;font-size:10px;"></td>
+            <td><input type="date" class="fc-fac-input fc-rec-field" value="${p.fecha_fin || ''}" data-field="fecha_fin" style="width:105px;font-size:10px;"></td>
+            <td><input type="number" class="fc-fac-input fc-rec-field" value="${p.total_cuotas || 0}" data-field="total_cuotas" min="0" style="width:45px;text-align:center;" title="0 = sin tope de cuotas"></td>
+            <td style="font-size:10px;color:${vig.color};font-weight:600;">${vig.txt}</td>
             <td><select class="fc-fac-select-fecha fc-rec-field" data-field="banco">
                 <option value="produbanco" ${p.banco==='produbanco'?'selected':''}>PRO</option>
                 <option value="pichincha" ${p.banco==='pichincha'?'selected':''}>PICH</option>
@@ -3660,8 +3801,9 @@ function fc_recRender() {
 
 function fc_recAgregar() {
     fc_recurrentes_bd.push({
-        id: 0, nombre: '', grupo: 'pagos-fijos', monto: 0, frecuencia: 'mensual',
-        dia_mes: 1, dia_semana: 1, banco: 'produbanco', activo: true, observaciones: ''
+        id: 0, nombre: '', grupo: 'servicios', monto: 0, frecuencia: 'mensual',
+        dia_mes: 1, dia_semana: 1, banco: 'produbanco', activo: true, observaciones: '',
+        fecha_inicio: fc_recISO(new Date()), fecha_fin: '', total_cuotas: 0
     });
     fc_recRender();
     const rows = document.querySelectorAll('.fc-rec-row');
@@ -3684,7 +3826,7 @@ async function fc_recGuardarTodos() {
             const field = el.dataset.field;
             if (field === 'activo') p[field] = el.checked;
             else if (field === 'monto') p[field] = parseFloat(el.value.replace(/,/g,'')) || 0;
-            else if (field === 'dia_mes' || field === 'dia_semana') p[field] = parseInt(el.value) || 0;
+            else if (field === 'dia_mes' || field === 'dia_semana' || field === 'total_cuotas') p[field] = parseInt(el.value) || 0;
             else if (el.tagName === 'SELECT') p[field] = el.value;
             else p[field] = el.value;
         });
@@ -3692,6 +3834,11 @@ async function fc_recGuardarTodos() {
     });
 
     if (pagos.length === 0) { alert('No hay pagos para guardar'); return; }
+
+    const invalido = pagos.find(p => p.fecha_fin && p.fecha_inicio && p.fecha_fin < p.fecha_inicio);
+    if (invalido) { alert(`"${invalido.nombre}": la fecha Hasta no puede ser anterior a Desde.`); return; }
+    const sinInicio = pagos.find(p => (p.total_cuotas > 0 || p.frecuencia === 'unica') && !p.fecha_inicio);
+    if (sinInicio) { alert(`"${sinInicio.nombre}": indique la fecha Desde para contar las cuotas.`); return; }
 
     try {
         let guardados = 0;
@@ -3706,6 +3853,8 @@ async function fc_recGuardarTodos() {
         }
         alert(`${guardados} pago(s) recurrente(s) guardado(s)`);
         await fc_recCargar();
+        // Reflejar de inmediato los cambios en el flujo que esta en pantalla
+        await fc_proyectarRecurrentes();
     } catch (e) {
         alert('Error al guardar: ' + e.message);
     }
@@ -3718,18 +3867,26 @@ async function fc_proyectarRecurrentes() {
         const data = await res.json();
         if (!data.ok || !data.pagos) return;
 
+        fc_recurrentes_bd = data.pagos;
         const pagosActivos = data.pagos.filter(p => p.activo);
         if (pagosActivos.length === 0) return;
 
         const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
         if (!semanas || semanas.length === 0) return;
 
+        let proyectados = 0;
         pagosActivos.forEach(pago => {
+            // Un item dado de baja no se vuelve a crear por ser recurrente
+            const bajaDesde = fc_getEliminadoDesde(pago.grupo, pago.nombre);
+            const fechas = fc_recFechasAplicables(pago, fc_todasFechas)
+                .filter(f => !bajaDesde || f < bajaDesde);
+            if (fechas.length === 0) return;
+
             // Buscar la fila de egreso que coincida por nombre
             let targetRow = null;
             document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
                 const nombre = row.querySelector('.fc-input-nombre')?.value || '';
-                if (nombre.toUpperCase() === pago.nombre.toUpperCase()) targetRow = row;
+                if (nombre.trim().toUpperCase() === pago.nombre.trim().toUpperCase()) targetRow = row;
             });
 
             // Si no existe, crear el item en el grupo correspondiente
@@ -3748,34 +3905,22 @@ async function fc_proyectarRecurrentes() {
                 }
             }
             if (!targetRow) return;
+            targetRow.dataset.recurrenteId = pago.id;
 
-            // Calcular fechas donde aplica el pago
-            fc_todasFechas.forEach(fecha => {
-                const d = new Date(fecha + 'T12:00:00');
-                let aplica = false;
-
-                if (pago.frecuencia === 'mensual') {
-                    aplica = d.getDate() === pago.dia_mes;
-                } else if (pago.frecuencia === 'quincenal') {
-                    aplica = d.getDate() === 1 || d.getDate() === 15;
-                } else if (pago.frecuencia === 'semanal') {
-                    aplica = d.getDay() === pago.dia_semana;
-                } else if (pago.frecuencia === 'ultimo-mes') {
-                    const ultimoDia = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-                    aplica = d.getDate() === ultimoDia;
-                } else if (pago.frecuencia === 'dias-habiles') {
-                    aplica = d.getDay() >= 1 && d.getDay() <= 5;
-                }
-
-                if (aplica) {
-                    const input = targetRow.querySelector(`.fc-input[data-fecha="${fecha}"]`);
-                    if (input && !input.value) {
-                        input.value = pago.monto.toFixed(2);
-                    }
+            fechas.forEach(fecha => {
+                const input = targetRow.querySelector(`.fc-input[data-fecha="${fecha}"]`);
+                // Nunca se pisa un valor ya digitado o guardado
+                if (input && !input.value && !input.disabled) {
+                    input.value = pago.monto.toFixed(2);
+                    input.dataset.autoRecurrente = '1';
+                    input.title = `Proyectado automaticamente: ${pago.nombre} (${fc_recFrecTexto(pago.frecuencia)})`;
+                    input.style.color = '#0f766e';
+                    proyectados++;
                 }
             });
         });
 
+        if (proyectados > 0) console.log(`Recurrentes: ${proyectados} valor(es) proyectado(s)`);
         fc_recalcularTodo();
     } catch (e) {
         console.error('Error proyectando recurrentes:', e);
