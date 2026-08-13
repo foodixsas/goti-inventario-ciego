@@ -9,6 +9,13 @@ let fc_datos = null;
 let fc_semanas = [];
 let fc_semanasNums = [];
 let fc_todasFechas = []; // Todas las fechas en orden
+let fc_eliminados_data = []; // [{grupo, nombre, eliminado_desde}] items dados de baja con vigencia
+
+function fc_getEliminadoDesde(grupo, nombre) {
+    const n = (nombre || '').trim().toUpperCase();
+    const e = fc_eliminados_data.find(x => x.grupo === grupo && (x.nombre || '').trim().toUpperCase() === n);
+    return e ? e.eliminado_desde : null;
+}
 
 // Inicializar cuando se carga la vista
 function fc_init() {
@@ -1288,8 +1295,28 @@ function fc_aplicarVisibilidadNuevoItem(row) {
 function fc_eliminarItem(btn) {
     const row = btn.closest('tr');
     if (!row) return;
-    const nombre = row.querySelector('.fc-input-nombre')?.value || 'este item';
-    if (!confirm(`¿Eliminar "${nombre}" del flujo de caja?`)) return;
+    const nombre = (row.querySelector('.fc-input-nombre')?.value || '').trim();
+    const clase = Array.from(row.classList).find(c => c.startsWith('fc-egreso-item-'));
+    const grupo = clase ? clase.replace('fc-egreso-item-', '') : 'otros';
+    const semanas = (fc_semanas && fc_semanas.length > 0) ? fc_semanas : window._fc_semanas;
+    const desdeSemana = semanas && semanas.length > 0 ? semanas[0].inicio : null;
+
+    const msg = nombre && desdeSemana
+        ? `¿Dar de baja "${nombre}" desde la semana del ${desdeSemana}?\n\nYa no aparecerá en esta semana ni en las siguientes, pero el histórico de semanas anteriores se conserva.`
+        : `¿Eliminar "${nombre || 'este item'}" del flujo de caja?`;
+    if (!confirm(msg)) return;
+
+    // Registrar la baja con vigencia para que no reaparezca al cargar otras semanas
+    if (nombre && desdeSemana) {
+        fetch('/api/flujo-caja/egresos-eliminados', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ grupo, nombre, eliminado_desde: desdeSemana, usuario: 'admin' })
+        }).then(r => r.json()).then(d => {
+            if (d.ok) fc_eliminados_data.push({ grupo, nombre, eliminado_desde: desdeSemana });
+        }).catch(e => console.error('Error registrando baja:', e));
+    }
+
     const rowId = row.dataset.fcRowId;
     if (rowId) delete fc_facturas_data[rowId];
     row.remove();
@@ -1411,6 +1438,14 @@ async function fc_cargarDatosGuardados() {
         const data = await response.json();
         if (!data.ok || !data.guardados) return;
 
+        // Cargar registro de bajas (items eliminados con vigencia)
+        try {
+            const resElim = await fetch('/api/flujo-caja/egresos-eliminados');
+            const dElim = await resElim.json();
+            if (dElim.ok) fc_eliminados_data = dElim.eliminados || [];
+        } catch (e) { console.error('Error cargando bajas:', e); }
+        const primeraSemana = semanas[0].inicio;
+
         // Consolidar egresos de todas las semanas antes de aplicar.
         // Orden: por fecha de actualizacion ascendente, para que los campos
         // escalares (saldo, dias, banco, deuda) del guardado MAS RECIENTE ganen.
@@ -1422,15 +1457,21 @@ async function fc_cargarDatosGuardados() {
                 for (const [grupo, items] of Object.entries(guardado.egresos)) {
                     if (!egresosConsolidados[grupo]) egresosConsolidados[grupo] = [];
                     items.forEach((item, idx) => {
+                        // Items dados de baja: si la baja rige desde antes de la vista,
+                        // no se muestran; si rige a mitad de la vista, se muestran solo
+                        // con su historia (dias anteriores a la baja)
+                        const elimDesde = fc_getEliminadoDesde(grupo, item.nombre);
+                        if (elimDesde && elimDesde <= primeraSemana) return;
+
                         // Buscar si ya existe este item por nombre
                         let existente = egresosConsolidados[grupo].find(e => e.nombre === item.nombre);
                         if (!existente) {
-                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, valores: {} };
+                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, valores: {}, eliminadoDesde: elimDesde || null };
                             egresosConsolidados[grupo].push(existente);
                         }
-                        // Consolidar valores (fechas)
+                        // Consolidar valores (fechas) — sin dias posteriores a la baja
                         for (const [dia, valor] of Object.entries(item.valores || {})) {
-                            if (valor) existente.valores[dia] = valor;
+                            if (valor && (!elimDesde || dia < elimDesde)) existente.valores[dia] = valor;
                         }
                         // Actualizar banco, deuda, saldo y dias si vienen
                         if (item.banco) existente.banco = item.banco;
@@ -1572,6 +1613,21 @@ async function fc_cargarDatosGuardados() {
                         const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
                         if (input && valor) input.value = valor;
                     }
+
+                    // Baja a mitad de la vista: fila solo historica, dias posteriores bloqueados
+                    if (item.eliminadoDesde) {
+                        rows[idx].dataset.eliminadoDesde = item.eliminadoDesde;
+                        rows[idx].style.opacity = '0.55';
+                        rows[idx].querySelectorAll('.fc-input[data-fecha]').forEach(inp => {
+                            if (inp.dataset.fecha >= item.eliminadoDesde) {
+                                inp.value = '';
+                                inp.disabled = true;
+                                inp.style.background = '#f1f5f9';
+                            }
+                        });
+                        const nombreI = rows[idx].querySelector('.fc-input-nombre');
+                        if (nombreI) nombreI.title = 'Dado de baja desde ' + item.eliminadoDesde + ' (solo histórico)';
+                    }
                 }
             });
         }
@@ -1649,6 +1705,24 @@ async function fc_guardarDatos() {
                 const nombre = nombreInput ? nombreInput.value : 'Item';
                 const clase = Array.from(row.classList).find(c => c.startsWith('fc-egreso-item-'));
                 const grupo = clase ? clase.replace('fc-egreso-item-', '') : 'otros';
+
+                // Item dado de baja: no guardarlo en semanas desde su fecha de baja
+                // (asi el historico anterior queda intacto y no se propaga al futuro)
+                const bajaDesde = row.dataset.eliminadoDesde || fc_getEliminadoDesde(grupo, nombre);
+                if (bajaDesde) {
+                    if (!row.dataset.eliminadoDesde) {
+                        // Fila recreada manualmente con el mismo nombre => reactivar la vigencia
+                        fetch('/api/flujo-caja/egresos-eliminados/reactivar', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ grupo, nombre })
+                        }).catch(() => {});
+                        fc_eliminados_data = fc_eliminados_data.filter(x =>
+                            !(x.grupo === grupo && (x.nombre || '').trim().toUpperCase() === nombre.trim().toUpperCase()));
+                    } else if (fechaSemana >= bajaDesde) {
+                        return; // semana afectada por la baja: se omite el item
+                    }
+                }
 
                 if (!egresos[grupo]) egresos[grupo] = [];
 
@@ -3893,7 +3967,145 @@ function fc_calcularPlanDeudas() {
     });
 
     html += '</tbody></table>';
+
+    // ---- Apartado: Proyeccion de Ahorros para cancelar deuda +60 dias ----
+    html += `
+        <div id="fc-ahorro-section" style="margin-top:20px;border-top:2px solid #e2e8f0;padding-top:14px;">
+            <h4 style="margin:0 0 8px;font-size:12px;color:#1e293b;"><i class="fas fa-piggy-bank"></i> Proyecci&oacute;n de Ahorros &rarr; Pago de Deudas +60 d&iacute;as</h4>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+                <label style="font-size:11px;color:#475569;font-weight:600;">Ahorro semanal destinado a deuda vieja: $</label>
+                <input type="number" id="fc-ahorro-semanal" value="${fc_ahorro_semanal || ''}" placeholder="0"
+                       style="width:110px;padding:5px 8px;border:1px solid #cbd5e1;border-radius:5px;font-size:12px;font-weight:700;text-align:right;"
+                       onchange="fc_proyectarAhorroDeuda()">
+                <button class="fc-btn" style="background:#2e7d32;font-size:11px;" onclick="fc_ahorroGuardar()"><i class="fas fa-save"></i> Guardar ahorro</button>
+                <span style="font-size:10px;color:#94a3b8;">Se proyecta contra las facturas +60d, de la m&aacute;s vencida a la m&aacute;s reciente</span>
+            </div>
+            <div id="fc-ahorro-proyeccion"></div>
+        </div>`;
+
     body.innerHTML = html;
+
+    // Datos para la proyeccion (facturas +60d en orden de prioridad)
+    fc_deudas60_cache = deudas60;
+    fc_ahorroCargarConfig().then(() => fc_proyectarAhorroDeuda());
+}
+
+// ============ PROYECCION DE AHORROS PARA DEUDA +60D ============
+let fc_ahorro_semanal = 0;
+let fc_ahorro_config_cargada = false;
+let fc_deudas60_cache = [];
+
+async function fc_ahorroCargarConfig() {
+    if (fc_ahorro_config_cargada) return;
+    try {
+        const res = await fetch('/api/flujo-caja/ahorro-deuda');
+        const data = await res.json();
+        if (data.ok) {
+            fc_ahorro_semanal = data.ahorro_semanal || 0;
+            fc_ahorro_config_cargada = true;
+            const input = document.getElementById('fc-ahorro-semanal');
+            if (input && fc_ahorro_semanal > 0) input.value = fc_ahorro_semanal;
+        }
+    } catch (e) { console.error('Error cargando config ahorro:', e); }
+}
+
+async function fc_ahorroGuardar() {
+    const input = document.getElementById('fc-ahorro-semanal');
+    const valor = parseFloat(input?.value) || 0;
+    try {
+        const res = await fetch('/api/flujo-caja/ahorro-deuda', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ahorro_semanal: valor })
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        fc_ahorro_semanal = valor;
+        alert('Ahorro semanal guardado: $' + valor.toLocaleString('en-US', {minimumFractionDigits: 2}));
+    } catch (e) {
+        alert('Error al guardar: ' + e.message);
+    }
+}
+
+function fc_proyectarAhorroDeuda() {
+    const cont = document.getElementById('fc-ahorro-proyeccion');
+    if (!cont) return;
+    const input = document.getElementById('fc-ahorro-semanal');
+    const ahorro = parseFloat(input?.value) || 0;
+
+    // Cola de deudas +60d (mas vencida primero), solo pendiente
+    const cola = fc_deudas60_cache.map(d => ({...d, restante: d.pendiente}));
+    const totalDeuda = cola.reduce((s, d) => s + d.restante, 0);
+
+    if (totalDeuda <= 0) {
+        cont.innerHTML = '<p style="color:#16a34a;font-size:11px;text-align:center;padding:10px;">No hay deuda +60 d&iacute;as pendiente. Nada que proyectar.</p>';
+        return;
+    }
+    if (ahorro <= 0) {
+        cont.innerHTML = `<p style="color:#94a3b8;font-size:11px;text-align:center;padding:10px;">Ingrese el ahorro semanal para proyectar la cancelaci&oacute;n de los $${totalDeuda.toLocaleString('en-US',{minimumFractionDigits:2})} vencidos +60d.</p>`;
+        return;
+    }
+
+    // Proximo lunes como punto de partida
+    const inicio = new Date();
+    inicio.setHours(12, 0, 0, 0);
+    inicio.setDate(inicio.getDate() + ((8 - inicio.getDay()) % 7 || 7));
+
+    const MAX_SEMANAS = 52;
+    let idx = 0, saldoAcum = 0, deudaRestante = totalDeuda;
+    let rows = '';
+    let semanasUsadas = 0;
+
+    for (let s = 0; s < MAX_SEMANAS && deudaRestante > 0.005; s++) {
+        semanasUsadas = s + 1;
+        const fSem = new Date(inicio);
+        fSem.setDate(inicio.getDate() + s * 7);
+        const fechaTxt = fSem.toLocaleDateString('es-EC', {day: '2-digit', month: 'short'});
+        saldoAcum += ahorro;
+
+        const pagos = [];
+        while (idx < cola.length && saldoAcum > 0.005) {
+            const d = cola[idx];
+            const pago = Math.min(saldoAcum, d.restante);
+            d.restante -= pago;
+            saldoAcum -= pago;
+            deudaRestante -= pago;
+            pagos.push({prov: d.proveedor, fac: d.factura, monto: pago, completo: d.restante <= 0.005});
+            if (d.restante <= 0.005) idx++;
+            else break;
+        }
+
+        const pagosHtml = pagos.length === 0
+            ? '<span style="color:#94a3b8;">Acumulando...</span>'
+            : pagos.map(p => `<div style="margin:1px 0;">${p.completo ? '<span style="color:#16a34a;font-weight:700;">&#10003;</span>' : '<span style="color:#ca8a04;font-weight:700;">&frac12;</span>'} ${p.prov} <span style="font-family:monospace;font-size:9px;color:#64748b;">${p.fac}</span> <b>$${p.monto.toLocaleString('en-US',{minimumFractionDigits:2})}</b>${p.completo ? '' : ' <span style="font-size:9px;color:#ca8a04;">(abono)</span>'}</div>`).join('');
+
+        rows += `<tr style="border-bottom:1px solid #f1f5f9;">
+            <td style="padding:5px 8px;font-weight:600;white-space:nowrap;">Sem ${s + 1} &middot; ${fechaTxt}</td>
+            <td style="padding:5px 8px;text-align:right;color:#2e7d32;">$${ahorro.toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+            <td style="padding:5px 8px;">${pagosHtml}</td>
+            <td style="padding:5px 8px;text-align:right;font-weight:700;color:${deudaRestante > 0.005 ? '#dc2626' : '#16a34a'};">$${Math.max(0, deudaRestante).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+        </tr>`;
+    }
+
+    const liquidada = deudaRestante <= 0.005;
+    const resumen = liquidada
+        ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:11px;color:#166534;"><b>Con $${ahorro.toLocaleString('en-US',{minimumFractionDigits:2})}/semana la deuda +60d ($${totalDeuda.toLocaleString('en-US',{minimumFractionDigits:2})}) se cancela en ${semanasUsadas} semana(s)</b> (~${Math.ceil(semanasUsadas / 4.3)} mes(es)), la &uacute;ltima el ${new Date(inicio.getTime() + (semanasUsadas - 1) * 7 * 86400000).toLocaleDateString('es-EC', {day: '2-digit', month: 'long', year: 'numeric'})}.</div>`
+        : `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:11px;color:#991b1b;"><b>Con $${ahorro.toLocaleString('en-US',{minimumFractionDigits:2})}/semana NO se cubre la deuda +60d en 1 a&ntilde;o.</b> Quedar&iacute;an $${deudaRestante.toLocaleString('en-US',{minimumFractionDigits:2})} pendientes de $${totalDeuda.toLocaleString('en-US',{minimumFractionDigits:2})}.</div>`;
+
+    cont.innerHTML = `${resumen}
+        <div style="max-height:320px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:6px;">
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead>
+                <tr style="background:#1b5e20;color:#fff;position:sticky;top:0;">
+                    <th style="padding:6px 8px;text-align:left;">Semana</th>
+                    <th style="padding:6px 8px;text-align:right;">Ahorro</th>
+                    <th style="padding:6px 8px;text-align:left;">Facturas que se cancelan</th>
+                    <th style="padding:6px 8px;text-align:right;">Deuda +60d restante</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+        </div>`;
 }
 
 // Mostrar plan de deudas automaticamente al cargar datos del flujo

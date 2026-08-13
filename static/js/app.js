@@ -1292,6 +1292,9 @@ function showMainScreen() {
     const moduloFlujoCaja = document.querySelector('.nav-module[data-module="flujocaja"]');
     if (moduloFlujoCaja) moduloFlujoCaja.style.display = isAdmin ? '' : 'none';
 
+    const moduloNomina = document.querySelector('.nav-module[data-module="nomina"]');
+    if (moduloNomina) moduloNomina.style.display = isAdmin ? '' : 'none';
+
     // Recargar bodegas filtradas segun usuario
     cargarBodegas();
 
@@ -1401,6 +1404,18 @@ function cambiarVista(viewName) {
     // Auto-inicializar flujo de caja al entrar
     if (viewName === 'flujo-caja') {
         if (typeof fc_init === 'function') fc_init();
+    }
+
+    // Auto-inicializar modulo nomina
+    if (viewName === 'nom-dashboard') {
+        if (typeof nom_initDashboard === 'function') nom_initDashboard();
+    }
+    if (viewName === 'nom-empleados') {
+        if (typeof nom_init === 'function') nom_init();
+    }
+    if (viewName === 'nom-nomina') {
+        if (typeof nom_initNomina === 'function') nom_initNomina();
+        if (typeof nom_generarPeriodos === 'function') nom_generarPeriodos();
     }
 
     // Auto-inicializar depositos al entrar

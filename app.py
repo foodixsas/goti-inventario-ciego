@@ -7350,7 +7350,7 @@ def flujo_caja_proveedores_guardar():
                 observaciones = EXCLUDED.observaciones,
                 updated_at = NOW()
             RETURNING id
-        ''', (nombre, data.get('nombre_comercial', ''), data.get('criticidad', 'BAJO'),
+        ''', (nombre, (data.get('nombre_comercial') or '').strip() or nombre, data.get('criticidad', 'BAJO'),
               data.get('dias_credito', 0), data.get('dia_despacho', ''),
               data.get('productos_servicios', ''), data.get('observaciones', '')))
         prov_id = cur.fetchone()[0]
@@ -7395,7 +7395,7 @@ def flujo_caja_proveedores_bulk():
                     productos_servicios = COALESCE(NULLIF(EXCLUDED.productos_servicios, ''), fc_proveedores.productos_servicios),
                     observaciones = COALESCE(NULLIF(EXCLUDED.observaciones, ''), fc_proveedores.observaciones),
                     updated_at = NOW()
-            ''', (nombre, p.get('nombre_comercial', ''), p.get('criticidad', 'BAJO'),
+            ''', (nombre, (p.get('nombre_comercial') or '').strip() or nombre, p.get('criticidad', 'BAJO'),
                   p.get('dias_credito', 0), p.get('dia_despacho', ''),
                   p.get('productos_servicios', ''), p.get('observaciones', '')))
             guardados += 1
@@ -7514,6 +7514,137 @@ def flujo_caja_recurrentes_eliminar(pago_id):
         conn.commit()
         if row: return jsonify({'ok': True, 'eliminado': row[0]})
         return jsonify({'error': 'No encontrado'}), 404
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+def _fc_crear_tabla_eliminados(cur):
+    cur.execute('''CREATE TABLE IF NOT EXISTS fc_egresos_eliminados (
+        grupo TEXT NOT NULL,
+        nombre TEXT NOT NULL,
+        eliminado_desde DATE NOT NULL,
+        eliminado_por TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (grupo, nombre))''')
+
+
+@app.route('/api/flujo-caja/egresos-eliminados', methods=['GET'])
+def flujo_caja_eliminados_get():
+    """Items de egreso dados de baja con su fecha de vigencia"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_eliminados(cur)
+        conn.commit()
+        cur.execute('SELECT grupo, nombre, eliminado_desde FROM fc_egresos_eliminados')
+        eliminados = [{'grupo': r[0], 'nombre': r[1], 'eliminado_desde': r[2].isoformat()} for r in cur.fetchall()]
+        return jsonify({'ok': True, 'eliminados': eliminados})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/egresos-eliminados', methods=['POST'])
+def flujo_caja_eliminados_marcar():
+    """Marcar item como eliminado desde una semana (conserva el historico anterior)"""
+    conn = None
+    try:
+        data = request.get_json()
+        grupo = (data.get('grupo') or '').strip()
+        nombre = (data.get('nombre') or '').strip()
+        desde = (data.get('eliminado_desde') or '').strip()
+        if not grupo or not nombre or not desde:
+            return jsonify({'error': 'grupo, nombre y eliminado_desde son requeridos'}), 400
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_eliminados(cur)
+        cur.execute('''INSERT INTO fc_egresos_eliminados (grupo, nombre, eliminado_desde, eliminado_por)
+            VALUES (%s, %s, %s, %s) ON CONFLICT (grupo, nombre) DO UPDATE SET
+            eliminado_desde = EXCLUDED.eliminado_desde, created_at = NOW()''',
+            (grupo, nombre, desde, data.get('usuario', '')))
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/egresos-eliminados/reactivar', methods=['POST'])
+def flujo_caja_eliminados_reactivar():
+    """Quitar la baja de un item (vuelve a aparecer en todas las semanas)"""
+    conn = None
+    try:
+        data = request.get_json()
+        grupo = (data.get('grupo') or '').strip()
+        nombre = (data.get('nombre') or '').strip()
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_eliminados(cur)
+        cur.execute('DELETE FROM fc_egresos_eliminados WHERE grupo = %s AND nombre = %s', (grupo, nombre))
+        conn.commit()
+        return jsonify({'ok': True, 'reactivados': cur.rowcount})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+def _fc_crear_tabla_ahorro(cur):
+    cur.execute('''CREATE TABLE IF NOT EXISTS fc_ahorro_deuda (
+        id SMALLINT PRIMARY KEY DEFAULT 1,
+        ahorro_semanal NUMERIC(14,2) DEFAULT 0,
+        aportes_extra JSONB DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMP DEFAULT NOW())''')
+
+
+@app.route('/api/flujo-caja/ahorro-deuda', methods=['GET'])
+def flujo_caja_ahorro_deuda_get():
+    """Config de ahorro semanal destinado a pago de deuda vencida"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_ahorro(cur)
+        conn.commit()
+        cur.execute('SELECT ahorro_semanal, aportes_extra FROM fc_ahorro_deuda WHERE id = 1')
+        row = cur.fetchone()
+        if row:
+            return jsonify({'ok': True, 'ahorro_semanal': float(row[0] or 0), 'aportes_extra': row[1] or {}})
+        return jsonify({'ok': True, 'ahorro_semanal': 0, 'aportes_extra': {}})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/ahorro-deuda', methods=['POST'])
+def flujo_caja_ahorro_deuda_guardar():
+    """Guardar config de ahorro semanal para deuda"""
+    conn = None
+    try:
+        data = request.get_json()
+        ahorro = float(data.get('ahorro_semanal', 0) or 0)
+        aportes = data.get('aportes_extra', {}) or {}
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_ahorro(cur)
+        cur.execute('''INSERT INTO fc_ahorro_deuda (id, ahorro_semanal, aportes_extra)
+            VALUES (1, %s, %s::jsonb) ON CONFLICT (id) DO UPDATE SET
+            ahorro_semanal = EXCLUDED.ahorro_semanal,
+            aportes_extra = EXCLUDED.aportes_extra,
+            updated_at = NOW()''', (ahorro, json.dumps(aportes)))
+        conn.commit()
+        return jsonify({'ok': True})
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -8045,6 +8176,669 @@ def inventario_locales_borrar():
         return jsonify({'error': str(e)[:200]}), 500
     finally:
         if conn: release_db(conn)
+
+
+# ================================================================
+# MODULO NOMINA Y TTHH - Endpoints API
+# BD: movimientos (Azure PostgreSQL) - Schema: nomina_*
+# ================================================================
+
+_nomina_pool = None
+
+def _get_nomina_pool():
+    """Pool dedicado para nomina con RealDictCursor"""
+    global _nomina_pool
+    if _nomina_pool is None:
+        _nomina_pool = SimpleConnectionPool(
+            minconn=1, maxconn=3,
+            host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
+            database='movimientos',
+            user=os.environ.get('DB_USER', 'adminChios'),
+            password=os.environ.get('DB_PASSWORD', 'Burger2023'),
+            port=os.environ.get('DB_PORT', '5432'),
+            sslmode='require',
+            connect_timeout=10,
+            cursor_factory=RealDictCursor
+        )
+    return _nomina_pool
+
+def _get_mov_conn():
+    """Conexion a BD movimientos para modulo nomina (con RealDictCursor)"""
+    conn = _get_nomina_pool().getconn()
+    try:
+        conn.cursor().execute("SELECT 1")
+        conn.rollback()
+    except Exception:
+        try:
+            _get_nomina_pool().putconn(conn, close=True)
+        except Exception:
+            try: conn.close()
+            except Exception: pass
+        conn = psycopg2.connect(
+            host=os.environ.get('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
+            database='movimientos',
+            user=os.environ.get('DB_USER', 'adminChios'),
+            password=os.environ.get('DB_PASSWORD', 'Burger2023'),
+            port=os.environ.get('DB_PORT', '5432'),
+            sslmode='require',
+            cursor_factory=RealDictCursor
+        )
+    return conn
+
+def _release_mov(conn):
+    try:
+        if conn and not conn.closed:
+            _get_nomina_pool().putconn(conn)
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+
+def _init_nomina_schema():
+    """Crea tablas nomina_* en BD movimientos si no existen"""
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS nomina_empleados (
+                id SERIAL PRIMARY KEY,
+                tipo_documento TEXT DEFAULT 'cedula',
+                cedula TEXT NOT NULL UNIQUE,
+                nombre_completo TEXT,
+                primer_nombre TEXT DEFAULT '',
+                segundo_nombre TEXT,
+                apellido_paterno TEXT DEFAULT '',
+                apellido_materno TEXT,
+                email TEXT,
+                fecha_nacimiento DATE,
+                genero TEXT,
+                nacionalidad TEXT DEFAULT 'Ecuatoriano',
+                estado_civil TEXT,
+                direccion TEXT,
+                celular TEXT,
+                empresa TEXT DEFAULT 'FOODIX SAS',
+                marca TEXT,
+                tienda TEXT,
+                area TEXT,
+                cargo_texto TEXT,
+                cargo_jerarquico_texto TEXT,
+                estado TEXT DEFAULT 'Activo',
+                fecha_ingreso DATE,
+                fecha_salida DATE,
+                tipo_contrato TEXT,
+                etapa TEXT,
+                jornada TEXT DEFAULT 'Completa',
+                horas_mes NUMERIC(6,2) DEFAULT 240,
+                salario NUMERIC(10,2) NOT NULL DEFAULT 0,
+                descuento_por_cargo NUMERIC(10,2) DEFAULT 0,
+                bono_cumpleanos NUMERIC(10,2) DEFAULT 0,
+                decimos TEXT DEFAULT 'Mensualizado',
+                forma_pago TEXT DEFAULT 'Transferencia',
+                banco TEXT,
+                tipo_cuenta TEXT,
+                numero_cuenta TEXT,
+                motivo_salida TEXT,
+                emergencia1_nombre TEXT,
+                emergencia1_telefono TEXT,
+                emergencia1_relacion TEXT,
+                emergencia2_nombre TEXT,
+                emergencia2_telefono TEXT,
+                emergencia2_relacion TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS nomina_rubros (
+                id SERIAL PRIMARY KEY,
+                codigo TEXT NOT NULL UNIQUE,
+                nombre TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                es_predeterminado BOOLEAN DEFAULT FALSE,
+                porcentaje NUMERIC(8,4),
+                valor_fijo NUMERIC(10,2),
+                aplica_iess BOOLEAN DEFAULT FALSE,
+                aplica_ir BOOLEAN DEFAULT FALSE,
+                activo BOOLEAN DEFAULT TRUE,
+                orden INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS nomina_liquidacion_grupo (
+                id SERIAL PRIMARY KEY,
+                tipo TEXT NOT NULL,
+                periodo TEXT NOT NULL,
+                fecha_liquidacion DATE NOT NULL,
+                estado TEXT DEFAULT 'Borrador',
+                total_ingresos NUMERIC(12,2) DEFAULT 0,
+                total_descuentos NUMERIC(12,2) DEFAULT 0,
+                total_pagar NUMERIC(12,2) DEFAULT 0,
+                total_prestaciones NUMERIC(12,2) DEFAULT 0,
+                total_costo_empleado NUMERIC(12,2) DEFAULT 0,
+                num_empleados INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS nomina_liquidacion_detalle (
+                id SERIAL PRIMARY KEY,
+                liquidacion_grupo_id INTEGER NOT NULL REFERENCES nomina_liquidacion_grupo(id) ON DELETE CASCADE,
+                empleado_id INTEGER NOT NULL REFERENCES nomina_empleados(id),
+                nombre_completo TEXT,
+                sueldo_base NUMERIC(10,2) NOT NULL,
+                dias_trabajados NUMERIC(5,1) DEFAULT 30,
+                total_ingresos NUMERIC(10,2) DEFAULT 0,
+                total_descuentos NUMERIC(10,2) DEFAULT 0,
+                liquido_pagar NUMERIC(10,2) DEFAULT 0,
+                total_prestaciones NUMERIC(10,2) DEFAULT 0,
+                costo_empleado NUMERIC(10,2) DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS nomina_liquidacion_rubro (
+                id SERIAL PRIMARY KEY,
+                liquidacion_detalle_id INTEGER NOT NULL REFERENCES nomina_liquidacion_detalle(id) ON DELETE CASCADE,
+                concepto TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                cantidad NUMERIC(8,2) DEFAULT 1,
+                valor NUMERIC(10,2) DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS nomina_centros_costo (
+                id SERIAL PRIMARY KEY,
+                codigo TEXT NOT NULL UNIQUE,
+                nombre TEXT NOT NULL,
+                activo BOOLEAN DEFAULT TRUE
+            );
+
+            CREATE TABLE IF NOT EXISTS nomina_tipos_contrato (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                dias_duracion INTEGER,
+                activo BOOLEAN DEFAULT TRUE
+            );
+
+            CREATE TABLE IF NOT EXISTS nomina_config_cargo (
+                id SERIAL PRIMARY KEY,
+                cargo_jerarquico TEXT NOT NULL UNIQUE,
+                descuento_por_cargo NUMERIC(10,2) DEFAULT 0,
+                bono_cumpleanos NUMERIC(10,2) DEFAULT 0,
+                activo BOOLEAN DEFAULT TRUE
+            );
+        """)
+
+        # Insertar rubros predeterminados si no existen
+        cur.execute("SELECT COUNT(*) as c FROM nomina_rubros")
+        if cur.fetchone()['c'] == 0:
+            rubros = [
+                ('ING001', 'Sueldo Base', 'ingreso', None, True, True, 1),
+                ('ING004', 'Comisiones', 'ingreso', None, True, True, 4),
+                ('ING009', 'Vacaciones Pagadas', 'ingreso', None, True, True, 9),
+                ('DES001', 'IESS Personal', 'descuento', 9.45, False, False, 1),
+                ('DES003', 'Prestamo IESS Quirografario', 'descuento', None, False, False, 3),
+                ('DES007', 'Multas', 'descuento', None, False, False, 7),
+                ('PRE001', 'IESS Patronal', 'prestacion', 12.15, False, False, 1),
+                ('PRE002', 'IECE+SECAP', 'prestacion', 1.0, False, False, 2),
+                ('PRE004', 'Provision Vacaciones', 'prestacion', None, False, False, 4),
+                ('PRE005', 'Provision Decimotercero', 'prestacion', None, False, False, 5),
+                ('PRE006', 'Provision Decimocuarto', 'prestacion', None, False, False, 6),
+            ]
+            for r in rubros:
+                cur.execute("""
+                    INSERT INTO nomina_rubros (codigo, nombre, tipo, porcentaje, aplica_iess, aplica_ir, orden)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, r)
+
+        # Insertar config cargos jerarquicos si no existen
+        cur.execute("SELECT COUNT(*) as c FROM nomina_config_cargo")
+        if cur.fetchone()['c'] == 0:
+            cargos = [
+                ('Director General', 100, 30), ('Jefe de Area', 35, 30),
+                ('Gerente de Tienda', 25, 30), ('Subgerente de Tienda', 20, 20),
+                ('Analista', 20, 20), ('Supervisor', 20, 20),
+                ('Operario de Produccion', 15, 15), ('Polifuncional', 15, 15),
+                ('Auxiliar', 15, 15), ('Asistente', 15, 15),
+                ('Pasante / Practicante', 10, 10),
+            ]
+            for c in cargos:
+                cur.execute("""
+                    INSERT INTO nomina_config_cargo (cargo_jerarquico, descuento_por_cargo, bono_cumpleanos)
+                    VALUES (%s, %s, %s)
+                """, c)
+
+        # Insertar tipos contrato si no existen
+        cur.execute("SELECT COUNT(*) as c FROM nomina_tipos_contrato")
+        if cur.fetchone()['c'] == 0:
+            tipos = [
+                'Contrato Indefinido con Periodo de Prueba', 'Contrato Sector Turistico',
+                'Contrato Pasantias', 'Contrato Practicas', 'Contrato por Servicios Profesionales',
+                'Contrato Emergente', 'Contrato Funciones de Confianza',
+                'Contrato Jornada Parcial Permanente', 'Contrato Artesanal',
+            ]
+            for t in tipos:
+                cur.execute("INSERT INTO nomina_tipos_contrato (nombre) VALUES (%s)", (t,))
+
+        conn.commit()
+        print('[NOMINA] Schema inicializado correctamente')
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f'[NOMINA] Error inicializando schema: {e}')
+    finally:
+        if conn: _release_mov(conn)
+
+# Inicializar schema al arrancar
+_init_nomina_schema()
+
+# ---------- CONSTANTES NOMINA ECUADOR 2026 ----------
+NOM_SBU = 482.0
+NOM_IESS_PERSONAL = 0.0945
+NOM_IESS_PATRONAL = 0.1215
+NOM_IECE_SECAP = 0.01
+NOM_FR_RATE = 1/12  # 8.33%
+NOM_ANTICIPO_PCT = 0.40
+
+def _nom_round(n):
+    """Redondeo bancario a 2 decimales"""
+    return round(float(n or 0) + 1e-9, 2)
+
+# ---------- CATALOGOS ----------
+@app.route('/api/nomina/catalogos', methods=['GET'])
+def nomina_catalogos():
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT nombre FROM nomina_tipos_contrato WHERE activo = TRUE ORDER BY nombre")
+        tipos = [r['nombre'] for r in cur.fetchall()]
+        cur.execute("SELECT cargo_jerarquico, descuento_por_cargo, bono_cumpleanos FROM nomina_config_cargo WHERE activo = TRUE ORDER BY cargo_jerarquico")
+        cargos = cur.fetchall()
+        return jsonify({
+            'tipos_contrato': tipos,
+            'cargos_jerarquicos': [c['cargo_jerarquico'] for c in cargos],
+            'config_cargos': {c['cargo_jerarquico']: {'descuento': float(c['descuento_por_cargo']), 'bono': float(c['bono_cumpleanos'])} for c in cargos},
+            'tiendas': ['Chios Real Audiencia','Chios Portugal','Chios Floreana','Santo Cachon Real Audiencia','Santo Cachon Portugal','Simon Bolon','Planta','Oficinas'],
+            'areas': ['Operaciones','Produccion','Administracion','Contabilidad','Marketing','Talento Humano'],
+            'marcas': ['Chios','Santo Cachon','Simon Bolon','FOODIX'],
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+# ---------- DASHBOARD ----------
+@app.route('/api/nomina/dashboard', methods=['GET'])
+def nomina_dashboard():
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) as c FROM nomina_empleados WHERE estado = 'Activo'")
+        activos = cur.fetchone()['c']
+        cur.execute("SELECT COUNT(*) as c FROM nomina_empleados WHERE estado != 'Activo'")
+        inactivos = cur.fetchone()['c']
+        cur.execute("SELECT COALESCE(SUM(salario),0) as s, COALESCE(AVG(salario),0) as a FROM nomina_empleados WHERE estado = 'Activo'")
+        sal = cur.fetchone()
+        # Costo mensual estimado: salario + IESS patronal + IECE/SECAP + provisiones
+        costo_base = float(sal['s'])
+        costo_mensual = _nom_round(costo_base * (1 + NOM_IESS_PATRONAL + NOM_IECE_SECAP + NOM_FR_RATE + 1/12 + NOM_SBU/(12*costo_base) if costo_base > 0 else 0))
+        if costo_base == 0:
+            costo_mensual = 0
+
+        cur.execute("SELECT COALESCE(area, 'Sin area') as area, COUNT(*) as cantidad FROM nomina_empleados WHERE estado = 'Activo' GROUP BY area ORDER BY cantidad DESC")
+        por_area = cur.fetchall()
+        cur.execute("SELECT COALESCE(tienda, 'Sin tienda') as tienda, COUNT(*) as cantidad FROM nomina_empleados WHERE estado = 'Activo' GROUP BY tienda ORDER BY cantidad DESC")
+        por_tienda = cur.fetchall()
+        cur.execute("SELECT COALESCE(tipo_contrato, 'Sin tipo') as tipo_contrato, COUNT(*) as cantidad FROM nomina_empleados WHERE estado = 'Activo' GROUP BY tipo_contrato ORDER BY cantidad DESC")
+        por_contrato = cur.fetchall()
+
+        return jsonify({
+            'activos': activos, 'inactivos': inactivos,
+            'costo_mensual': costo_mensual,
+            'promedio_salario': float(sal['a']),
+            'por_area': [dict(r) for r in por_area],
+            'por_tienda': [dict(r) for r in por_tienda],
+            'por_contrato': [dict(r) for r in por_contrato],
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+# ---------- EMPLEADOS CRUD ----------
+@app.route('/api/nomina/empleados', methods=['GET'])
+def nomina_empleados_lista():
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        filtro = request.args.get('filtro', 'Activo')
+        buscar = request.args.get('buscar', '').strip()
+        where = []
+        params = []
+        if filtro:
+            where.append("estado = %s")
+            params.append(filtro)
+        if buscar:
+            where.append("(nombre_completo ILIKE %s OR cedula ILIKE %s OR cargo_texto ILIKE %s)")
+            like = f'%{buscar}%'
+            params.extend([like, like, like])
+        w = ('WHERE ' + ' AND '.join(where)) if where else ''
+        cur.execute(f"""
+            SELECT id, cedula, nombre_completo, cargo_texto, tienda, salario, fecha_ingreso, estado, area, marca
+            FROM nomina_empleados {w}
+            ORDER BY nombre_completo
+        """, params)
+        return jsonify({'empleados': [dict(r) for r in cur.fetchall()]})
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+@app.route('/api/nomina/empleados/<int:emp_id>', methods=['GET'])
+def nomina_empleado_detalle(emp_id):
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM nomina_empleados WHERE id = %s", (emp_id,))
+        emp = cur.fetchone()
+        if not emp:
+            return jsonify({'error': 'Empleado no encontrado'}), 404
+        return jsonify(dict(emp))
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+@app.route('/api/nomina/empleados', methods=['POST'])
+def nomina_empleado_crear():
+    conn = None
+    try:
+        data = request.get_json()
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        campos = ['cedula','nombre_completo','email','celular','fecha_nacimiento','genero','estado_civil',
+            'nacionalidad','direccion','empresa','marca','tienda','area','cargo_texto','cargo_jerarquico_texto',
+            'fecha_ingreso','tipo_contrato','estado','salario','descuento_por_cargo','bono_cumpleanos',
+            'jornada','horas_mes','decimos','forma_pago','banco','tipo_cuenta','numero_cuenta',
+            'emergencia1_nombre','emergencia1_telefono','emergencia1_relacion',
+            'emergencia2_nombre','emergencia2_telefono','emergencia2_relacion']
+        vals = []
+        placeholders = []
+        cols = []
+        for c in campos:
+            v = data.get(c)
+            if v is not None and v != '':
+                cols.append(c)
+                placeholders.append('%s')
+                if c in ('salario','descuento_por_cargo','bono_cumpleanos','horas_mes'):
+                    vals.append(float(v) if v else 0)
+                else:
+                    vals.append(v)
+        cur.execute(f"""
+            INSERT INTO nomina_empleados ({','.join(cols)})
+            VALUES ({','.join(placeholders)})
+            RETURNING id
+        """, vals)
+        new_id = cur.fetchone()['id']
+        conn.commit()
+        return jsonify({'ok': True, 'id': new_id})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+@app.route('/api/nomina/empleados/<int:emp_id>', methods=['PUT'])
+def nomina_empleado_editar(emp_id):
+    conn = None
+    try:
+        data = request.get_json()
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        campos = ['cedula','nombre_completo','email','celular','fecha_nacimiento','genero','estado_civil',
+            'nacionalidad','direccion','empresa','marca','tienda','area','cargo_texto','cargo_jerarquico_texto',
+            'fecha_ingreso','tipo_contrato','estado','salario','descuento_por_cargo','bono_cumpleanos',
+            'jornada','horas_mes','decimos','forma_pago','banco','tipo_cuenta','numero_cuenta',
+            'emergencia1_nombre','emergencia1_telefono','emergencia1_relacion',
+            'emergencia2_nombre','emergencia2_telefono','emergencia2_relacion']
+        sets = []
+        vals = []
+        for c in campos:
+            if c in data:
+                v = data[c]
+                if c in ('salario','descuento_por_cargo','bono_cumpleanos','horas_mes'):
+                    v = float(v) if v else 0
+                elif v == '':
+                    v = None
+                sets.append(f"{c} = %s")
+                vals.append(v)
+        if not sets:
+            return jsonify({'error': 'No hay campos para actualizar'}), 400
+        sets.append("updated_at = NOW()")
+        vals.append(emp_id)
+        cur.execute(f"UPDATE nomina_empleados SET {','.join(sets)} WHERE id = %s", vals)
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+@app.route('/api/nomina/empleados/<int:emp_id>', methods=['DELETE'])
+def nomina_empleado_eliminar(emp_id):
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM nomina_empleados WHERE id = %s", (emp_id,))
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+# ---------- NOMINAS - PROCESAMIENTO ----------
+@app.route('/api/nomina/nominas', methods=['GET'])
+def nomina_listar():
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, tipo, periodo, fecha_liquidacion, estado,
+                   total_ingresos, total_descuentos, total_pagar, num_empleados, created_at
+            FROM nomina_liquidacion_grupo
+            ORDER BY periodo DESC, created_at DESC
+        """)
+        return jsonify({'nominas': [dict(r) for r in cur.fetchall()]})
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+@app.route('/api/nomina/nominas/procesar', methods=['POST'])
+def nomina_procesar():
+    """Calcula nomina para todos los empleados activos del periodo"""
+    conn = None
+    try:
+        data = request.get_json()
+        periodo = data.get('periodo')
+        tipo = data.get('tipo', 'Mensual')
+        if not periodo:
+            return jsonify({'error': 'Periodo requerido'}), 400
+
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+
+        # Obtener empleados activos
+        cur.execute("""
+            SELECT id, nombre_completo, salario, descuento_por_cargo, bono_cumpleanos,
+                   fecha_ingreso, cargo_jerarquico_texto, jornada, horas_mes, decimos
+            FROM nomina_empleados WHERE estado = 'Activo' AND salario > 0
+            ORDER BY nombre_completo
+        """)
+        empleados = cur.fetchall()
+        if not empleados:
+            return jsonify({'error': 'No hay empleados activos con salario'}), 400
+
+        # Crear grupo de liquidacion
+        cur.execute("""
+            INSERT INTO nomina_liquidacion_grupo (tipo, periodo, fecha_liquidacion)
+            VALUES (%s, %s, NOW()::date) RETURNING id
+        """, (tipo, periodo))
+        grupo_id = cur.fetchone()['id']
+
+        total_ing = 0
+        total_des = 0
+        total_pagar = 0
+        total_prest = 0
+        total_costo = 0
+
+        for emp in empleados:
+            salario = float(emp['salario'])
+            dias = 30
+            sueldo_devengado = _nom_round(salario * dias / 30)
+
+            if tipo == 'Anticipo':
+                # Anticipo: 40% del devengado
+                liquido = _nom_round(sueldo_devengado * NOM_ANTICIPO_PCT)
+                ing = liquido
+                des = 0
+                prest = 0
+                costo = ing
+                rubros_data = [('Anticipo Quincena', 'ingreso', 1, liquido)]
+            else:
+                # Calculo mensual completo
+                desc_cargo = float(emp['descuento_por_cargo'] or 0)
+                bono_cumple = float(emp['bono_cumpleanos'] or 0)
+
+                # Ingresos
+                ing_sueldo = sueldo_devengado
+                ing_total = ing_sueldo + bono_cumple
+
+                # Descuentos
+                base_iess = ing_sueldo  # Solo sueldo para IESS
+                iess_personal = _nom_round(base_iess * NOM_IESS_PERSONAL)
+                des_total = iess_personal + desc_cargo
+
+                # Liquido
+                liquido = _nom_round(ing_total - des_total)
+
+                # Prestaciones (costo empleador)
+                iess_patronal = _nom_round(base_iess * NOM_IESS_PATRONAL)
+                iece_secap = _nom_round(base_iess * NOM_IECE_SECAP)
+                prov_vacaciones = _nom_round(base_iess / 24)
+                prov_decimo3 = _nom_round(base_iess / 12)
+                prov_decimo4 = _nom_round(NOM_SBU / 12)
+                fondos_reserva = _nom_round(base_iess * NOM_FR_RATE)
+
+                prest = _nom_round(iess_patronal + iece_secap + prov_vacaciones + prov_decimo3 + prov_decimo4 + fondos_reserva)
+                ing = ing_total
+                des = des_total
+                costo = _nom_round(ing + prest)
+
+                rubros_data = [
+                    ('Sueldo Base', 'ingreso', dias, ing_sueldo),
+                    ('Bono Cumpleanos', 'ingreso', 1, bono_cumple),
+                    ('IESS Personal 9.45%', 'descuento', 1, iess_personal),
+                    ('Descuento por Cargo', 'descuento', 1, desc_cargo),
+                    ('IESS Patronal 12.15%', 'prestacion', 1, iess_patronal),
+                    ('IECE+SECAP 1%', 'prestacion', 1, iece_secap),
+                    ('Prov. Vacaciones', 'prestacion', 1, prov_vacaciones),
+                    ('Prov. Decimotercero', 'prestacion', 1, prov_decimo3),
+                    ('Prov. Decimocuarto', 'prestacion', 1, prov_decimo4),
+                    ('Fondos de Reserva', 'prestacion', 1, fondos_reserva),
+                ]
+
+            # Insertar detalle
+            cur.execute("""
+                INSERT INTO nomina_liquidacion_detalle
+                    (liquidacion_grupo_id, empleado_id, nombre_completo, sueldo_base, dias_trabajados,
+                     total_ingresos, total_descuentos, liquido_pagar, total_prestaciones, costo_empleado)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+            """, (grupo_id, emp['id'], emp['nombre_completo'], salario, dias, ing, des, liquido, prest, costo))
+            det_id = cur.fetchone()['id']
+
+            # Insertar rubros
+            for concepto, rtipo, cant, val in rubros_data:
+                if val != 0:
+                    cur.execute("""
+                        INSERT INTO nomina_liquidacion_rubro (liquidacion_detalle_id, concepto, tipo, cantidad, valor)
+                        VALUES (%s,%s,%s,%s,%s)
+                    """, (det_id, concepto, rtipo, cant, val))
+
+            total_ing += ing
+            total_des += des
+            total_pagar += liquido
+            total_prest += prest
+            total_costo += costo
+
+        # Actualizar totales del grupo
+        cur.execute("""
+            UPDATE nomina_liquidacion_grupo
+            SET total_ingresos=%s, total_descuentos=%s, total_pagar=%s,
+                total_prestaciones=%s, total_costo_empleado=%s, num_empleados=%s
+            WHERE id=%s
+        """, (_nom_round(total_ing), _nom_round(total_des), _nom_round(total_pagar),
+              _nom_round(total_prest), _nom_round(total_costo), len(empleados), grupo_id))
+
+        conn.commit()
+        return jsonify({'ok': True, 'grupo_id': grupo_id, 'num_empleados': len(empleados),
+                        'total_pagar': _nom_round(total_pagar)})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+@app.route('/api/nomina/nominas/<int:grupo_id>', methods=['GET'])
+def nomina_detalle(grupo_id):
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM nomina_liquidacion_grupo WHERE id = %s", (grupo_id,))
+        grupo = cur.fetchone()
+        if not grupo:
+            return jsonify({'error': 'Nomina no encontrada'}), 404
+        cur.execute("""
+            SELECT d.*, e.cedula, e.cargo_texto, e.tienda
+            FROM nomina_liquidacion_detalle d
+            JOIN nomina_empleados e ON e.id = d.empleado_id
+            WHERE d.liquidacion_grupo_id = %s
+            ORDER BY d.nombre_completo
+        """, (grupo_id,))
+        detalles = []
+        for row in cur.fetchall():
+            d = dict(row)
+            cur.execute("""
+                SELECT concepto, tipo, cantidad, valor
+                FROM nomina_liquidacion_rubro WHERE liquidacion_detalle_id = %s ORDER BY id
+            """, (d['id'],))
+            d['rubros'] = [dict(r) for r in cur.fetchall()]
+            detalles.append(d)
+        return jsonify({'grupo': dict(grupo), 'detalles': detalles})
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
+
+@app.route('/api/nomina/nominas/<int:grupo_id>/aprobar', methods=['POST'])
+def nomina_aprobar(grupo_id):
+    conn = None
+    try:
+        conn = _get_mov_conn()
+        cur = conn.cursor()
+        cur.execute("UPDATE nomina_liquidacion_grupo SET estado = 'Aprobado' WHERE id = %s AND estado = 'Borrador'", (grupo_id,))
+        if cur.rowcount == 0:
+            return jsonify({'error': 'Solo se pueden aprobar nominas en estado Borrador'}), 400
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        if conn: conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn: _release_mov(conn)
 
 
 if __name__ == '__main__':
