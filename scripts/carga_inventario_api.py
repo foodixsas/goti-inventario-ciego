@@ -36,6 +36,58 @@ BODEGAS = {
     'simon_bolon':           ('SIMON_BOLON', 'BODEGA SIMON BOLON'),
 }
 
+# ============================================================
+# HORARIOS  (copiados de piloto_carga_bd.py)
+# Domingo=0, Lunes=1 ... Sabado=6
+# ============================================================
+GRUPO_GENERAL = ['real_audiencia', 'floreana', 'portugal',
+                 'santo_cachon_real', 'santo_cachon_portugal']
+GRUPO_SIMON = ['simon_bolon']
+
+HORARIOS_GENERAL = {0: '21:40', 1: '22:40', 2: '22:40', 3: '22:40',
+                    4: '22:40', 5: '23:40', 6: '23:40'}
+HORARIOS_SIMON = {0: '16:20', 1: '15:10', 2: '15:10', 3: '15:10',
+                  4: '15:10', 5: '15:30', 6: '16:20'}
+
+# Margen en minutos: Render dispara puntual, pero damos holgura por si se atrasa.
+TOLERANCIA_MIN = int(os.environ.get('TOLERANCIA_MIN', '12'))
+
+DIAS = {0: 'Domingo', 1: 'Lunes', 2: 'Martes', 3: 'Miercoles',
+        4: 'Jueves', 5: 'Viernes', 6: 'Sabado'}
+
+
+def _minutos(hhmm):
+    h, m = hhmm.split(':')
+    return int(h) * 60 + int(m)
+
+
+def bodegas_de_ahora(ahora):
+    """Decide que bodegas toca cargar segun el dia y la hora.
+
+    Devuelve (lista_de_bodegas, etiqueta). Lista vacia = no toca nada ahora.
+    GRUPO=general|simon|todas fuerza un grupo e ignora el horario.
+    """
+    forzado = os.environ.get('GRUPO', '').lower()
+    if forzado == 'general':
+        return GRUPO_GENERAL, 'GENERAL (forzado)'
+    if forzado == 'simon':
+        return GRUPO_SIMON, 'SIMON (forzado)'
+    if forzado == 'todas':
+        return list(BODEGAS), 'TODAS (forzado)'
+
+    dia = (ahora.weekday() + 1) % 7          # lunes=0 -> domingo=0
+    ahora_min = ahora.hour * 60 + ahora.minute
+
+    for grupo, horarios, etq in (
+            (GRUPO_GENERAL, HORARIOS_GENERAL, 'GENERAL'),
+            (GRUPO_SIMON, HORARIOS_SIMON, 'SIMON')):
+        objetivo = _minutos(horarios[dia])
+        if abs(ahora_min - objetivo) <= TOLERANCIA_MIN:
+            return grupo, f'{etq} ({DIAS[dia]} {horarios[dia]})'
+
+    return [], (f'{DIAS[dia]}: toca GENERAL a las {HORARIOS_GENERAL[dia]} '
+                f'y SIMON a las {HORARIOS_SIMON[dia]}')
+
 
 def env(n):
     v = os.environ.get(n)
@@ -72,7 +124,15 @@ def main():
     inicio = datetime.now(ECUADOR)
     modo = "CARGA REAL" if ESCRIBIR else "SIMULACION (no escribe)"
     print(f"Arranque automatico: {inicio:%Y-%m-%d %H:%M:%S} Ecuador")
-    print(f"Fecha objetivo: {FECHA}   |   Modo: {modo}\n")
+    print(f"Fecha objetivo: {FECHA}   |   Modo: {modo}")
+
+    # ¿Toca cargar ahora? Si no, salir en un segundo sin gastar nada.
+    a_cargar, etiqueta = bodegas_de_ahora(inicio)
+    if not a_cargar:
+        print(f"No toca cargar en este momento. {etiqueta}")
+        return 0
+    print(f"Toca: {etiqueta}  ->  {len(a_cargar)} bodega(s): {', '.join(a_cargar)}\n")
+    bodegas_activas = {k: v for k, v in BODEGAS.items() if k in a_cargar}
 
     # ---------- lectura inicial ----------
     con = conectar()
@@ -80,13 +140,13 @@ def main():
     cur.execute("""SELECT local, COUNT(cantidad_contada) c1, COUNT(cantidad_contada_2) c2
                    FROM goti.inventario_ciego_conteos
                    WHERE fecha=%s AND local = ANY(%s) GROUP BY local""",
-                (FECHA, list(BODEGAS)))
+                (FECHA, list(bodegas_activas)))
     for r in cur.fetchall():
         if r['c1'] or r['c2']:
             sys.exit(f"::error::{r['local']} ya tiene conteos para {FECHA}. Abortado.")
 
     por_bodega, codigos = {}, set()
-    for bod, (marca, _) in BODEGAS.items():
+    for bod, (marca, _) in bodegas_activas.items():
         cur.execute("""SELECT codigo, nombre, unidad FROM goti.productos_por_marca
                        WHERE marca=%s AND activo=TRUE ORDER BY codigo""", (marca,))
         por_bodega[bod] = cur.fetchall()
@@ -123,7 +183,7 @@ def main():
     con = conectar()
     cur = con.cursor()
     lineas, total = [], 0
-    for bod, (_, nombre_cont) in BODEGAS.items():
+    for bod, (_, nombre_cont) in bodegas_activas.items():
         filas = [(FECHA, bod, p['codigo'], p['nombre'], p['unidad'],
                   stock[p['codigo']].get(nombre_cont, 0.0))
                  for p in por_bodega[bod] if p['codigo'] in stock]
