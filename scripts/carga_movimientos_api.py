@@ -338,20 +338,44 @@ def post_movimiento(tipo, bodega_id, detalles, fecha, descripcion, bodega_destin
         log(f"   [EXCEPTION] {e}")
         return None
 
-def marcar_hecho(api_obj, base_id, table_id, record_id, num_doc, campo_hecho="Hecho"):
-    """Marca el registro como Hecho en AirTable y guarda el numero de documento."""
+def marcar_hecho(api_obj, base_id, table_id, record_id, num_doc, campo_hecho="Hecho",
+                 campo_doc="num_documento"):
+    """Marca el registro como Hecho en AirTable y guarda el numero de documento.
+
+    Marcar Hecho es CRITICO: si falla, el registro sigue pendiente y la siguiente
+    corrida vuelve a crear el movimiento en Contifico. Asi se duplicaron egresos
+    el 2026-08-15, porque la tabla de bajas no tiene el campo 'num_documento'
+    -se llama 'numero_registro_contable'- y AirTable rechazaba el update entero
+    con 422, dejando 'Hecho' sin poner.
+
+    Por eso, si el update completo falla, se reintenta poniendo SOLO 'Hecho':
+    perder el numero de documento es molesto, duplicar movimientos de inventario
+    es grave.
+    """
     if SIMULAR:
         log(f"   [SIMULACION] no se marca Hecho en AirTable (registro {record_id})")
         return
+    table = api_obj.table(base_id, table_id)
     try:
-        table = api_obj.table(base_id, table_id)
         campos = {campo_hecho: True}
         if num_doc:
-            campos["num_documento"] = str(num_doc)
+            campos[campo_doc] = str(num_doc)
         table.update(record_id, campos)
-        log(f"   [AT] Marcado: {campo_hecho}=True, doc={num_doc}")
+        log(f"   [AT] Marcado: {campo_hecho}=True, {campo_doc}={num_doc}")
+        return
     except Exception as e:
-        log_error("AirTable update", str(e))
+        log(f"   [AT] Fallo el update completo ({e}). Reintento solo con {campo_hecho}...")
+
+    try:
+        table.update(record_id, {campo_hecho: True})
+        log_error("AirTable update",
+                  f"{record_id}: se marco {campo_hecho} pero NO se pudo guardar "
+                  f"'{campo_doc}'={num_doc}. Anotarlo a mano.")
+    except Exception as e2:
+        log_error("AirTable update",
+                  f"{record_id}: NO SE PUDO MARCAR {campo_hecho} ({e2}). "
+                  f"El movimiento {num_doc} YA se creo en Contifico y el registro sigue "
+                  f"pendiente: la proxima corrida lo va a DUPLICAR. Marcarlo a mano YA.")
 
 # ============================================================
 # BOT 1: INGRESOS EXTRAORDINARIOS
@@ -582,11 +606,13 @@ def procesar_bajas(bodegas):
         num_doc = post_movimiento("EGR", bodega_id, detalles, fecha, descripcion)
 
         if num_doc and "ERROR" not in num_doc:
-            marcar_hecho(api, AIRTABLE_BASE_A, TABLE_BAJAS, record_id, num_doc)
+            marcar_hecho(api, AIRTABLE_BASE_A, TABLE_BAJAS, record_id, num_doc,
+                         campo_doc="numero_registro_contable")
             detalle_tg = f"📦 {len(detalles)} productos ({resumen_prods})\n📅 {fecha}\n⚠️ {motivo}"
             notificar_exito("Baja de Inventario", centro, detalle_tg, num_doc)
         else:
-            marcar_hecho(api, AIRTABLE_BASE_A, TABLE_BAJAS, record_id, "ERROR-VER-LOG")
+            marcar_hecho(api, AIRTABLE_BASE_A, TABLE_BAJAS, record_id, "ERROR-VER-LOG",
+                         campo_doc="numero_registro_contable")
             detalle_tg = f"📦 {len(detalles)} productos\n📅 {fecha}\n⚠️ {motivo}"
             notificar_error("Baja de Inventario", centro, detalle_tg, "Fallo al crear via API - revisar log")
 
