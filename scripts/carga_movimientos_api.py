@@ -128,16 +128,37 @@ MAPEO_CENTROS_GLOG = {
 # ============================================================
 # UTILIDADES
 # ============================================================
+# Dos clases de error, a proposito:
+#
+#   errores_globales -> fallas de infraestructura (no responde Contifico o AirTable,
+#       se revienta un bot entero). Son transitorias y reintentables, asi que el
+#       proceso sale con codigo 1 y Render marca la corrida en rojo. Correcto.
+#
+#   errores_datos    -> un registro suelto con datos malos (codigo que no existe,
+#       bodega sin mapear). NO deben tumbar la corrida: el registro se queda
+#       pendiente esperando que alguien lo corrija, asi que el error se repetiria
+#       cada 30 minutos para siempre y el cron viviria en rojo. Paso el 2026-08-15
+#       con EMB002: dos horas de corridas fallidas por un solo producto, mientras
+#       los otros tres bots trabajaban bien. Se avisa por Telegram y por el log,
+#       y la corrida sale con codigo 0.
 errores_globales = []
+errores_datos = []
 
 def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
 def log_error(contexto, msg):
+    """Error de infraestructura: tumba la corrida (exit 1)."""
     texto = f"[ERROR] {contexto}: {msg}"
     log(texto)
     errores_globales.append(texto)
+
+def log_error_dato(contexto, msg):
+    """Error de datos de un registro: se avisa, pero NO tumba la corrida."""
+    texto = f"[DATO] {contexto}: {msg}"
+    log(texto)
+    errores_datos.append(texto)
 
 def headers_contifico():
     return {
@@ -368,10 +389,10 @@ def procesar_ingresos(bodegas):
         log(f"\n  [{record_id}] {codigo} x{unidades} -> {nombre_bodega} ({fecha})")
 
         if not bodega_id:
-            log_error("BOT1", f"Bodega no encontrada en API: '{nombre_bodega}' (local_id={local_id})")
+            log_error_dato("BOT1", f"Bodega no encontrada en API: '{nombre_bodega}' (local_id={local_id})")
             continue
         if not producto_id:
-            log_error("BOT1", f"Producto no encontrado en API: '{codigo}'")
+            log_error_dato("BOT1", f"Producto no encontrado en API: '{codigo}'")
             continue
         if not unidades:
             log(f"  [SKIP] Sin unidades")
@@ -455,10 +476,10 @@ def procesar_traslados(bodegas):
         log(f"\n  [{record_id}] {codigo} x{cantidad} | {nombre_origen} -> {nombre_destino} ({fecha})")
 
         if not bodega_origen_id or not bodega_destino_id:
-            log_error("BOT2", f"Bodega no mapeada: origen='{nombre_origen}' destino='{nombre_destino}'")
+            log_error_dato("BOT2", f"Bodega no mapeada: origen='{nombre_origen}' destino='{nombre_destino}'")
             continue
         if not producto_id:
-            log_error("BOT2", f"Producto no encontrado en API: '{codigo}'")
+            log_error_dato("BOT2", f"Producto no encontrado en API: '{codigo}'")
             continue
         if not cantidad:
             log(f"  [SKIP] Sin cantidad")
@@ -546,7 +567,7 @@ def procesar_bajas(bodegas):
         log(f"\n  [{record_id}] {len(detalles)} productos -> {nombre_bodega} ({fecha}) | {motivo}")
 
         if not bodega_id:
-            log_error("BOT3", f"Bodega no encontrada en API: '{nombre_bodega}' (tienda_id={tienda_id})")
+            log_error_dato("BOT3", f"Bodega no encontrada en API: '{nombre_bodega}' (tienda_id={tienda_id})")
             continue
         if not detalles:
             log(f"  [SKIP] Sin productos validos")
@@ -607,10 +628,10 @@ def procesar_conteo(bodegas):
         log(f"\n  [{record_id}] {codigo} | SOB={sobrantes} FAL={faltantes} -> {nombre_bodega} ({fecha})")
 
         if not bodega_id:
-            log_error("BOT4", f"Bodega no encontrada en API: '{nombre_bodega}' (local_id={local_id})")
+            log_error_dato("BOT4", f"Bodega no encontrada en API: '{nombre_bodega}' (local_id={local_id})")
             continue
         if not producto_id:
-            log_error("BOT4", f"Producto no encontrado en API: '{codigo}'")
+            log_error_dato("BOT4", f"Producto no encontrado en API: '{codigo}'")
             continue
 
         if sobrantes > 0:
@@ -675,15 +696,22 @@ def main():
     duracion = (fin - inicio).seconds
     log("\n" + "=" * 55)
     log(f"PROCESO COMPLETADO en {duracion}s")
+    if errores_datos:
+        log(f"REGISTROS CON DATOS MALOS ({len(errores_datos)}) "
+            f"- quedan pendientes, hay que corregirlos a mano en AirTable:")
+        for err in errores_datos:
+            log(f"  {err}")
     if errores_globales:
         log(f"ERRORES ({len(errores_globales)}):")
         for err in errores_globales:
             log(f"  {err}")
-    else:
+    elif not errores_datos:
         log("Sin errores.")
     log("=" * 55)
 
-    # Salir con codigo de error si hubo problemas (util para GitHub Actions)
+    # Solo las fallas de infraestructura tumban la corrida. Un registro con datos
+    # malos se queda pendiente hasta que alguien lo arregle, asi que hacer fallar
+    # el cron por eso lo dejaria en rojo cada 30 minutos para siempre.
     if errores_globales:
         sys.exit(1)
 
