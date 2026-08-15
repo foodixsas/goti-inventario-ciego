@@ -178,16 +178,59 @@ def cargar_bodegas_api():
     return resultado
 
 _cache_productos = {}
+_catalogo_v2 = None
+
+
+def catalogo_v2():
+    """Catalogo COMPLETO de productos (codigo -> id), leido de la API v2.
+
+    Hace falta porque v1 solo devuelve los productos de punto de venta (688 de
+    1340). Los demas -empaques, materia prima- no aparecen ahi y la busqueda por
+    codigo falla; asi se cayo el BOT4 con 'EMB002' (TOCINO, para_pos=false).
+    v2 no acepta filtro por codigo -ni codigo, ni q, ni search-, asi que toca
+    traer las 14 paginas enteras. Se hace una sola vez y solo cuando v1 falla,
+    para no gastar ~75s en las corridas normales.
+    """
+    global _catalogo_v2
+    if _catalogo_v2 is not None:
+        return _catalogo_v2
+
+    _catalogo_v2 = {}
+    url = "https://api.contifico.com/sistema/api/v2/producto/"
+    try:
+        while url:
+            resp = requests.get(url, headers=headers_contifico(), timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            for p in data.get("results", []):
+                cod = (p.get("codigo") or "").strip().upper()
+                if cod:
+                    _catalogo_v2[cod] = p.get("id")
+            url = data.get("next") or None
+        log(f"  Catalogo v2 cargado: {len(_catalogo_v2)} productos")
+    except Exception as e:
+        log(f"  [WARN] No se pudo cargar el catalogo v2: {e}")
+    return _catalogo_v2
+
 
 def buscar_producto_api(codigo):
     """
     Busca un producto por código en la API de Contifico.
+    Primero por filtro en v1 (una sola llamada); si no aparece, cae al catalogo
+    completo de v2, que si trae los productos que no son de punto de venta.
     Usa caché para no repetir llamadas al mismo código en la misma ejecución.
     Retorna el id hash o None si no existe.
     """
     codigo_upper = codigo.strip().upper()
     if codigo_upper in _cache_productos:
         return _cache_productos[codigo_upper]
+
+    def con_respaldo_v2():
+        pid = catalogo_v2().get(codigo_upper)
+        if pid:
+            log(f"  Producto '{codigo_upper}' resuelto por catalogo v2 (no es de POS)")
+        _cache_productos[codigo_upper] = pid
+        return pid
 
     try:
         resp = requests.get(
@@ -201,18 +244,19 @@ def buscar_producto_api(codigo):
             # Viene como lista: [{id, codigo, nombre, ...}]
             if isinstance(data, list) and data:
                 prod_id = data[0].get("id")
-            elif isinstance(data, dict):
+            elif isinstance(data, dict) and data.get("id"):
                 prod_id = data.get("id")
             else:
                 prod_id = None
+            if not prod_id:
+                return con_respaldo_v2()
             _cache_productos[codigo_upper] = prod_id
             return prod_id
         else:
-            _cache_productos[codigo_upper] = None
-            return None
+            return con_respaldo_v2()
     except Exception as e:
-        log(f"  [WARN] Error buscando producto '{codigo}': {e}")
-        _cache_productos[codigo_upper] = None
+        log(f"  [WARN] Error buscando producto '{codigo}' en v1: {e}")
+        return con_respaldo_v2()
         return None
 
 # ============================================================
