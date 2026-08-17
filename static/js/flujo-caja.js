@@ -11,6 +11,12 @@ let fc_semanasNums = [];
 let fc_todasFechas = []; // Todas las fechas en orden
 let fc_eliminados_data = []; // [{grupo, nombre, eliminado_desde}] items dados de baja con vigencia
 
+// CADA SEMANA ES UNICA: los proveedores de una semana salen de la cartera de ESA
+// semana, no se arrastran de la anterior. Lo unico que viaja entre semanas es la
+// proyeccion y los pagos recurrentes ya parametrizados.
+const FC_GRUPO_PROV = 'prov-principales';
+let fc_cartera_semanas = {}; // {"2026-08-17": [{proveedor, ruc, saldo, facturas}]}
+
 function fc_getEliminadoDesde(grupo, nombre) {
     const n = (nombre || '').trim().toUpperCase();
     const e = fc_eliminados_data.find(x => x.grupo === grupo && (x.nombre || '').trim().toUpperCase() === n);
@@ -18,7 +24,11 @@ function fc_getEliminadoDesde(grupo, nombre) {
 }
 
 // Inicializar cuando se carga la vista
-function fc_init() {
+async function fc_init() {
+    // Los minimos por banco se necesitan ANTES del primer recalculo, si no las
+    // celdas se pintan sin piso y el panel de alertas sale vacio
+    await fc_liqCargarConfig();
+
     // Establecer fecha de corte por defecto (lunes de esta semana)
     const fechaInput = document.getElementById('fc-fecha-corte');
     if (fechaInput && !fechaInput.value) {
@@ -668,6 +678,7 @@ function fc_recalcularTodo() {
     fc_actualizarResumen();
     fc_recalcularTodosSaldos();
     fc_recalcularSaldos();
+    fc_renderAlertasLiquidez();
 }
 
 function fc_recalcularAjustes() {
@@ -911,6 +922,7 @@ function fc_recalcularEgresos() {
 function fc_recalcularFlujoYSaldos() {
     let saldoProdubanco = 0;
     let saldoPichincha = 0;
+    fc_saldos_diarios = []; // se rellena abajo y lo consumen las alertas de liquidez
 
     // Obtener saldos iniciales del primer dia (inputs editables)
     const inputSaldoProdubanco = document.querySelector('.fc-saldo-produbanco-input');
@@ -995,12 +1007,21 @@ function fc_recalcularFlujoYSaldos() {
         if (saldoFinalProdCell) {
             saldoFinalProdCell.textContent = fc_formatFlujo(saldoProdubanco);
             saldoFinalProdCell.style.color = saldoProdubanco < 0 ? '#c62828' : '#01579b';
+            fc_marcarCeldaBajoMinimo(saldoFinalProdCell, saldoProdubanco, fc_liq_config.minimo_produbanco);
         }
         const saldoFinalPichCell = document.querySelector(`.fc-saldo-final-pichincha-dia[data-fecha="${fecha}"]`);
         if (saldoFinalPichCell) {
             saldoFinalPichCell.textContent = fc_formatFlujo(saldoPichincha);
             saldoFinalPichCell.style.color = saldoPichincha < 0 ? '#c62828' : '#2e7d32';
+            fc_marcarCeldaBajoMinimo(saldoFinalPichCell, saldoPichincha, fc_liq_config.minimo_pichincha);
         }
+
+        fc_saldos_diarios.push({
+            fecha,
+            prod: saldoProdubanco,
+            pich: saldoPichincha,
+            egresos: egresosProdubanco + egresosPichincha
+        });
 
         // Saldo Final Total
         const saldoFinal = saldoProdubanco + saldoPichincha;
@@ -1110,6 +1131,160 @@ function fc_actualizarResumen() {
             if (saldoEl) saldoEl.textContent = '$' + sfCell.textContent;
         }
     }
+}
+
+// ============ ALERTAS DE LIQUIDEZ (saldo minimo por banco) ============
+// El saldo proyectado de cada banco se compara contra un piso configurable.
+// Se pinta la celda del dia en riesgo y se resume en un panel arriba de la tabla.
+let fc_liq_config = { minimo_produbanco: 0, minimo_pichincha: 0, semanas_cobertura: 2 };
+let fc_liq_config_cargada = false;
+let fc_saldos_diarios = []; // [{fecha, prod, pich, egresos}] lo llena fc_recalcularFlujoYSaldos
+
+async function fc_liqCargarConfig() {
+    if (fc_liq_config_cargada) return;
+    try {
+        const res = await fetch('/api/flujo-caja/config-liquidez');
+        const data = await res.json();
+        if (data.ok) {
+            fc_liq_config = {
+                minimo_produbanco: data.minimo_produbanco || 0,
+                minimo_pichincha: data.minimo_pichincha || 0,
+                semanas_cobertura: data.semanas_cobertura || 2
+            };
+            fc_liq_config_cargada = true;
+        }
+    } catch (e) { console.error('Error cargando config de liquidez:', e); }
+}
+
+async function fc_liqGuardarConfig() {
+    const pro = parseFloat(document.getElementById('fc-liq-min-pro')?.value) || 0;
+    const pich = parseFloat(document.getElementById('fc-liq-min-pich')?.value) || 0;
+    const sem = parseFloat(document.getElementById('fc-liq-cobertura')?.value) || 2;
+    try {
+        const res = await fetch('/api/flujo-caja/config-liquidez', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ minimo_produbanco: pro, minimo_pichincha: pich, semanas_cobertura: sem })
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
+        fc_liq_config = { minimo_produbanco: pro, minimo_pichincha: pich, semanas_cobertura: sem };
+        fc_recalcularTodo(); // repinta celdas y panel con los pisos nuevos
+        alert('Minimos guardados:\nProdubanco $' + fc_formatMonto(pro) + '\nPichincha $' + fc_formatMonto(pich));
+    } catch (e) {
+        alert('Error al guardar: ' + e.message);
+    }
+}
+
+// Aplica/limpia el resaltado de una celda de saldo final segun su piso
+function fc_marcarCeldaBajoMinimo(cell, saldo, minimo) {
+    if (minimo > 0 && saldo < minimo) {
+        cell.style.background = saldo < 0 ? '#fecaca' : '#fef3c7';
+        cell.style.fontWeight = '700';
+        cell.title = saldo < 0
+            ? `Sobregiro proyectado: faltan $${fc_formatMonto(Math.abs(saldo))}`
+            : `Bajo el minimo de $${fc_formatMonto(minimo)}: faltan $${fc_formatMonto(minimo - saldo)}`;
+    } else {
+        cell.style.background = '';
+        cell.style.fontWeight = '';
+        cell.title = '';
+    }
+}
+
+function fc_liqAnalizarBanco(campo, minimo) {
+    let primera = null, peorSaldo = null, dias = 0;
+    fc_saldos_diarios.forEach(d => {
+        const saldo = d[campo];
+        if (minimo > 0 && saldo < minimo) {
+            dias++;
+            if (!primera) primera = d.fecha;
+            if (peorSaldo === null || saldo < peorSaldo) peorSaldo = saldo;
+        }
+    });
+    return { primera, peorSaldo, dias, minimo };
+}
+
+function fc_liqFechaCorta(iso) {
+    if (!iso) return '';
+    const [a, m, d] = iso.split('-');
+    return new Date(+a, +m - 1, +d).toLocaleDateString('es-EC', { weekday: 'short', day: '2-digit', month: 'short' });
+}
+
+function fc_renderAlertasLiquidez() {
+    const cont = document.getElementById('fc-alertas-liquidez');
+    if (!cont) return;
+
+    const pro = fc_liqAnalizarBanco('prod', fc_liq_config.minimo_produbanco);
+    const pich = fc_liqAnalizarBanco('pich', fc_liq_config.minimo_pichincha);
+
+    // Dias de cobertura: saldo total de hoy / egreso promedio semanal proyectado
+    const totalEgresos = fc_saldos_diarios.reduce((s, d) => s + d.egresos, 0);
+    const semanasVista = Math.max(1, fc_saldos_diarios.length / 7);
+    const egresoSemanal = totalEgresos / semanasVista;
+    const saldoHoy = fc_saldos_diarios.length ? fc_saldos_diarios[0].prod + fc_saldos_diarios[0].pich : 0;
+    const cobertura = egresoSemanal > 0 ? saldoHoy / egresoSemanal : null;
+    const coberturaBaja = cobertura !== null && cobertura < fc_liq_config.semanas_cobertura;
+
+    const tarjeta = (nombre, r) => {
+        if (!r.minimo) {
+            return `<div style="flex:1;min-width:200px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;padding:8px 12px;">
+                <div style="font-size:10px;color:#64748b;font-weight:700;">${nombre}</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Sin minimo definido</div>
+            </div>`;
+        }
+        if (!r.primera) {
+            return `<div style="flex:1;min-width:200px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;">
+                <div style="font-size:10px;color:#166534;font-weight:700;">${nombre}</div>
+                <div style="font-size:12px;color:#166534;font-weight:700;margin-top:2px;">
+                    <i class="fas fa-check-circle"></i> Nunca baja de $${fc_formatMonto(r.minimo)}
+                </div>
+            </div>`;
+        }
+        const grave = r.peorSaldo < 0;
+        return `<div style="flex:1;min-width:200px;background:${grave ? '#fef2f2' : '#fffbeb'};border:1px solid ${grave ? '#fecaca' : '#fde68a'};border-radius:8px;padding:8px 12px;">
+            <div style="font-size:10px;color:${grave ? '#991b1b' : '#92400e'};font-weight:700;">${nombre} &middot; minimo $${fc_formatMonto(r.minimo)}</div>
+            <div style="font-size:12px;font-weight:700;color:${grave ? '#dc2626' : '#b45309'};margin-top:2px;">
+                <i class="fas fa-exclamation-triangle"></i> ${grave ? 'Sobregiro' : 'Bajo el minimo'} desde el ${fc_liqFechaCorta(r.primera)}
+            </div>
+            <div style="font-size:10px;color:#64748b;margin-top:2px;">
+                ${r.dias} dia(s) en riesgo &middot; peor saldo $${fc_formatMonto(r.peorSaldo)}
+            </div>
+        </div>`;
+    };
+
+    const hayRiesgo = pro.primera || pich.primera || coberturaBaja;
+
+    cont.style.display = 'block';
+    cont.innerHTML = `
+        <div style="background:#fff;border:1px solid ${hayRiesgo ? '#fca5a5' : '#e2e8f0'};border-left:4px solid ${hayRiesgo ? '#dc2626' : '#16a34a'};border-radius:8px;padding:10px 14px;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                <span style="font-size:12px;font-weight:700;color:#1e293b;"><i class="fas fa-shield-alt"></i> Alertas de liquidez</span>
+                <span style="border-left:1px solid #cbd5e1;height:16px;"></span>
+                <label style="font-size:10px;color:#475569;font-weight:600;">Min. Produbanco $</label>
+                <input type="number" id="fc-liq-min-pro" value="${fc_liq_config.minimo_produbanco || ''}" placeholder="0"
+                       style="width:90px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:right;">
+                <label style="font-size:10px;color:#475569;font-weight:600;">Min. Pichincha $</label>
+                <input type="number" id="fc-liq-min-pich" value="${fc_liq_config.minimo_pichincha || ''}" placeholder="0"
+                       style="width:90px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:right;">
+                <label style="font-size:10px;color:#475569;font-weight:600;" title="Semanas de egreso que el saldo deberia cubrir">Cobertura min. (sem)</label>
+                <input type="number" id="fc-liq-cobertura" step="0.5" value="${fc_liq_config.semanas_cobertura || ''}" placeholder="2"
+                       style="width:60px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:right;">
+                <button class="fc-btn" style="background:#2e7d32;font-size:10px;" onclick="fc_liqGuardarConfig()"><i class="fas fa-save"></i> Guardar</button>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                ${tarjeta('PRODUBANCO', pro)}
+                ${tarjeta('PICHINCHA', pich)}
+                <div style="flex:1;min-width:200px;background:${coberturaBaja ? '#fffbeb' : '#f8fafc'};border:1px solid ${coberturaBaja ? '#fde68a' : '#e2e8f0'};border-radius:8px;padding:8px 12px;">
+                    <div style="font-size:10px;color:#64748b;font-weight:700;">COBERTURA DE EGRESOS</div>
+                    <div style="font-size:12px;font-weight:700;color:${coberturaBaja ? '#b45309' : '#1e293b'};margin-top:2px;">
+                        ${cobertura === null ? 'Sin egresos proyectados' : cobertura.toFixed(1) + ' semana(s)'}
+                    </div>
+                    <div style="font-size:10px;color:#64748b;margin-top:2px;">
+                        Saldo hoy $${fc_formatMonto(saldoHoy)} &middot; egreso prom. $${fc_formatMonto(egresoSemanal)}/sem
+                    </div>
+                </div>
+            </div>
+        </div>`;
 }
 
 // ============ TOGGLE SEMANAS ============
@@ -1444,6 +1619,23 @@ async function fc_cargarDatosGuardados() {
             const dElim = await resElim.json();
             if (dElim.ok) fc_eliminados_data = dElim.eliminados || [];
         } catch (e) { console.error('Error cargando bajas:', e); }
+
+        // Cartera registrada de cada semana visible. Se compara por NOMBRE COMPLETO
+        // normalizado (nunca por coincidencia parcial: eso mezclaba proveedores).
+        fc_cartera_semanas = {};
+        try {
+            const resCart = await fetch(`/api/flujo-caja/cartera-semana?fechas=${fechas}`);
+            const dCart = await resCart.json();
+            if (dCart.ok) fc_cartera_semanas = dCart.semanas || {};
+        } catch (e) { console.error('Error cargando cartera por semana:', e); }
+        const carteraSet = {};
+        Object.entries(fc_cartera_semanas).forEach(([sem, lista]) => {
+            carteraSet[sem] = new Set(lista.map(p => fc_normalizarNombre(p.proveedor)));
+        });
+        // Una semana sin cartera registrada conserva el comportamiento anterior
+        // (no se filtra nada), asi no se vacian semanas que nunca se cargaron.
+        const hayCartera = Object.keys(carteraSet).length > 0;
+
         const primeraSemana = semanas[0].inicio;
 
         // Consolidar egresos de todas las semanas antes de aplicar.
@@ -1457,6 +1649,14 @@ async function fc_cargarDatosGuardados() {
                 for (const [grupo, items] of Object.entries(guardado.egresos)) {
                     if (!egresosConsolidados[grupo]) egresosConsolidados[grupo] = [];
                     items.forEach((item, idx) => {
+                        // Proveedores: la semana se guia por SU propia cartera. Si el
+                        // proveedor no viene en el archivo de esa semana, sus valores de
+                        // esa semana no se arrastran (cada semana es unica).
+                        if (grupo === FC_GRUPO_PROV && hayCartera) {
+                            const setSem = carteraSet[fechaSemana];
+                            if (setSem && !setSem.has(fc_normalizarNombre(item.nombre))) return;
+                        }
+
                         // Items dados de baja: si la baja rige desde antes de la vista,
                         // no se muestran; si rige a mitad de la vista, se muestran solo
                         // con su historia (dias anteriores a la baja)
@@ -1554,6 +1754,37 @@ async function fc_cargarDatosGuardados() {
             // Egresos se aplican después del loop con datos consolidados
         }
 
+        // Proveedores que estan en la cartera de alguna semana visible pero todavia no
+        // tienen nada guardado: la semana se rearma sola, sin volver a subir el XLS.
+        if (hayCartera) {
+            await fc_cargarProveedoresBD();
+            const yaEsta = new Set((egresosConsolidados[FC_GRUPO_PROV] || [])
+                .map(e => fc_normalizarNombre(e.nombre)));
+            const nuevos = [];
+            semanas.forEach(sem => {
+                (fc_cartera_semanas[sem.inicio] || [])
+                    .slice()
+                    .sort((a, b) => (b.saldo || 0) - (a.saldo || 0))
+                    .forEach(p => {
+                        const k = fc_normalizarNombre(p.proveedor);
+                        if (!k || yaEsta.has(k)) return;
+                        yaEsta.add(k);
+                        const provBD = fc_buscarProveedorBD(p.proveedor);
+                        nuevos.push({
+                            nombre: p.proveedor, banco: 'produbanco', deuda: 0,
+                            saldo: p.saldo || 0,
+                            dias: provBD ? (provBD.dias_credito || 0) : 0,
+                            valores: {}, eliminadoDesde: null
+                        });
+                    });
+            });
+            if (nuevos.length) {
+                egresosConsolidados[FC_GRUPO_PROV] =
+                    (egresosConsolidados[FC_GRUPO_PROV] || []).concat(nuevos);
+                console.log(`Cartera: ${nuevos.length} proveedor(es) reconstruidos desde la cartera guardada`);
+            }
+        }
+
         // Aplicar egresos consolidados (fuera del loop para evitar duplicados)
         for (const [grupo, items] of Object.entries(egresosConsolidados)) {
             // Crear items faltantes (con tope de intentos para evitar bucle infinito
@@ -1612,6 +1843,24 @@ async function fc_cargarDatosGuardados() {
                     for (const [dia, valor] of Object.entries(item.valores || {})) {
                         const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
                         if (input && valor) input.value = valor;
+                    }
+
+                    // Cada semana es unica: en las semanas cuya cartera NO trae a este
+                    // proveedor sus dias quedan bloqueados (no hay nada que pagarle ahi).
+                    if (grupo === FC_GRUPO_PROV && hayCartera) {
+                        const nk = fc_normalizarNombre(item.nombre);
+                        semanas.forEach(sem => {
+                            const setSem = carteraSet[sem.inicio];
+                            if (!setSem || setSem.has(nk)) return;
+                            sem.dias.forEach(dia => {
+                                const inp = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
+                                if (!inp) return;
+                                inp.value = '';
+                                inp.disabled = true;
+                                inp.style.background = '#f1f5f9';
+                                inp.title = 'No viene en la cartera de esta semana';
+                            });
+                        });
                     }
 
                     // Baja a mitad de la vista: fila solo historica, dias posteriores bloqueados
@@ -2402,12 +2651,23 @@ function fc_getFacturas(rowId) {
     return fc_facturas_data[rowId];
 }
 
+// Texto que viene del catalogo y se inyecta con innerHTML
+function fc_esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // Abrir modal de facturas para un item de egreso
-function fc_abrirFacturas(row) {
+async function fc_abrirFacturas(row) {
     const rowId = row.dataset.fcRowId;
     if (!rowId) return;
     const nombre = row.querySelector('.fc-input-nombre')?.value || 'Proveedor';
     const facturas = fc_getFacturas(rowId);
+
+    // Ficha del proveedor para la cabecera (criticidad, despacho, productos, obs)
+    if (!fc_proveedores_bd.length) await fc_cargarProveedoresBD();
+    const provFicha = fc_buscarProveedorBD(nombre);
 
     // Opciones de fecha desde semanas visibles
     const meses = ['','ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
@@ -2520,17 +2780,56 @@ function fc_abrirFacturas(row) {
         facturasHtml = '<tr class="fc-fac-vacia"><td colspan="8">No hay facturas. Use <b>+ Agregar</b> o cargue la <b>Cartera XLS</b></td></tr>';
     }
 
+    // ---- Ficha del proveedor en la cabecera ----
+    // La criticidad de aqui es la del CATALOGO (que tan critico es el proveedor
+    // para la operacion), distinta de la criticidad por antiguedad de la deuda.
+    const critCat = (provFicha?.criticidad || '').toUpperCase();
+    const critColores = {
+        CRITICO: 'background:#dc2626;color:#fff;',
+        ALTO: 'background:#ea580c;color:#fff;',
+        MEDIO: 'background:#ca8a04;color:#fff;',
+        BAJO: 'background:rgba(255,255,255,.18);color:#e2e8f0;'
+    };
+    const critBadge = critCat
+        ? `<span title="Criticidad del proveedor" style="${critColores[critCat] || critColores.BAJO}padding:2px 7px;border-radius:10px;font-size:9px;font-weight:700;letter-spacing:.3px;">${fc_esc(critCat)}</span>`
+        : `<span title="Sin clasificar en el catalogo" style="background:rgba(255,255,255,.12);color:#cbd5e1;padding:2px 7px;border-radius:10px;font-size:9px;">SIN CLASIFICAR</span>`;
+
+    const dato = (etiqueta, valor, vacio) => valor
+        ? `<span>${etiqueta}: <b>${fc_esc(valor)}</b></span>`
+        : `<span style="opacity:.55;">${etiqueta}: ${vacio}</span>`;
+
+    const fichaHtml = provFicha
+        ? `<div style="display:flex;gap:12px;margin-top:3px;font-size:10px;opacity:.9;flex-wrap:wrap;">
+               ${dato('Despacha', provFicha.dia_despacho, 'sin definir')}
+               ${provFicha.ruc ? `<span>RUC: <b style="font-family:monospace;">${fc_esc(provFicha.ruc)}</b></span>` : '<span style="opacity:.55;">sin RUC</span>'}
+               ${provFicha.nombre_comercial && fc_normalizarNombre(provFicha.nombre_comercial) !== fc_normalizarNombre(provFicha.nombre)
+                   ? `<span>Marca: <b>${fc_esc(provFicha.nombre_comercial)}</b></span>` : ''}
+           </div>
+           <div style="display:flex;gap:12px;margin-top:3px;font-size:10px;opacity:.9;flex-wrap:wrap;">
+               ${dato('Trae', provFicha.productos_servicios, 'productos sin registrar')}
+           </div>
+           ${provFicha.observaciones
+               ? `<div style="margin-top:3px;font-size:10px;opacity:.8;font-style:italic;max-width:640px;">
+                      <i class="fas fa-sticky-note"></i> ${fc_esc(provFicha.observaciones)}
+                  </div>` : ''}`
+        : `<div style="margin-top:3px;font-size:10px;color:#fca5a5;">
+               <i class="fas fa-exclamation-triangle"></i> No esta en el catalogo de proveedores (revise el nombre completo)
+           </div>`;
+
     modal.innerHTML = `
         <div class="fc-modal-overlay" onclick="fc_cerrarFacturas()"></div>
         <div class="fc-modal-facturas-content">
-            <div class="fc-modal-header" style="background:#1e293b;">
+            <div class="fc-modal-header" style="background:#1e293b;align-items:flex-start;">
                 <span class="fc-modal-icon" style="background:rgba(255,255,255,.1);">F</span>
                 <div style="flex:1;">
-                    <h3 style="margin:0;font-size:14px;">${nombre}</h3>
+                    <h3 style="margin:0;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        ${fc_esc(nombre)} ${critBadge}
+                    </h3>
                     <div style="display:flex;gap:12px;margin-top:4px;font-size:10px;opacity:.85;">
                         <span>Credito: <b>${diasCredito} dias</b></span>
                         <span>Facturas: <b>${facturas.length}</b></span>
                     </div>
+                    ${fichaHtml}
                 </div>
                 <button class="fc-modal-close" onclick="fc_cerrarFacturas()">&times;</button>
             </div>
@@ -3088,9 +3387,13 @@ const fc_dias_credito = {
 };
 
 function fc_buscarDiasCredito(nombreProveedor) {
-    const upper = nombreProveedor.toUpperCase();
+    // Por nombre completo normalizado. Antes usaba includes() y un nombre corto
+    // como "CA" o "JM" le pegaba dias de credito a cualquier proveedor que lo
+    // contuviera. El catalogo (con RUC) es la fuente buena; esto es respaldo.
+    const norm = fc_normalizarNombre(nombreProveedor || '');
+    if (!norm) return 0;
     for (const [key, dias] of Object.entries(fc_dias_credito)) {
-        if (upper.includes(key)) return dias;
+        if (fc_normalizarNombre(key) === norm) return dias;
     }
     return 0;
 }
@@ -3172,8 +3475,39 @@ function fc_procesarCarteraXLS(input) {
                 proveedoresSet.add(key);
             }
 
-            // El XLS manda: eliminar todos los items de proveedores y recrear desde la cartera
-            // Primero, eliminar TODOS los items del grupo prov-principales
+            // El XLS manda: se recrean todos los items de proveedores desde la cartera.
+            // ANTES de borrar las filas se guarda lo que ya estaba planificado (montos por
+            // dia, fechas de pago asignadas, banco y dias de credito editados a mano) para
+            // devolverselo a los proveedores que siguen viniendo en el archivo nuevo.
+            // El que no viene en el archivo simplemente no se recrea.
+            const previoProv = {};
+            document.querySelectorAll('.fc-egreso-item-prov-principales').forEach(row => {
+                const nombreFila = (row.querySelector('.fc-input-nombre')?.value || '').trim();
+                if (!nombreFila) return;
+                const celdasPrev = {};
+                row.querySelectorAll('.fc-input-egreso-prov-principales').forEach(inp => {
+                    const v = (inp.value || '').trim();
+                    if (v && parseFloat(v.replace(/,/g, '')) ) celdasPrev[inp.dataset.fecha] = inp.value;
+                });
+                const pagosPrev = {};
+                (fc_facturas_data[row.dataset.fcRowId] || []).forEach(f => {
+                    if (f.fecha_pago) pagosPrev[String(f.num).trim()] = f.fecha_pago;
+                });
+                previoProv[fc_normalizarNombre(nombreFila)] = {
+                    nombre: nombreFila,
+                    celdas: celdasPrev,
+                    pagos: pagosPrev,
+                    banco: row.dataset.banco || 'produbanco',
+                    dias: (row.querySelector('.fc-input-dias')?.value || '').trim()
+                };
+            });
+
+            // El Excel manda tambien sobre las bajas: si Contifico dice que se le debe,
+            // el proveedor vuelve al flujo y se le quita la baja registrada.
+            const bajasLiberadas = await fc_liberarBajasDesdeCartera(
+                Object.values(fc_cartera_cargada).map(v => v.nombre)
+            );
+
             document.querySelectorAll('.fc-egreso-item-prov-principales').forEach(row => row.remove());
 
             // Crear un item por cada proveedor de la cartera
@@ -3202,21 +3536,62 @@ function fc_procesarCarteraXLS(input) {
             // Cargar catalogo de proveedores de BD antes de crear items
             await fc_cargarProveedoresBD();
 
+            // Registrar la cartera de ESTA semana. Reemplaza la que hubiera: el archivo
+            // de la semana manda, y asi la semana se rearma sola al volver a entrar.
+            const semanaCartera = semanas[0].inicio;
+            let carteraGuardada = 0;
+            try {
+                const resCart = await fetch('/api/flujo-caja/cartera-semana', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        semana_inicio: semanaCartera,
+                        proveedores: proveedoresOrdenados.map(p => {
+                            const pbd = fc_buscarProveedorBD(p.nombre);
+                            return {
+                                proveedor: p.nombre,
+                                ruc: pbd ? (pbd.ruc || '') : '',
+                                saldo: p.total,
+                                facturas: p.facturas.length
+                            };
+                        })
+                    })
+                });
+                const dCart = await resCart.json();
+                if (dCart.ok) {
+                    carteraGuardada = dCart.guardados;
+                    fc_cartera_semanas[semanaCartera] = proveedoresOrdenados.map(p => ({
+                        proveedor: p.nombre, ruc: '', saldo: p.total, facturas: p.facturas.length
+                    }));
+                } else {
+                    console.error('No se pudo registrar la cartera de la semana:', dCart.error);
+                }
+            } catch (e) {
+                console.error('No se pudo registrar la cartera de la semana:', e);
+            }
+
+            let conservados = 0, nuevos = 0;
             proveedoresOrdenados.forEach(prov => {
                 const dynRowId = 'fcr-dyn-' + (++fc_row_id_counter);
                 const provBD = fc_buscarProveedorBD(prov.nombre);
                 const diasCred = provBD ? provBD.dias_credito : fc_buscarDiasCredito(prov.nombre);
 
+                // Lo que este proveedor ya tenia planificado antes de esta carga
+                const prev = previoProv[prov.key] || null;
+                if (prev) conservados++; else nuevos++;
+                const bancoPrev = prev ? prev.banco : 'produbanco';
+                const diasFinal = (prev && prev.dias !== '') ? prev.dias : diasCred;
+
                 const newRow = document.createElement('tr');
                 newRow.className = `row-banco-item fc-egreso-item-${grupoId}`;
                 newRow.dataset.grupo = `eg-${grupoId}`;
-                newRow.dataset.banco = 'produbanco';
+                newRow.dataset.banco = bancoPrev;
                 newRow.dataset.fcRowId = dynRowId;
 
                 let celdas = `<td class="col-concepto indent-3">
                     <select class="fc-select-banco" onchange="this.closest('tr').dataset.banco=this.value;fc_recalcularTodo()" title="Banco de salida">
-                        <option value="produbanco" selected>PRO</option>
-                        <option value="pichincha">PICH</option>
+                        <option value="produbanco" ${bancoPrev !== 'pichincha' ? 'selected' : ''}>PRO</option>
+                        <option value="pichincha" ${bancoPrev === 'pichincha' ? 'selected' : ''}>PICH</option>
                     </select>
                     <input type="text" class="fc-input-nombre" value="${prov.nombre}">
                     <button class="fc-btn-facturas" onclick="event.stopPropagation();fc_abrirFacturas(this.closest('tr'))" title="Facturas pendientes"><span class="fc-icon-fac">F</span><span class="fc-badge-facturas fc-badge-pend">${prov.facturas.length}</span></button>
@@ -3226,7 +3601,7 @@ function fc_procesarCarteraXLS(input) {
                     <input type="text" class="fc-input fc-input-saldo" value="${prov.total.toFixed(2)}" onchange="fc_recalcularSaldos()" style="width:70px; text-align:right; background:#e3f2fd;">
                 </td>`;
                 celdas += `<td class="col-dias monto" style="background:#fff3e0; min-width:50px;">
-                    <input type="number" class="fc-input fc-input-dias" value="${diasCred}" min="0" max="365" style="width:45px; text-align:center; background:#fff3e0;">
+                    <input type="number" class="fc-input fc-input-dias" value="${diasFinal}" min="0" max="365" style="width:45px; text-align:center; background:#fff3e0;">
                 </td>`;
 
                 semanas.forEach(sem => {
@@ -3245,20 +3620,50 @@ function fc_procesarCarteraXLS(input) {
                 insertAfter.parentNode.insertBefore(newRow, insertAfter.nextSibling);
                 insertAfter = newRow;
 
-                // Cargar facturas
-                fc_facturas_data[dynRowId] = prov.facturas.map(f => ({...f}));
+                // Cargar facturas del archivo nuevo, pero rescatando la fecha de pago
+                // que ya se le habia asignado a la misma factura (mismo # documento)
+                fc_facturas_data[dynRowId] = prov.facturas.map(f => {
+                    const copia = {...f};
+                    const pagoPrev = prev ? prev.pagos[String(f.num).trim()] : null;
+                    if (pagoPrev) copia.fecha_pago = pagoPrev;
+                    return copia;
+                });
                 facturasAsignadas += prov.facturas.length;
+
+                // Devolver los montos que ya estaban digitados dia por dia
+                if (prev) {
+                    newRow.querySelectorAll(`.fc-input-egreso-${grupoId}`).forEach(inp => {
+                        const v = prev.celdas[inp.dataset.fecha];
+                        if (v !== undefined) inp.value = v;
+                    });
+                }
 
                 // Aplicar visibilidad correcta
                 fc_aplicarVisibilidadNuevoItem(newRow);
             });
 
+            // Los que estaban antes y ya no vienen en el archivo se quedaron fuera
+            const borrados = Object.values(previoProv)
+                .filter(p => !proveedoresOrdenados.some(prov => prov.key === fc_normalizarNombre(p.nombre)))
+                .map(p => p.nombre);
+
             fc_recalcularTodo();
 
             // Resumen
-            let msg = `Cartera cargada:\n`;
+            let msg = `Cartera cargada (semana del ${semanaCartera}):\n`;
             msg += `- ${totalFacturas} facturas de ${proveedoresOrdenados.length} proveedores\n`;
-            msg += `- Todos creados en PROVEEDORES PRINCIPALES\n`;
+            msg += carteraGuardada
+                ? `- registrada como la cartera de esa semana (${carteraGuardada}); al volver a entrar se rearma sola\n`
+                : `- OJO: no se pudo registrar la cartera de la semana (revise la consola)\n`;
+            msg += `- ${conservados} ya estaban: se les conservo lo planificado (montos por dia y fechas de pago)\n`;
+            msg += `- ${nuevos} nuevos en esta cartera\n`;
+            if (borrados.length) {
+                const lista = borrados.slice(0, 8).join(', ');
+                msg += `- ${borrados.length} salieron por no venir en el archivo: ${lista}${borrados.length > 8 ? ', ...' : ''}\n`;
+            }
+            if (bajasLiberadas) {
+                msg += `- ${bajasLiberadas} reaparecieron: se les quito la baja porque vienen en el archivo\n`;
+            }
             msg += `- Ordenados por monto (mayor a menor)\n`;
             msg += `\nUse el boton F en cada proveedor para ver facturas y asignar fechas de pago.`;
             alert(msg);
@@ -3270,6 +3675,36 @@ function fc_procesarCarteraXLS(input) {
     };
     reader.readAsArrayBuffer(file);
     input.value = ''; // Reset para permitir cargar mismo archivo
+}
+
+// Quita la baja de los proveedores que reaparecen en la cartera nueva.
+// Se compara con el nombre normalizado (la cartera puede traerlo escrito distinto)
+// pero al backend se manda el nombre TAL COMO esta guardado en la baja.
+async function fc_liberarBajasDesdeCartera(nombresCartera) {
+    if (!fc_eliminados_data.length) return 0;
+    const enCartera = new Set(nombresCartera.map(n => fc_normalizarNombre(n)));
+    const aLiberar = fc_eliminados_data.filter(x =>
+        x.grupo === 'prov-principales' && enCartera.has(fc_normalizarNombre(x.nombre || ''))
+    );
+    if (!aLiberar.length) return 0;
+
+    const liberados = [];
+    for (const baja of aLiberar) {
+        try {
+            const res = await fetch('/api/flujo-caja/egresos-eliminados/reactivar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ grupo: baja.grupo, nombre: baja.nombre })
+            });
+            const data = await res.json();
+            if (data.ok) liberados.push(baja);
+        } catch (e) {
+            console.error('No se pudo liberar la baja de', baja.nombre, e);
+        }
+    }
+    // Sacar de la cache local solo las que el backend confirmo
+    fc_eliminados_data = fc_eliminados_data.filter(x => !liberados.includes(x));
+    return liberados.length;
 }
 
 function fc_parsearFechaXLS(val) {
@@ -3330,6 +3765,7 @@ async function fc_abrirProveedores() {
                     <thead>
                         <tr>
                             <th style="min-width:180px;">Proveedor</th>
+                            <th style="width:110px;">RUC</th>
                             <th style="min-width:100px;">N. Comercial</th>
                             <th style="min-width:80px;">Criticidad</th>
                             <th style="width:55px;">Dias Cr.</th>
@@ -3339,7 +3775,7 @@ async function fc_abrirProveedores() {
                             <th style="width:30px;"></th>
                         </tr>
                     </thead>
-                    <tbody id="fc-prov-body"><tr><td colspan="8" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
+                    <tbody id="fc-prov-body"><tr><td colspan="9" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
                 </table>
             </div>
             <div class="fc-fac-footer">
@@ -3370,7 +3806,7 @@ async function fc_provCargar() {
         fc_provRender();
     } catch (e) {
         console.error('Error cargando proveedores:', e);
-        document.getElementById('fc-prov-body').innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
+        document.getElementById('fc-prov-body').innerHTML = `<tr><td colspan="9" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
     }
 }
 
@@ -3379,7 +3815,7 @@ function fc_provRender() {
     if (!tbody) return;
 
     if (fc_proveedores_bd.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#94a3b8;">No hay proveedores. Agregue manualmente o sincronice desde la Cartera.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8;">No hay proveedores. Agregue manualmente o sincronice desde la Cartera.</td></tr>';
         document.getElementById('fc-prov-count').textContent = '0 proveedores';
         return;
     }
@@ -3394,6 +3830,9 @@ function fc_provRender() {
 
         html += `<tr class="fc-prov-row" data-idx="${idx}">
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.nombre}" data-field="nombre" style="font-weight:600;"></td>
+            <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.ruc || ''}" data-field="ruc" inputmode="numeric"
+                       placeholder="sin RUC" title="RUC de Contifico"
+                       style="font-family:monospace;font-size:10px;text-align:center;${p.ruc ? '' : 'background:#fff7ed;'}"></td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.nombre_comercial}" data-field="nombre_comercial"></td>
             <td><select class="fc-fac-select-fecha fc-prov-field" data-field="criticidad" style="background:${critColor};font-weight:600;font-size:10px;" onchange="this.style.background={'BAJO':'#e2e8f0','MEDIO':'#fef3c7','ALTO':'#fed7aa','CRITICO':'#fecaca'}[this.value]">${critOpts}</select></td>
             <td><input type="number" class="fc-fac-input fc-prov-field" value="${p.dias_credito}" data-field="dias_credito" style="width:45px;text-align:center;"></td>
@@ -3409,18 +3848,24 @@ function fc_provRender() {
 }
 
 function fc_provFiltrar() {
-    const filtro = (document.getElementById('fc-prov-filtro')?.value || '').toUpperCase();
+    const filtro = (document.getElementById('fc-prov-filtro')?.value || '').toUpperCase().trim();
+    // "sin ruc" lista los que quedaron sin identificar en Contifico
+    const soloSinRuc = filtro === 'SIN RUC';
     document.querySelectorAll('.fc-prov-row').forEach(row => {
         const nombre = row.querySelector('[data-field="nombre"]')?.value?.toUpperCase() || '';
         const comercial = row.querySelector('[data-field="nombre_comercial"]')?.value?.toUpperCase() || '';
-        row.style.display = (nombre.includes(filtro) || comercial.includes(filtro)) ? '' : 'none';
+        const ruc = row.querySelector('[data-field="ruc"]')?.value || '';
+        const visible = soloSinRuc
+            ? !ruc.trim()
+            : (nombre.includes(filtro) || comercial.includes(filtro) || ruc.includes(filtro));
+        row.style.display = visible ? '' : 'none';
     });
 }
 
 function fc_provAgregar() {
     fc_proveedores_bd.push({
         id: 0, nombre: '', nombre_comercial: '', criticidad: 'BAJO',
-        dias_credito: 0, dia_despacho: '', productos_servicios: '', observaciones: ''
+        dias_credito: 0, dia_despacho: '', productos_servicios: '', observaciones: '', ruc: ''
     });
     fc_provRender();
     // Enfocar el ultimo
@@ -3506,11 +3951,21 @@ async function fc_cargarProveedoresBD() {
     } catch (e) { console.error(e); }
 }
 
-// Buscar proveedor en catalogo BD por nombre
+// Buscar proveedor en catalogo BD por nombre. Tras unificar duplicados el catalogo
+// guarda la razon social de Contifico en 'nombre' y la marca corta en
+// 'nombre_comercial' (SUPERMAXI, PILSENER...), asi que hay que mirar las dos.
 function fc_buscarProveedorBD(nombre) {
-    const upper = nombre.toUpperCase();
-    return fc_proveedores_bd.find(p => p.nombre.toUpperCase() === upper) ||
-           fc_proveedores_bd.find(p => upper.includes(p.nombre.toUpperCase()) || p.nombre.toUpperCase().includes(upper));
+    const upper = (nombre || '').toUpperCase().trim();
+    if (!upper) return null;
+    const norm = fc_normalizarNombre(nombre);
+    // SIEMPRE por nombre completo. Antes habia un ultimo intento por coincidencia
+    // parcial (includes) y eso emparejaba proveedores distintos que comparten
+    // palabras: si no calza el nombre completo, mejor no devolver nada.
+    return fc_proveedores_bd.find(p => (p.nombre || '').toUpperCase() === upper)
+        || fc_proveedores_bd.find(p => (p.nombre_comercial || '').toUpperCase() === upper)
+        || (norm ? fc_proveedores_bd.find(p => fc_normalizarNombre(p.nombre) === norm) : null)
+        || (norm ? fc_proveedores_bd.find(p => p.nombre_comercial && fc_normalizarNombre(p.nombre_comercial) === norm) : null)
+        || null;
 }
 
 // ============ PAGOS RECURRENTES ============
@@ -4139,6 +4594,7 @@ function fc_calcularPlanDeudas() {
 let fc_ahorro_semanal = 0;
 let fc_ahorro_config_cargada = false;
 let fc_deudas60_cache = [];
+let fc_ahorro_aportes = {}; // {"2026-08-24": 500} aportes extra puntuales por semana
 
 async function fc_ahorroCargarConfig() {
     if (fc_ahorro_config_cargada) return;
@@ -4147,11 +4603,20 @@ async function fc_ahorroCargarConfig() {
         const data = await res.json();
         if (data.ok) {
             fc_ahorro_semanal = data.ahorro_semanal || 0;
+            fc_ahorro_aportes = data.aportes_extra || {};
             fc_ahorro_config_cargada = true;
             const input = document.getElementById('fc-ahorro-semanal');
             if (input && fc_ahorro_semanal > 0) input.value = fc_ahorro_semanal;
         }
     } catch (e) { console.error('Error cargando config ahorro:', e); }
+}
+
+// Aporte extra de una semana puntual (decimo, devolucion de IVA, venta de activo...)
+function fc_ahorroSetExtra(iso, valor) {
+    const v = parseFloat(valor) || 0;
+    if (v > 0) fc_ahorro_aportes[iso] = v;
+    else delete fc_ahorro_aportes[iso];
+    fc_proyectarAhorroDeuda();
 }
 
 async function fc_ahorroGuardar() {
@@ -4161,12 +4626,16 @@ async function fc_ahorroGuardar() {
         const res = await fetch('/api/flujo-caja/ahorro-deuda', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ahorro_semanal: valor })
+            // aportes_extra va SIEMPRE: el POST reemplaza la columna completa,
+            // asi que mandar solo el ahorro semanal borraba los aportes extra.
+            body: JSON.stringify({ ahorro_semanal: valor, aportes_extra: fc_ahorro_aportes })
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error);
         fc_ahorro_semanal = valor;
-        alert('Ahorro semanal guardado: $' + valor.toLocaleString('en-US', {minimumFractionDigits: 2}));
+        const nExtra = Object.keys(fc_ahorro_aportes).length;
+        alert('Ahorro semanal guardado: $' + valor.toLocaleString('en-US', {minimumFractionDigits: 2})
+              + (nExtra ? `\n+ ${nExtra} aporte(s) extra por semana` : ''));
     } catch (e) {
         alert('Error al guardar: ' + e.message);
     }
@@ -4186,7 +4655,9 @@ function fc_proyectarAhorroDeuda() {
         cont.innerHTML = '<p style="color:#16a34a;font-size:11px;text-align:center;padding:10px;">No hay deuda +60 d&iacute;as pendiente. Nada que proyectar.</p>';
         return;
     }
-    if (ahorro <= 0) {
+    // Con ahorro en 0 pero aportes extra cargados si hay algo que proyectar
+    const sumaExtras = Object.values(fc_ahorro_aportes).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+    if (ahorro <= 0 && sumaExtras <= 0) {
         cont.innerHTML = `<p style="color:#94a3b8;font-size:11px;text-align:center;padding:10px;">Ingrese el ahorro semanal para proyectar la cancelaci&oacute;n de los $${totalDeuda.toLocaleString('en-US',{minimumFractionDigits:2})} vencidos +60d.</p>`;
         return;
     }
@@ -4200,13 +4671,17 @@ function fc_proyectarAhorroDeuda() {
     let idx = 0, saldoAcum = 0, deudaRestante = totalDeuda;
     let rows = '';
     let semanasUsadas = 0;
+    let totalExtras = 0;
 
     for (let s = 0; s < MAX_SEMANAS && deudaRestante > 0.005; s++) {
         semanasUsadas = s + 1;
         const fSem = new Date(inicio);
         fSem.setDate(inicio.getDate() + s * 7);
         const fechaTxt = fSem.toLocaleDateString('es-EC', {day: '2-digit', month: 'short'});
-        saldoAcum += ahorro;
+        const isoSem = `${fSem.getFullYear()}-${String(fSem.getMonth() + 1).padStart(2, '0')}-${String(fSem.getDate()).padStart(2, '0')}`;
+        const extra = parseFloat(fc_ahorro_aportes[isoSem]) || 0;
+        totalExtras += extra;
+        saldoAcum += ahorro + extra;
 
         const pagos = [];
         while (idx < cola.length && saldoAcum > 0.005) {
@@ -4227,14 +4702,23 @@ function fc_proyectarAhorroDeuda() {
         rows += `<tr style="border-bottom:1px solid #f1f5f9;">
             <td style="padding:5px 8px;font-weight:600;white-space:nowrap;">Sem ${s + 1} &middot; ${fechaTxt}</td>
             <td style="padding:5px 8px;text-align:right;color:#2e7d32;">$${ahorro.toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+            <td style="padding:3px 6px;text-align:right;">
+                <input type="number" step="0.01" min="0" value="${extra || ''}" placeholder="0"
+                       title="Aporte extra solo en esta semana (decimo, devolucion, venta de activo)"
+                       onchange="fc_ahorroSetExtra('${isoSem}', this.value)"
+                       style="width:78px;padding:3px 5px;border:1px solid ${extra ? '#2e7d32' : '#cbd5e1'};border-radius:4px;font-size:11px;text-align:right;font-weight:${extra ? '700' : '400'};color:${extra ? '#1b5e20' : '#334155'};background:${extra ? '#f0fdf4' : '#fff'};">
+            </td>
             <td style="padding:5px 8px;">${pagosHtml}</td>
             <td style="padding:5px 8px;text-align:right;font-weight:700;color:${deudaRestante > 0.005 ? '#dc2626' : '#16a34a'};">$${Math.max(0, deudaRestante).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
         </tr>`;
     }
 
     const liquidada = deudaRestante <= 0.005;
+    const txtExtras = totalExtras > 0
+        ? ` <span style="font-weight:400;">(incluye $${totalExtras.toLocaleString('en-US',{minimumFractionDigits:2})} en aportes extra)</span>`
+        : '';
     const resumen = liquidada
-        ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:11px;color:#166534;"><b>Con $${ahorro.toLocaleString('en-US',{minimumFractionDigits:2})}/semana la deuda +60d ($${totalDeuda.toLocaleString('en-US',{minimumFractionDigits:2})}) se cancela en ${semanasUsadas} semana(s)</b> (~${Math.ceil(semanasUsadas / 4.3)} mes(es)), la &uacute;ltima el ${new Date(inicio.getTime() + (semanasUsadas - 1) * 7 * 86400000).toLocaleDateString('es-EC', {day: '2-digit', month: 'long', year: 'numeric'})}.</div>`
+        ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:11px;color:#166534;"><b>Con $${ahorro.toLocaleString('en-US',{minimumFractionDigits:2})}/semana la deuda +60d ($${totalDeuda.toLocaleString('en-US',{minimumFractionDigits:2})}) se cancela en ${semanasUsadas} semana(s)</b>${txtExtras} (~${Math.ceil(semanasUsadas / 4.3)} mes(es)), la &uacute;ltima el ${new Date(inicio.getTime() + (semanasUsadas - 1) * 7 * 86400000).toLocaleDateString('es-EC', {day: '2-digit', month: 'long', year: 'numeric'})}.</div>`
         : `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:11px;color:#991b1b;"><b>Con $${ahorro.toLocaleString('en-US',{minimumFractionDigits:2})}/semana NO se cubre la deuda +60d en 1 a&ntilde;o.</b> Quedar&iacute;an $${deudaRestante.toLocaleString('en-US',{minimumFractionDigits:2})} pendientes de $${totalDeuda.toLocaleString('en-US',{minimumFractionDigits:2})}.</div>`;
 
     cont.innerHTML = `${resumen}
@@ -4244,6 +4728,7 @@ function fc_proyectarAhorroDeuda() {
                 <tr style="background:#1b5e20;color:#fff;position:sticky;top:0;">
                     <th style="padding:6px 8px;text-align:left;">Semana</th>
                     <th style="padding:6px 8px;text-align:right;">Ahorro</th>
+                    <th style="padding:6px 8px;text-align:right;" title="Aporte extra puntual de esa semana">+ Extra</th>
                     <th style="padding:6px 8px;text-align:left;">Facturas que se cancelan</th>
                     <th style="padding:6px 8px;text-align:right;">Deuda +60d restante</th>
                 </tr>
@@ -4256,6 +4741,7 @@ function fc_proyectarAhorroDeuda() {
 // Mostrar plan de deudas automaticamente al cargar datos del flujo
 const fc_origCargarDatos = fc_cargarDatos;
 fc_cargarDatos = async function(reintentos) {
+    await fc_liqCargarConfig();
     await fc_origCargarDatos(reintentos);
     await fc_proyectarRecurrentes();
 };

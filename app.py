@@ -6,8 +6,8 @@ from flask import Flask, request, jsonify, send_from_directory, send_file, rende
 from flask_cors import CORS
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
-from psycopg2.extras import RealDictCursor
-import os, secrets, smtplib, json
+from psycopg2.extras import RealDictCursor, execute_values
+import os, re, secrets, smtplib, json
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -1394,6 +1394,22 @@ def _seleccionar_productos_semana(cur, bodega, fecha_lunes):
             WHERE marca = %s AND tipo_conteo = 'fijo' AND activo = TRUE
             ORDER BY nombre
         """, (marca,))
+        return cur.fetchall()
+
+    # Si la semana YA tiene rotacion, reutilizarla. Sin esto cada llamada
+    # sorteaba 10 productos nuevos y pisaba la seleccion de la semana, incluso
+    # cuando el endpoint terminaba devolviendo 409 'ya existe'.
+    cur.execute("""
+        SELECT codigos FROM goti.rotacion_semanal_bodegas
+        WHERE bodega = %s AND semana_inicio = %s
+    """, (bodega, fecha_lunes))
+    rotacion = cur.fetchone()
+    if rotacion and rotacion['codigos']:
+        cur.execute("""
+            SELECT codigo, nombre, unidad FROM goti.productos_por_marca
+            WHERE marca = %s AND codigo = ANY(%s) AND activo = TRUE
+            ORDER BY nombre
+        """, (marca, list(rotacion['codigos'])))
         return cur.fetchall()
 
     # MP / Planta: 10 aleatorios sin repetir hasta agotar todos
@@ -7305,19 +7321,23 @@ def flujo_caja_proveedores_listar():
                 dia_despacho TEXT DEFAULT '',
                 productos_servicios TEXT DEFAULT '',
                 observaciones TEXT DEFAULT '',
+                ruc TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         ''')
+        # La tabla ya existia sin ruc en las BD desplegadas
+        cur.execute("ALTER TABLE fc_proveedores ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT ''")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_fc_proveedores_ruc ON fc_proveedores(ruc) WHERE ruc <> ''")
         conn.commit()
-        cur.execute('SELECT id, nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones FROM fc_proveedores ORDER BY nombre')
+        cur.execute('SELECT id, nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc FROM fc_proveedores ORDER BY nombre')
         proveedores = []
         for r in cur.fetchall():
             proveedores.append({
                 'id': r[0], 'nombre': r[1], 'nombre_comercial': r[2] or '',
                 'criticidad': r[3] or 'BAJO', 'dias_credito': r[4] or 0,
                 'dia_despacho': r[5] or '', 'productos_servicios': r[6] or '',
-                'observaciones': r[7] or ''
+                'observaciones': r[7] or '', 'ruc': r[8] or ''
             })
         return jsonify({'ok': True, 'proveedores': proveedores})
     except Exception as e:
@@ -7338,9 +7358,10 @@ def flujo_caja_proveedores_guardar():
             return jsonify({'error': 'Nombre requerido'}), 400
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
+        cur.execute("ALTER TABLE fc_proveedores ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT ''")
         cur.execute('''
-            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (nombre) DO UPDATE SET
                 nombre_comercial = EXCLUDED.nombre_comercial,
                 criticidad = EXCLUDED.criticidad,
@@ -7348,11 +7369,13 @@ def flujo_caja_proveedores_guardar():
                 dia_despacho = EXCLUDED.dia_despacho,
                 productos_servicios = EXCLUDED.productos_servicios,
                 observaciones = EXCLUDED.observaciones,
+                ruc = EXCLUDED.ruc,
                 updated_at = NOW()
             RETURNING id
         ''', (nombre, (data.get('nombre_comercial') or '').strip() or nombre, data.get('criticidad', 'BAJO'),
               data.get('dias_credito', 0), data.get('dia_despacho', ''),
-              data.get('productos_servicios', ''), data.get('observaciones', '')))
+              data.get('productos_servicios', ''), data.get('observaciones', ''),
+              re.sub(r'[^0-9]', '', str(data.get('ruc') or ''))))
         prov_id = cur.fetchone()[0]
         conn.commit()
         return jsonify({'ok': True, 'id': prov_id})
@@ -7379,26 +7402,49 @@ def flujo_caja_proveedores_bulk():
             nombre_comercial TEXT DEFAULT '', criticidad TEXT DEFAULT 'BAJO',
             dias_credito INTEGER DEFAULT 0, dia_despacho TEXT DEFAULT '',
             productos_servicios TEXT DEFAULT '', observaciones TEXT DEFAULT '',
+            ruc TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW())''')
-        guardados = 0
+        cur.execute("ALTER TABLE fc_proveedores ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT ''")
+        # Un solo INSERT con todas las filas. Antes era un execute() por proveedor
+        # dentro del loop: con 217 proveedores eran 217 viajes a Azure y se sentia.
+        filas = []
+        vistos = set()
         for p in proveedores:
-            nombre = p.get('nombre', '').strip()
+            nombre = (p.get('nombre') or '').strip()
             if not nombre: continue
-            cur.execute('''
-                INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (nombre) DO UPDATE SET
-                    nombre_comercial = COALESCE(NULLIF(EXCLUDED.nombre_comercial, ''), fc_proveedores.nombre_comercial),
-                    criticidad = CASE WHEN EXCLUDED.criticidad != 'BAJO' THEN EXCLUDED.criticidad ELSE fc_proveedores.criticidad END,
-                    dias_credito = CASE WHEN EXCLUDED.dias_credito > 0 THEN EXCLUDED.dias_credito ELSE fc_proveedores.dias_credito END,
-                    dia_despacho = COALESCE(NULLIF(EXCLUDED.dia_despacho, ''), fc_proveedores.dia_despacho),
-                    productos_servicios = COALESCE(NULLIF(EXCLUDED.productos_servicios, ''), fc_proveedores.productos_servicios),
-                    observaciones = COALESCE(NULLIF(EXCLUDED.observaciones, ''), fc_proveedores.observaciones),
-                    updated_at = NOW()
-            ''', (nombre, (p.get('nombre_comercial') or '').strip() or nombre, p.get('criticidad', 'BAJO'),
-                  p.get('dias_credito', 0), p.get('dia_despacho', ''),
-                  p.get('productos_servicios', ''), p.get('observaciones', '')))
-            guardados += 1
+            # execute_values manda todo en un statement: dos filas con el mismo
+            # nombre chocarian entre si ("ON CONFLICT DO UPDATE command cannot
+            # affect row a second time"). Gana la ultima, como en el loop viejo.
+            clave = nombre.upper()
+            if clave in vistos:
+                filas = [f for f in filas if f[0].upper() != clave]
+            vistos.add(clave)
+            filas.append((
+                nombre,
+                (p.get('nombre_comercial') or '').strip() or nombre,
+                p.get('criticidad') or 'BAJO',
+                p.get('dias_credito') or 0,
+                p.get('dia_despacho') or '',
+                p.get('productos_servicios') or '',
+                p.get('observaciones') or '',
+                re.sub(r'[^0-9]', '', str(p.get('ruc') or '')),
+            ))
+        if not filas:
+            return jsonify({'error': 'Sin proveedores con nombre valido'}), 400
+        execute_values(cur, '''
+            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc)
+            VALUES %s
+            ON CONFLICT (nombre) DO UPDATE SET
+                nombre_comercial = COALESCE(NULLIF(EXCLUDED.nombre_comercial, ''), fc_proveedores.nombre_comercial),
+                criticidad = CASE WHEN EXCLUDED.criticidad != 'BAJO' THEN EXCLUDED.criticidad ELSE fc_proveedores.criticidad END,
+                dias_credito = CASE WHEN EXCLUDED.dias_credito > 0 THEN EXCLUDED.dias_credito ELSE fc_proveedores.dias_credito END,
+                dia_despacho = COALESCE(NULLIF(EXCLUDED.dia_despacho, ''), fc_proveedores.dia_despacho),
+                productos_servicios = COALESCE(NULLIF(EXCLUDED.productos_servicios, ''), fc_proveedores.productos_servicios),
+                observaciones = COALESCE(NULLIF(EXCLUDED.observaciones, ''), fc_proveedores.observaciones),
+                ruc = COALESCE(NULLIF(EXCLUDED.ruc, ''), fc_proveedores.ruc),
+                updated_at = NOW()
+        ''', filas, page_size=250)
+        guardados = len(filas)
         conn.commit()
         return jsonify({'ok': True, 'guardados': guardados})
     except Exception as e:
@@ -7585,6 +7631,13 @@ def flujo_caja_eliminados_marcar():
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
         _fc_crear_tabla_eliminados(cur)
+        # El frontend compara nombres con trim().toUpperCase(), asi que una baja
+        # escrita con otra capitalizacion dejaria dos filas y ganaria la primera.
+        # Se limpian las variantes antes de insertar la exacta.
+        cur.execute('''DELETE FROM fc_egresos_eliminados
+            WHERE UPPER(TRIM(grupo)) = UPPER(TRIM(%s))
+              AND UPPER(TRIM(nombre)) = UPPER(TRIM(%s))
+              AND nombre <> %s''', (grupo, nombre, nombre))
         cur.execute('''INSERT INTO fc_egresos_eliminados (grupo, nombre, eliminado_desde, eliminado_por)
             VALUES (%s, %s, %s, %s) ON CONFLICT (grupo, nombre) DO UPDATE SET
             eliminado_desde = EXCLUDED.eliminado_desde, created_at = NOW()''',
@@ -7609,7 +7662,11 @@ def flujo_caja_eliminados_reactivar():
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
         _fc_crear_tabla_eliminados(cur)
-        cur.execute('DELETE FROM fc_egresos_eliminados WHERE grupo = %s AND nombre = %s', (grupo, nombre))
+        # Case/espacio-insensible: el nombre puede volver escrito distinto y aun
+        # asi tiene que reactivar la misma baja (igual que compara el frontend).
+        cur.execute('''DELETE FROM fc_egresos_eliminados
+            WHERE UPPER(TRIM(grupo)) = UPPER(TRIM(%s))
+              AND UPPER(TRIM(nombre)) = UPPER(TRIM(%s))''', (grupo, nombre))
         conn.commit()
         return jsonify({'ok': True, 'reactivados': cur.rowcount})
     except Exception as e:
@@ -7664,6 +7721,146 @@ def flujo_caja_ahorro_deuda_guardar():
             ahorro_semanal = EXCLUDED.ahorro_semanal,
             aportes_extra = EXCLUDED.aportes_extra,
             updated_at = NOW()''', (ahorro, json.dumps(aportes)))
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+def _fc_crear_tabla_cartera(cur):
+    """Cartera por pagar de CADA semana. El XLS que se carga es el de esa semana:
+    el proveedor que no viene en el archivo de la semana no debe aparecer en ella."""
+    cur.execute('''CREATE TABLE IF NOT EXISTS fc_cartera_semana (
+        semana_inicio DATE NOT NULL,
+        proveedor TEXT NOT NULL,
+        ruc TEXT DEFAULT '',
+        saldo NUMERIC(14,2) DEFAULT 0,
+        facturas INTEGER DEFAULT 0,
+        cargado_at TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (semana_inicio, proveedor))''')
+
+
+@app.route('/api/flujo-caja/cartera-semana', methods=['GET'])
+def flujo_caja_cartera_semana_get():
+    """Proveedores de la cartera de las semanas pedidas: ?fechas=2026-08-17,2026-08-24"""
+    conn = None
+    try:
+        fechas = [f.strip() for f in (request.args.get('fechas') or '').split(',') if f.strip()]
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_cartera(cur)
+        conn.commit()
+        if not fechas:
+            return jsonify({'ok': True, 'semanas': {}})
+        cur.execute('''SELECT semana_inicio, proveedor, ruc, saldo, facturas
+                       FROM fc_cartera_semana WHERE semana_inicio = ANY(%s::date[])
+                       ORDER BY semana_inicio, proveedor''', (fechas,))
+        semanas = {}
+        for r in cur.fetchall():
+            semanas.setdefault(r[0].isoformat(), []).append({
+                'proveedor': r[1], 'ruc': r[2] or '',
+                'saldo': float(r[3] or 0), 'facturas': r[4] or 0})
+        return jsonify({'ok': True, 'semanas': semanas})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/cartera-semana', methods=['POST'])
+def flujo_caja_cartera_semana_guardar():
+    """Registra la cartera de una semana. REEMPLAZA la que hubiera: el archivo manda."""
+    conn = None
+    try:
+        data = request.get_json()
+        semana = (data.get('semana_inicio') or '').strip()
+        proveedores = data.get('proveedores') or []
+        if not semana:
+            return jsonify({'error': 'semana_inicio requerida'}), 400
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_cartera(cur)
+        cur.execute('DELETE FROM fc_cartera_semana WHERE semana_inicio = %s', (semana,))
+        borradas = cur.rowcount
+        filas, vistos = [], set()
+        for p in proveedores:
+            nombre = (p.get('proveedor') or '').strip()
+            if not nombre or nombre.upper() in vistos:
+                continue
+            vistos.add(nombre.upper())
+            filas.append((semana, nombre,
+                          re.sub(r'[^0-9]', '', str(p.get('ruc') or '')),
+                          float(p.get('saldo') or 0), int(p.get('facturas') or 0)))
+        if filas:
+            execute_values(cur, '''INSERT INTO fc_cartera_semana
+                (semana_inicio, proveedor, ruc, saldo, facturas) VALUES %s''',
+                filas, page_size=500)
+        conn.commit()
+        return jsonify({'ok': True, 'guardados': len(filas), 'reemplazados': borradas})
+    except Exception as e:
+        if conn: conn.rollback()
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+def _fc_crear_tabla_liquidez(cur):
+    cur.execute('''CREATE TABLE IF NOT EXISTS fc_config_liquidez (
+        id SMALLINT PRIMARY KEY DEFAULT 1,
+        minimo_produbanco NUMERIC(14,2) DEFAULT 0,
+        minimo_pichincha NUMERIC(14,2) DEFAULT 0,
+        semanas_cobertura NUMERIC(5,2) DEFAULT 2,
+        updated_at TIMESTAMP DEFAULT NOW())''')
+
+
+@app.route('/api/flujo-caja/config-liquidez', methods=['GET'])
+def flujo_caja_config_liquidez_get():
+    """Saldo minimo por banco para las alertas de liquidez"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_liquidez(cur)
+        conn.commit()
+        cur.execute('SELECT minimo_produbanco, minimo_pichincha, semanas_cobertura FROM fc_config_liquidez WHERE id = 1')
+        row = cur.fetchone()
+        if row:
+            return jsonify({'ok': True, 'minimo_produbanco': float(row[0] or 0),
+                            'minimo_pichincha': float(row[1] or 0),
+                            'semanas_cobertura': float(row[2] or 2)})
+        return jsonify({'ok': True, 'minimo_produbanco': 0, 'minimo_pichincha': 0, 'semanas_cobertura': 2})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/config-liquidez', methods=['POST'])
+def flujo_caja_config_liquidez_guardar():
+    """Guardar los minimos por banco"""
+    conn = None
+    try:
+        data = request.get_json()
+        min_pro = float(data.get('minimo_produbanco', 0) or 0)
+        min_pich = float(data.get('minimo_pichincha', 0) or 0)
+        semanas = float(data.get('semanas_cobertura', 2) or 2)
+        if min_pro < 0 or min_pich < 0 or semanas < 0:
+            return jsonify({'error': 'Los valores no pueden ser negativos'}), 400
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_liquidez(cur)
+        cur.execute('''INSERT INTO fc_config_liquidez (id, minimo_produbanco, minimo_pichincha, semanas_cobertura)
+            VALUES (1, %s, %s, %s) ON CONFLICT (id) DO UPDATE SET
+            minimo_produbanco = EXCLUDED.minimo_produbanco,
+            minimo_pichincha = EXCLUDED.minimo_pichincha,
+            semanas_cobertura = EXCLUDED.semanas_cobertura,
+            updated_at = NOW()''', (min_pro, min_pich, semanas))
         conn.commit()
         return jsonify({'ok': True})
     except Exception as e:
