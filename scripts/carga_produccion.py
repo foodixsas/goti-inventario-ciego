@@ -500,6 +500,41 @@ def procesar_registro(registro):
 # ============================================
 # MAIN
 # ============================================
+def verificar_entorno():
+    """Prueba de humo: abre Chromium, entra a Contifico y carga el formulario.
+
+    Hace falta porque en modo simulacion, con la cola vacia, el navegador nunca
+    se abre: la corrida sale verde sin haber probado nada de Selenium. Sin esto,
+    la primera produccion real seria el primer intento de usar Chrome dentro del
+    contenedor. No registra nada.
+    """
+    print('=' * 60)
+    print('   VERIFICACION DE ENTORNO (no registra nada)')
+    print('=' * 60)
+    print(f'   CHROME_BIN   = {os.environ.get("CHROME_BIN")}')
+    print(f'   CHROMEDRIVER = {os.environ.get("CHROMEDRIVER")}')
+    driver = None
+    try:
+        driver = crear_driver()
+        print('   [OK] Chromium arranco')
+        print(f'   version: {driver.capabilities.get("browserVersion")} / '
+              f'driver: {driver.capabilities.get("chrome", {}).get("chromedriverVersion", "?")[:24]}')
+        login_contifico(driver)
+        nueva_produccion(driver)
+        # Si el formulario cargo, el campo de bodega origen tiene que existir.
+        driver.find_element(By.CSS_SELECTOR, "input[data_id='id_bodega_id']")
+        print('   [OK] Formulario de produccion accesible')
+        print('\nENTORNO CORRECTO')
+        return 0
+    except Exception as e:
+        print(f'\n[FALLO] {type(e).__name__}: {str(e)[:300]}')
+        return 1
+    finally:
+        if driver:
+            driver.quit()
+            print('Navegador cerrado.')
+
+
 def main():
     """Una sola pasada: procesa todas las producciones pendientes y termina.
 
@@ -523,6 +558,9 @@ def main():
         if not valor:
             print(f'[ERROR CRITICO] Falta la variable {nombre}')
             return 1
+
+    if os.getenv('VERIFICAR', '0') == '1':
+        return verificar_entorno()
 
     fallidos, procesados = set(), 0
     while True:
