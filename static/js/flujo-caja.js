@@ -2651,6 +2651,32 @@ function fc_getFacturas(rowId) {
     return fc_facturas_data[rowId];
 }
 
+// Vencimiento real: si hay dias de credito configurados mandan sobre el del XLS
+function fc_vencimientoReal(fac, diasCredito) {
+    if (diasCredito > 0 && fac.fecha) {
+        const fe = new Date(fac.fecha + 'T12:00:00');
+        fe.setDate(fe.getDate() + diasCredito);
+        return fe.toISOString().split('T')[0];
+    }
+    return fac.vencimiento || '';
+}
+
+// Las facturas se ordenan de la MAS ANTIGUA POR PAGAR a la mas nueva, que es el
+// orden en que hay que cancelarlas. Se ordena el arreglo real (no solo la vista)
+// porque eliminar/guardar trabajan por indice de fila.
+function fc_ordenarFacturasPorAntiguedad(facturas, diasCredito) {
+    facturas.sort((a, b) => {
+        const va = fc_vencimientoReal(a, diasCredito) || a.fecha || '';
+        const vb = fc_vencimientoReal(b, diasCredito) || b.fecha || '';
+        if (!va && !vb) return 0;
+        if (!va) return 1;   // sin fecha, al final
+        if (!vb) return -1;
+        if (va !== vb) return va < vb ? -1 : 1;
+        return (b.monto || 0) - (a.monto || 0); // mismo vencimiento: mayor monto primero
+    });
+    return facturas;
+}
+
 // Texto que viene del catalogo y se inyecta con innerHTML
 function fc_esc(s) {
     return String(s == null ? '' : s)
@@ -2700,15 +2726,13 @@ async function fc_abrirFacturas(row) {
     // Obtener dias de credito del item (columna DIAS)
     const diasCredito = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
 
+    // De la mas vencida a la mas nueva: asi se ve de una cual toca cancelar primero
+    fc_ordenarFacturasPorAntiguedad(facturas, diasCredito);
+
     // Calcular criticidad (basado en factura mas vencida)
     let maxDiasVenc = 0;
     facturas.forEach(fac => {
-        let fvr = fac.vencimiento;
-        if (diasCredito > 0 && fac.fecha) {
-            const fe = new Date(fac.fecha + 'T12:00:00');
-            fe.setDate(fe.getDate() + diasCredito);
-            fvr = fe.toISOString().split('T')[0];
-        }
+        const fvr = fc_vencimientoReal(fac, diasCredito);
         if (fvr) {
             const d = Math.round((hoy - new Date(fvr + 'T12:00:00')) / (1000*60*60*24));
             if (d > maxDiasVenc) maxDiasVenc = d;
@@ -2724,14 +2748,8 @@ async function fc_abrirFacturas(row) {
         if (esPendiente) totalPendiente += (fac.monto || 0);
         else totalProgramado += (fac.monto || 0);
 
-        // Calcular vencimiento real: fecha emision + dias de credito
-        // Si hay dias de credito configurados, usarlos; si no, usar el vencimiento del XLS
-        let fechaVencReal = fac.vencimiento;
-        if (diasCredito > 0 && fac.fecha) {
-            const fEmision = new Date(fac.fecha + 'T12:00:00');
-            fEmision.setDate(fEmision.getDate() + diasCredito);
-            fechaVencReal = fEmision.toISOString().split('T')[0];
-        }
+        // Vencimiento real: fecha emision + dias de credito (o el del XLS si no hay)
+        const fechaVencReal = fc_vencimientoReal(fac, diasCredito);
 
         // Calcular dias vencidos
         let diasVencido = '';
@@ -2840,7 +2858,9 @@ async function fc_abrirFacturas(row) {
             <div class="fc-fac-body">
                 <table class="fc-tabla-facturas">
                     <thead>
-                        <tr><th>Nro Factura</th><th>Fecha</th><th>Monto</th><th>Vencimiento</th><th>Vencido</th><th>Abono</th><th>Pagar el</th><th></th></tr>
+                        <tr><th>Nro Factura</th><th>Fecha</th><th>Monto</th><th>Vencimiento</th>
+                            <th title="Ordenadas de la mas vencida a la mas nueva: la primera fila es la que toca cancelar primero">Vencido &darr;</th>
+                            <th>Abono</th><th>Pagar el</th><th></th></tr>
                     </thead>
                     <tbody id="fc-facturas-body">${facturasHtml}</tbody>
                 </table>
