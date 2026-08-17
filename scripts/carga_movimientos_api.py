@@ -563,6 +563,7 @@ def procesar_bajas(bodegas):
 
         # Resolver productos P1-P10
         detalles = []
+        productos_tg = []
         for i in range(1, 11):
             # P1-P7 tienen lookup directo; P8-P10 pueden no tenerlo
             codigos = f.get(f"Código (from P{i})", [])
@@ -584,6 +585,9 @@ def procesar_bajas(bodegas):
                         "precio": "0.0",
                         "cantidad": str(float(cantidad))
                     })
+                    # Se guarda codigo y cantidad para el mensaje de Telegram: el bot
+                    # Selenium listaba producto por producto y hay que mantenerlo.
+                    productos_tg.append((codigo, cantidad))
                 else:
                     log(f"  [WARN] P{i} no encontrado en API: '{codigo}'")
 
@@ -599,22 +603,27 @@ def procesar_bajas(bodegas):
 
         descripcion = f"BAJA DE INVENTARIO - {nombre_bodega} - {motivo}"
         centro = MAPEO_CENTROS_A.get(tienda_id, nombre_bodega)
-        resumen_prods = ", ".join(
-            f"{d['cantidad']}u" for d in detalles[:3]
-        ) + (f" y {len(detalles)-3} más" if len(detalles) > 3 else "")
+        codigo_baja = f.get("codigo_baja", "") or "BAJA"
+        # Mismo formato que mandaba el bot Selenium: codigo de baja, motivo y la
+        # lista de productos uno por uno. La version anterior mandaba solo el
+        # conteo ("1 productos") y ponia el motivo detras de un ⚠️, asi que los
+        # avisos de exito parecian advertencias.
+        productos_str = "\n".join(
+            f"  • {nombre_producto(c)} ({c}) x {cant}" for c, cant in productos_tg
+        )
 
         num_doc = post_movimiento("EGR", bodega_id, detalles, fecha, descripcion)
 
         if num_doc and "ERROR" not in num_doc:
             marcar_hecho(api, AIRTABLE_BASE_A, TABLE_BAJAS, record_id, num_doc,
                          campo_doc="numero_registro_contable")
-            detalle_tg = f"📦 {len(detalles)} productos ({resumen_prods})\n📅 {fecha}\n⚠️ {motivo}"
-            notificar_exito("Baja de Inventario", centro, detalle_tg, num_doc)
+            detalle_tg = f"🏷️ {codigo_baja} - {motivo}\n📅 {fecha}\n{productos_str}"
+            notificar_exito("Baja", centro, detalle_tg, num_doc)
         else:
             marcar_hecho(api, AIRTABLE_BASE_A, TABLE_BAJAS, record_id, "ERROR-VER-LOG",
                          campo_doc="numero_registro_contable")
-            detalle_tg = f"📦 {len(detalles)} productos\n📅 {fecha}\n⚠️ {motivo}"
-            notificar_error("Baja de Inventario", centro, detalle_tg, "Fallo al crear via API - revisar log")
+            detalle_tg = f"🏷️ {codigo_baja} - {motivo}\n📅 {fecha}\n{productos_str}"
+            notificar_error("Baja", centro, detalle_tg, "Fallo al crear via API - revisar log")
 
 
 # ============================================================
@@ -663,10 +672,12 @@ def procesar_conteo(bodegas):
         if sobrantes > 0:
             tipo = "ING"
             cantidad = sobrantes
+            etiqueta_conteo = "SOBRANTE"
             descripcion = f"SOBRANTE CONTEO INVENTARIO - {nombre_bodega}"
         elif faltantes > 0:
             tipo = "EGR"
             cantidad = faltantes
+            etiqueta_conteo = "FALTANTE"
             descripcion = f"FALTANTE CONTEO INVENTARIO - {nombre_bodega}"
         else:
             log(f"  [SKIP] Sin sobrantes ni faltantes")
@@ -679,12 +690,16 @@ def procesar_conteo(bodegas):
 
         if num_doc and "ERROR" not in num_doc:
             marcar_hecho(api, AIRTABLE_BASE_A, TABLE_CONTEO, record_id, num_doc)
-            detalle_tg = f"📦 {nombre_producto(codigo)} ({codigo}) x {cantidad}\n📅 {fecha}"
-            notificar_exito("Conteo Inventario", centro, detalle_tg, num_doc)
+            # El bot Selenium indicaba SOBRANTE o FALTANTE; sin eso el aviso no
+            # dice si el conteo sumo o resto inventario.
+            detalle_tg = (f"📦 {nombre_producto(codigo)} ({codigo})\n📅 {fecha}\n"
+                          f"📊 {etiqueta_conteo}: {cantidad} uds")
+            notificar_exito("Conteo", centro, detalle_tg, num_doc)
         else:
             marcar_hecho(api, AIRTABLE_BASE_A, TABLE_CONTEO, record_id, "ERROR-VER-LOG")
-            detalle_tg = f"📦 {nombre_producto(codigo)} ({codigo}) x {cantidad}\n📅 {fecha}"
-            notificar_error("Conteo Inventario", centro, detalle_tg, "Fallo al crear via API - revisar log")
+            detalle_tg = (f"📦 {nombre_producto(codigo)} ({codigo})\n📅 {fecha}\n"
+                          f"📊 Sob:{sobrantes} Fal:{faltantes}")
+            notificar_error("Conteo", centro, detalle_tg, "Fallo al crear via API - revisar log")
 
 
 # ============================================================
