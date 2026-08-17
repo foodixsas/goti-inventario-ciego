@@ -1,0 +1,30 @@
+# Imagen para el cron de Produccion Simon Bolon.
+#
+# Este bot NO puede usar la API de Contifico: no existe endpoint de produccion
+# (probados produccion, orden-produccion, movimiento-produccion y ensamble en v1
+# y v2: todos 404). Trabaja contra el formulario web con Selenium, asi que la
+# imagen necesita Chromium y chromedriver.
+#
+# El entorno Python nativo de Render no trae navegador; de ahi que sea Docker.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    CHROME_BIN=/usr/bin/chromium \
+    CHROMEDRIVER=/usr/bin/chromedriver
+
+# chromium-driver instala el chromedriver que corresponde al chromium del repo,
+# asi no hay que pelear con versiones desalineadas como pasa con webdriver_manager.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium \
+        chromium-driver \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-produccion.txt .
+RUN pip install --no-cache-dir -r requirements-produccion.txt
+
+COPY carga_produccion.py notificar_telegram.py ./
+
+CMD ["python", "carga_produccion.py"]
