@@ -7764,8 +7764,12 @@ def _fc_crear_tabla_cartera(cur):
         ruc TEXT DEFAULT '',
         saldo NUMERIC(14,2) DEFAULT 0,
         facturas INTEGER DEFAULT 0,
+        detalle JSONB DEFAULT '[]'::jsonb,
         cargado_at TIMESTAMP DEFAULT NOW(),
         PRIMARY KEY (semana_inicio, proveedor))''')
+    # El detalle de facturas vive aqui, UNA sola vez por semana y proveedor, en vez
+    # de repetirse dentro de los egresos de cada semana visible
+    cur.execute("ALTER TABLE fc_cartera_semana ADD COLUMN IF NOT EXISTS detalle JSONB DEFAULT '[]'::jsonb")
 
 
 @app.route('/api/flujo-caja/cartera-semana', methods=['GET'])
@@ -7780,14 +7784,15 @@ def flujo_caja_cartera_semana_get():
         conn.commit()
         if not fechas:
             return jsonify({'ok': True, 'semanas': {}})
-        cur.execute('''SELECT semana_inicio, proveedor, ruc, saldo, facturas
+        cur.execute('''SELECT semana_inicio, proveedor, ruc, saldo, facturas, detalle
                        FROM fc_cartera_semana WHERE semana_inicio = ANY(%s::date[])
                        ORDER BY semana_inicio, proveedor''', (fechas,))
         semanas = {}
         for r in cur.fetchall():
             semanas.setdefault(r[0].isoformat(), []).append({
                 'proveedor': r[1], 'ruc': r[2] or '',
-                'saldo': float(r[3] or 0), 'facturas': r[4] or 0})
+                'saldo': float(r[3] or 0), 'facturas': r[4] or 0,
+                'detalle': r[5] or []})
         return jsonify({'ok': True, 'semanas': semanas})
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -7817,15 +7822,65 @@ def flujo_caja_cartera_semana_guardar():
             if not nombre or nombre.upper() in vistos:
                 continue
             vistos.add(nombre.upper())
+            detalle = p.get('detalle') or []
             filas.append((semana, nombre,
                           re.sub(r'[^0-9]', '', str(p.get('ruc') or '')),
-                          float(p.get('saldo') or 0), int(p.get('facturas') or 0)))
+                          float(p.get('saldo') or 0),
+                          int(p.get('facturas') or len(detalle)),
+                          json.dumps(detalle)))
         if filas:
             execute_values(cur, '''INSERT INTO fc_cartera_semana
-                (semana_inicio, proveedor, ruc, saldo, facturas) VALUES %s''',
-                filas, page_size=500)
+                (semana_inicio, proveedor, ruc, saldo, facturas, detalle)
+                VALUES %s''', filas, page_size=500,
+                template='(%s, %s, %s, %s, %s, %s::jsonb)')
         conn.commit()
         return jsonify({'ok': True, 'guardados': len(filas), 'reemplazados': borradas})
+    except Exception as e:
+        if conn: conn.rollback()
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/cartera-semana/detalle', methods=['POST'])
+def flujo_caja_cartera_detalle_guardar():
+    """Actualiza SOLO el detalle de facturas de proveedores de una semana.
+
+    Se usa al guardar el flujo: el usuario pudo cambiar fecha de pago, abono o el
+    vencimiento de una factura y eso tiene que sobrevivir sin volver a cargar el XLS.
+    No borra la cartera: solo toca las filas que se mandan.
+    """
+    conn = None
+    try:
+        data = request.get_json()
+        semana = (data.get('semana_inicio') or '').strip()
+        proveedores = data.get('proveedores') or []
+        if not semana:
+            return jsonify({'error': 'semana_inicio requerida'}), 400
+        if not proveedores:
+            return jsonify({'ok': True, 'actualizados': 0})
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_cartera(cur)
+        filas = []
+        for p in proveedores:
+            nombre = (p.get('proveedor') or '').strip()
+            if not nombre:
+                continue
+            detalle = p.get('detalle') or []
+            filas.append((semana, nombre, json.dumps(detalle), len(detalle)))
+        if filas:
+            execute_values(cur, """
+                UPDATE fc_cartera_semana AS c
+                SET detalle = d.detalle::jsonb, facturas = d.n
+                FROM (VALUES %s) AS d(semana, proveedor, detalle, n)
+                WHERE c.semana_inicio = d.semana::date
+                  AND UPPER(TRIM(c.proveedor)) = UPPER(TRIM(d.proveedor))
+            """, filas, page_size=300)
+        actualizados = cur.rowcount
+        conn.commit()
+        return jsonify({'ok': True, 'actualizados': actualizados})
     except Exception as e:
         if conn: conn.rollback()
         import traceback; traceback.print_exc()

@@ -248,8 +248,6 @@ function fc_renderTabla() {
     html += '</table>';
     container.innerHTML = html;
 
-    // Dejar fijas las filas de SALDO FINAL si el usuario asi lo tiene
-    fc_aplicarFijado();
 }
 
 // Saldo Inicial por Banco (Produbanco y Pichincha separados)
@@ -629,7 +627,7 @@ function fc_renderFlujoYSaldo() {
     html += '</tr>';
 
     // SALDO FINAL PRODUBANCO
-    html += `<tr class="row-total fc-fila-fijable" data-fijable="SALDO FINAL PRODUBANCO" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO FINAL PRODUBANCO</td>`;
+    html += `<tr class="row-total" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO FINAL PRODUBANCO</td>`;
     html += '<td class="col-saldo" style="background:#b3e5fc !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-produbanco-sem" data-semana="${sem.num}" style="background:#b3e5fc !important;">-</td>`;
@@ -642,7 +640,7 @@ function fc_renderFlujoYSaldo() {
     html += '</tr>';
 
     // SALDO FINAL PICHINCHA
-    html += `<tr class="row-total fc-fila-fijable" data-fijable="SALDO FINAL PICHINCHA" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">SALDO FINAL PICHINCHA</td>`;
+    html += `<tr class="row-total" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">SALDO FINAL PICHINCHA</td>`;
     html += '<td class="col-saldo" style="background:#c8e6c9 !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-pichincha-sem" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
@@ -655,7 +653,7 @@ function fc_renderFlujoYSaldo() {
     html += '</tr>';
 
     // SALDO FINAL TOTAL (suma de ambos bancos)
-    html += `<tr class="row-total fc-fila-fijable" data-fijable="SALDO FINAL TOTAL" style="background:#81d4fa !important;"><td class="col-concepto" style="background:#81d4fa !important; font-weight:bold;">SALDO FINAL TOTAL</td>`;
+    html += `<tr class="row-total" style="background:#81d4fa !important;"><td class="col-concepto" style="background:#81d4fa !important; font-weight:bold;">SALDO FINAL TOTAL</td>`;
     html += '<td class="col-saldo" style="background:#81d4fa !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-sem" data-semana="${sem.num}" style="background:#81d4fa !important;">-</td>`;
@@ -682,6 +680,7 @@ function fc_recalcularTodo() {
     fc_recalcularTodosSaldos();
     fc_recalcularSaldos();
     fc_renderAlertasLiquidez();
+    fc_renderBarraSaldos();
 }
 
 function fc_recalcularAjustes() {
@@ -1023,7 +1022,9 @@ function fc_recalcularFlujoYSaldos() {
             fecha,
             prod: saldoProdubanco,
             pich: saldoPichincha,
-            egresos: egresosProdubanco + egresosPichincha
+            egresos: egresosProdubanco + egresosPichincha,
+            egProd: egresosProdubanco,
+            egPich: egresosPichincha
         });
 
         // Saldo Final Total
@@ -1136,33 +1137,141 @@ function fc_actualizarResumen() {
     }
 }
 
-// ============ FIJAR LOS TOTALES (como inmovilizar filas en Excel) ============
-// La tabla toma alto propio y las filas de SALDO FINAL quedan pegadas abajo,
-// visibles mientras se hace scroll por los proveedores.
-function fc_aplicarFijado() {
-    const cont = document.getElementById('fc-tabla-container');
-    if (!cont) return;
-    const fijado = localStorage.getItem('fc_fijar_totales') !== '0'; // por defecto si
-    cont.classList.toggle('fc-fijado', fijado);
-    document.querySelectorAll('.fc-fila-fijable').forEach(tr => {
-        tr.classList.toggle('fc-fila-fijada', fijado);
-    });
+// ============ BARRA DE SALDOS ============
+// Franja delgada abajo con el saldo DIA POR DIA de la semana que se esta analizando,
+// igual que la tabla, mas el cierre de esa semana y el peor momento de todo el
+// horizonte. La semana enfocada es la que esta expandida en pantalla, y se puede
+// mover con las flechas.
+let fc_barra_semana = null;   // num de semana fijada a mano; null = la que se ve
+
+function fc_semanaEnfocada() {
+    const semanas = (fc_semanas && fc_semanas.length) ? fc_semanas : (window._fc_semanas || []);
+    if (!semanas.length) return null;
+    if (fc_barra_semana) {
+        const fijada = semanas.find(s => s.num === fc_barra_semana);
+        if (fijada) return fijada;
+    }
+    // La que el usuario tiene abierta en la tabla
+    for (const s of semanas) {
+        if (document.querySelector(`.dia-col.sem-${s.num}.visible`)) return s;
+    }
+    return semanas[0];
+}
+
+function fc_barraMoverSemana(delta) {
+    const semanas = (fc_semanas && fc_semanas.length) ? fc_semanas : (window._fc_semanas || []);
+    if (!semanas.length) return;
+    const actual = fc_semanaEnfocada();
+    const i = semanas.findIndex(s => s.num === actual.num);
+    const sig = semanas[Math.min(semanas.length - 1, Math.max(0, i + delta))];
+    if (sig) { fc_barra_semana = sig.num; fc_renderBarraSaldos(); }
+}
+
+function fc_renderBarraSaldos() {
+    const barra = document.getElementById('fc-barra-saldos');
+    if (!barra) return;
+    const visible = localStorage.getItem('fc_barra_saldos') !== '0';
     const btn = document.getElementById('fc-btn-fijar');
     if (btn) {
-        btn.innerHTML = fijado
-            ? '<i class="fas fa-thumbtack"></i> Totales fijos'
-            : '<i class="fas fa-thumbtack" style="opacity:.5;"></i> Fijar totales';
-        btn.style.background = fijado ? '#0f766e' : '#64748b';
-        btn.title = fijado
-            ? 'Las filas de SALDO FINAL quedan visibles al hacer scroll. Clic para soltarlas.'
-            : 'Clic para dejar fijas las filas de SALDO FINAL, como en Excel.';
+        btn.style.background = visible ? '#0f766e' : '#64748b';
+        btn.title = visible ? 'Ocultar la barra de saldos' : 'Mostrar la barra de saldos';
     }
+    const sem = fc_semanaEnfocada();
+    if (!visible || !fc_saldos_diarios.length || !sem) {
+        barra.classList.remove('visible');
+        document.body.style.paddingBottom = '';
+        return;
+    }
+
+    const porFecha = {};
+    fc_saldos_diarios.forEach(d => { porFecha[d.fecha] = d; });
+    const minTotal = (fc_liq_config.minimo_produbanco || 0) + (fc_liq_config.minimo_pichincha || 0);
+    const monto = v => (v < 0 ? '-$' : '$') + fc_formatMonto(Math.abs(v));
+    // Numero completo con separador de miles, sin centavos en los chips de dia
+    // (los centavos van en el tooltip). Nada de abreviar a "3k".
+    const entero = v => (v < 0 ? '-$' : '$') +
+        Math.round(Math.abs(v)).toLocaleString('en-US');
+    // VERDE  = tiene saldo
+    // AMARILLO = riesgo de insolvencia: sigue en positivo pero no alcanza para lo que
+    //            viene (o esta bajo el minimo que se definio para ese banco)
+    // ROJO   = ya se sobregiro
+    const VERDE = '#4ade80', AMARILLO = '#fbbf24', ROJO = '#f87171';
+    const comprometido = (desdeIdx, campo, dias = 7) => {
+        let t = 0;
+        for (let i = desdeIdx + 1; i < fc_saldos_diarios.length && i <= desdeIdx + dias; i++) {
+            t += fc_saldos_diarios[i][campo] || 0;
+        }
+        return t;
+    };
+    const color = (v, min, porPagar) => {
+        if (v < 0) return ROJO;
+        if (min > 0 && v < min) return AMARILLO;
+        if (porPagar > 0 && v < porPagar) return AMARILLO;
+        return VERDE;
+    };
+    const hoyISO = new Date().toISOString().split('T')[0];
+    const DIAS = ['dom','lun','mar','mie','jue','vie','sab'];
+
+    // Un chip por dia de la semana enfocada, como las columnas de la tabla
+    let chipsDia = '';   // se agrupan aparte para que no queden amontonados
+    let cierre = null;
+    sem.dias.forEach(fecha => {
+        const d = porFecha[fecha];
+        const iDia = fc_saldos_diarios.findIndex(x => x.fecha === fecha);
+        const [a, m, dd] = fecha.split('-');
+        const fd = new Date(+a, +m - 1, +dd);
+        const etiqueta = `${DIAS[fd.getDay()]} ${dd}`;
+        if (!d) {
+            chipsDia += `<span class="fc-bs-dia" style="opacity:.35;"><span class="fc-bs-et">${etiqueta}</span><b>-</b></span>`;
+            return;
+        }
+        cierre = d;
+        const tot = d.prod + d.pich;
+        const esHoy = fecha === hoyISO;
+        // Si UN banco queda sobregirado el dia va en rojo, aunque el total sume
+        // positivo: el total puede tapar que Produbanco quedo en negativo.
+        const sobregiro = d.prod < 0 || d.pich < 0;
+        const porPagar = comprometido(iDia, 'egresos');
+        const colDia = sobregiro ? ROJO : color(tot, minTotal, porPagar);
+        const motivo = sobregiro
+            ? ' | SOBREGIRO en un banco'
+            : (colDia === AMARILLO
+                ? ` | RIESGO: quedan ${monto(porPagar)} por pagar en los proximos 7 dias`
+                : '');
+        chipsDia += `<span class="fc-bs-dia${esHoy ? ' hoy' : ''}"
+            title="${etiqueta}: Produbanco ${monto(d.prod)} | Pichincha ${monto(d.pich)} | Total ${monto(tot)}${motivo}${esHoy ? ' (hoy)' : ''}">
+            <span class="fc-bs-et">${etiqueta}${sobregiro ? ' !' : (colDia === AMARILLO ? ' *' : '')}</span>
+            <b style="color:${colDia};">${entero(tot)}</b>
+        </span>`;
+    });
+
+    const iCierre = cierre ? fc_saldos_diarios.findIndex(x => x.fecha === cierre.fecha) : -1;
+    const cierreHtml = cierre ? `
+        <span class="fc-bs-chip fc-bs-cierre" title="Saldo por banco al cierre de la semana ${sem.num}">
+            <span class="fc-bs-et">CIERRE</span>
+            <span><span class="fc-bs-et">PRO</span> <b style="color:${color(cierre.prod, fc_liq_config.minimo_produbanco, comprometido(iCierre, 'egProd'))};">${entero(cierre.prod)}</b></span>
+            <span><span class="fc-bs-et">PICH</span> <b style="color:${color(cierre.pich, fc_liq_config.minimo_pichincha, comprometido(iCierre, 'egPich'))};">${entero(cierre.pich)}</b></span>
+        </span>` : '';
+
+    barra.innerHTML = `
+        <span class="fc-bs-nav">
+            <button onclick="fc_barraMoverSemana(-1)" title="Semana anterior">&#9664;</button>
+            <span class="fc-bs-tit">Sem ${sem.num}</span>
+            <button onclick="fc_barraMoverSemana(1)" title="Semana siguiente">&#9654;</button>
+        </span>
+        <span class="fc-bs-sep"></span>
+        <span class="fc-bs-dias">${chipsDia}</span>
+        <span class="fc-bs-sep"></span>
+        ${cierreHtml}
+        <button class="fc-bs-x" onclick="fc_toggleFijarTotales()" title="Ocultar">&times;</button>`;
+    barra.classList.add('visible');
+    document.body.style.paddingBottom = (barra.offsetHeight + 6) + 'px';
 }
 
 function fc_toggleFijarTotales() {
-    const activo = localStorage.getItem('fc_fijar_totales') !== '0';
-    localStorage.setItem('fc_fijar_totales', activo ? '0' : '1');
-    fc_aplicarFijado();
+    const visible = localStorage.getItem('fc_barra_saldos') !== '0';
+    localStorage.setItem('fc_barra_saldos', visible ? '0' : '1');
+    fc_renderBarraSaldos();
 }
 
 // ============ YA PAGADO ============
@@ -1739,7 +1848,7 @@ async function fc_cargarDatosGuardados() {
                         // Buscar si ya existe este item por nombre
                         let existente = egresosConsolidados[grupo].find(e => e.nombre === item.nombre);
                         if (!existente) {
-                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, valores: {}, pagados: {}, eliminadoDesde: elimDesde || null };
+                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, valores: {}, pagados: {}, facturas: [], eliminadoDesde: elimDesde || null };
                             egresosConsolidados[grupo].push(existente);
                         }
                         // Consolidar valores (fechas) — sin dias posteriores a la baja
@@ -1749,6 +1858,18 @@ async function fc_cargarDatosGuardados() {
                         // Dias marcados como ya pagados
                         for (const [dia, ok] of Object.entries(item.pagados || {})) {
                             if (ok && (!elimDesde || dia < elimDesde)) existente.pagados[dia] = true;
+                        }
+                        // Facturas. Sin esto el objeto consolidado salia sin facturas, la
+                        // pantalla quedaba vacia y el siguiente Guardar las borraba.
+                        // OJO: la cartera de cada semana es UNICA y no afecta a las otras.
+                        // Para proveedores se toma SOLO la foto de la semana que se esta
+                        // viendo; nunca se arrastra la lista de otra semana.
+                        if (grupo === FC_GRUPO_PROV) {
+                            if (fechaSemana === primeraSemana && (item.facturas || []).length) {
+                                existente.facturas = item.facturas;
+                            }
+                        } else if ((item.facturas || []).length > (existente.facturas || []).length) {
+                            existente.facturas = item.facturas;
                         }
                         // Actualizar banco, deuda, saldo y dias si vienen
                         if (item.banco) existente.banco = item.banco;
@@ -1860,6 +1981,27 @@ async function fc_cargarDatosGuardados() {
                     (egresosConsolidados[FC_GRUPO_PROV] || []).concat(nuevos);
                 console.log(`Cartera: ${nuevos.length} proveedor(es) reconstruidos desde la cartera guardada`);
             }
+
+            // El detalle de facturas vive en la cartera de la semana (una sola copia).
+            // Es la fuente buena: si esta ahi, manda sobre lo que hubiera en egresos.
+            // SOLO la cartera de la semana que se esta viendo. La de otra semana no
+            // se toca ni se mezcla: cada cartera semanal es independiente.
+            const detallePorProv = {};
+            (fc_cartera_semanas[primeraSemana] || []).forEach(p => {
+                const det = p.detalle || [];
+                if (!det.length) return;
+                detallePorProv[fc_normalizarNombre(p.proveedor)] = { semana: primeraSemana, detalle: det };
+            });
+            let conDetalle = 0;
+            (egresosConsolidados[FC_GRUPO_PROV] || []).forEach(it => {
+                const d = detallePorProv[fc_normalizarNombre(it.nombre)];
+                if (!d) return;
+                it.carteraSemana = d.semana;
+                // Lo guardado en la semana manda (es la foto de lo que presentaste).
+                // La cartera solo rellena si esa semana todavia no tiene facturas.
+                if (!(it.facturas || []).length) { it.facturas = d.detalle; conDetalle++; }
+            });
+            if (conDetalle) console.log(`Cartera: facturas restauradas para ${conDetalle} proveedor(es)`);
         }
 
         // Aplicar egresos consolidados (fuera del loop para evitar duplicados)
@@ -1915,6 +2057,8 @@ async function fc_cargarDatosGuardados() {
                             fc_actualizarBadgeFacturas(rows[idx]);
                         }
                     }
+                    // De que semana de cartera vino, para devolverle el detalle al guardar
+                    if (item.carteraSemana) rows[idx].dataset.carteraSemana = item.carteraSemana;
 
                     // Aplicar valores de TODAS las fechas consolidadas
                     for (const [dia, valor] of Object.entries(item.valores || {})) {
@@ -1981,6 +2125,9 @@ async function fc_guardarDatos() {
     }
 
     fc_guardando = true;
+    // Detalle de facturas por semana de cartera: se manda UNA vez al final,
+    // no dentro de los egresos de cada semana (evita 4 copias de lo mismo)
+    const detalleCartera = {};
     try {
         // Guardar cada semana por separado
         for (const sem of semanas) {
@@ -2064,8 +2211,18 @@ async function fc_guardarDatos() {
                 const diasInput = row.querySelector('.fc-input-dias');
                 const dias = diasInput ? (parseInt(diasInput.value) || 0) : 0;
                 const rowId = row.dataset.fcRowId || '';
-                const facturas = rowId ? (fc_facturas_data[rowId] || []) : [];
+                const facturasFila = rowId ? (fc_facturas_data[rowId] || []) : [];
+                // Cada semana guarda SU propia foto de las facturas: asi la semana que
+                // ya presentaste queda cerrada tal como estaba. El detalle va ademas a
+                // fc_cartera_semana, que es de donde la semana se rearma sola cuando
+                // todavia no tiene egresos guardados.
+                const facturas = facturasFila;
                 const itemData = { nombre, banco, deuda, saldo, dias, valores: {}, pagados: {}, facturas };
+                const semCart = (grupo === FC_GRUPO_PROV) ? (row.dataset.carteraSemana || '') : '';
+                if (semCart && facturasFila.length) {
+                    (detalleCartera[semCart] = detalleCartera[semCart] || []).push(
+                        { proveedor: nombre, detalle: facturasFila });
+                }
                 sem.dias.forEach(dia => {
                     const input = row.querySelector(`[data-fecha="${dia}"].fc-input`);
                     if (input && input.value) {
@@ -2115,7 +2272,27 @@ async function fc_guardarDatos() {
             }
         }
 
-        alert('Datos guardados correctamente');
+        // Devolver a la cartera de cada semana el detalle de facturas editado
+        // (fechas de pago, abonos, vencimientos a mano). Una sola copia por semana.
+        let detalleOk = 0;
+        for (const [semana, provs] of Object.entries(detalleCartera)) {
+            try {
+                const r = await fetch('/api/flujo-caja/cartera-semana/detalle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ semana_inicio: semana, proveedores: provs })
+                });
+                const d = await r.json();
+                if (d.ok) detalleOk += d.actualizados || 0;
+                else console.error('No se pudo guardar el detalle de facturas:', d.error);
+            } catch (e) {
+                console.error('No se pudo guardar el detalle de facturas:', e);
+            }
+        }
+
+        alert('Datos guardados correctamente'
+              + (detalleOk ? `
+Facturas guardadas en ${detalleOk} proveedor(es)` : ''));
 
     } catch (error) {
         console.error('Error guardando:', error);
@@ -2966,6 +3143,13 @@ async function fc_abrirFacturas(row) {
         ? `<span title="Apertura a negociar: ${fc_esc(apInfo[0])}" style="background:${apInfo[1]};color:#fff;padding:2px 7px;border-radius:10px;font-size:9px;font-weight:700;">${fc_esc(ap)}</span>`
         : '';
 
+    // El RUC va junto al nombre, no perdido entre los otros datos. Si el proveedor
+    // no esta en el catalogo se dice ahi mismo, que es la razon de que no haya RUC.
+    const rucVal = (provFicha?.ruc || '').trim();
+    const rucChip = rucVal
+        ? `<span title="RUC del proveedor" style="background:rgba(255,255,255,.16);color:#e2e8f0;padding:2px 8px;border-radius:10px;font-size:10px;font-family:monospace;font-weight:700;letter-spacing:.5px;">RUC ${fc_esc(rucVal)}</span>`
+        : `<span title="Sin RUC: el proveedor no esta en el catalogo o no se le ha asignado" style="background:#b45309;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">SIN RUC</span>`;
+
     const tel = (provFicha?.telefono || '').trim();
     const wa = fc_celularWa(tel);
     const telHtml = tel
@@ -2983,7 +3167,6 @@ async function fc_abrirFacturas(row) {
         ? `<div style="display:flex;gap:12px;margin-top:3px;font-size:10px;opacity:.9;flex-wrap:wrap;">
                ${telHtml}
                ${dato('Despacha', provFicha.dia_despacho, 'sin definir')}
-               ${provFicha.ruc ? `<span>RUC: <b style="font-family:monospace;">${fc_esc(provFicha.ruc)}</b></span>` : '<span style="opacity:.55;">sin RUC</span>'}
                ${provFicha.nombre_comercial && fc_normalizarNombre(provFicha.nombre_comercial) !== fc_normalizarNombre(provFicha.nombre)
                    ? `<span>Marca: <b>${fc_esc(provFicha.nombre_comercial)}</b></span>` : ''}
            </div>
@@ -3005,7 +3188,7 @@ async function fc_abrirFacturas(row) {
                 <span class="fc-modal-icon" style="background:rgba(255,255,255,.1);">F</span>
                 <div style="flex:1;">
                     <h3 style="margin:0;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                        ${fc_esc(nombre)} ${critBadge} ${apBadge} ${tipoBadge}
+                        ${fc_esc(nombre)} ${rucChip} ${critBadge} ${apBadge} ${tipoBadge}
                     </h3>
                     <div style="display:flex;gap:12px;margin-top:4px;font-size:10px;opacity:.85;">
                         <span>Credito: <b>${diasCredito} dias</b></span>
@@ -3774,39 +3957,9 @@ function fc_procesarCarteraXLS(input) {
             // Cargar catalogo de proveedores de BD antes de crear items
             await fc_cargarProveedoresBD();
 
-            // Registrar la cartera de ESTA semana. Reemplaza la que hubiera: el archivo
-            // de la semana manda, y asi la semana se rearma sola al volver a entrar.
             const semanaCartera = semanas[0].inicio;
             let carteraGuardada = 0;
-            try {
-                const resCart = await fetch('/api/flujo-caja/cartera-semana', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        semana_inicio: semanaCartera,
-                        proveedores: proveedoresOrdenados.map(p => {
-                            const pbd = fc_buscarProveedorBD(p.nombre);
-                            return {
-                                proveedor: p.nombre,
-                                ruc: pbd ? (pbd.ruc || '') : '',
-                                saldo: p.total,
-                                facturas: p.facturas.length
-                            };
-                        })
-                    })
-                });
-                const dCart = await resCart.json();
-                if (dCart.ok) {
-                    carteraGuardada = dCart.guardados;
-                    fc_cartera_semanas[semanaCartera] = proveedoresOrdenados.map(p => ({
-                        proveedor: p.nombre, ruc: '', saldo: p.total, facturas: p.facturas.length
-                    }));
-                } else {
-                    console.error('No se pudo registrar la cartera de la semana:', dCart.error);
-                }
-            } catch (e) {
-                console.error('No se pudo registrar la cartera de la semana:', e);
-            }
+            const rowIdPorProv = {};
 
             let conservados = 0, nuevos = 0;
             proveedoresOrdenados.forEach(prov => {
@@ -3876,10 +4029,45 @@ function fc_procesarCarteraXLS(input) {
                     });
                 }
 
+                rowIdPorProv[prov.key] = dynRowId;
+                newRow.dataset.carteraSemana = semanaCartera;
+
                 // Aplicar visibilidad correcta
                 fc_actualizarBadgeFacturas(newRow);
                 fc_aplicarVisibilidadNuevoItem(newRow);
             });
+
+            // Registrar la cartera de ESTA semana. Reemplaza la que hubiera: el archivo
+            // de la semana manda, y asi la semana se rearma sola al volver a entrar.
+            // Va DESPUES de crear las filas para que el detalle ya lleve las fechas de
+            // pago que se conservaron de la carga anterior.
+            const provsCartera = proveedoresOrdenados.map(p => {
+                const pbd = fc_buscarProveedorBD(p.nombre);
+                const det = fc_facturas_data[rowIdPorProv[p.key]] || p.facturas;
+                return {
+                    proveedor: p.nombre,
+                    ruc: pbd ? (pbd.ruc || '') : '',
+                    saldo: p.total,
+                    facturas: det.length,
+                    detalle: det
+                };
+            });
+            try {
+                const resCart = await fetch('/api/flujo-caja/cartera-semana', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ semana_inicio: semanaCartera, proveedores: provsCartera })
+                });
+                const dCart = await resCart.json();
+                if (dCart.ok) {
+                    carteraGuardada = dCart.guardados;
+                    fc_cartera_semanas[semanaCartera] = provsCartera;
+                } else {
+                    console.error('No se pudo registrar la cartera de la semana:', dCart.error);
+                }
+            } catch (e) {
+                console.error('No se pudo registrar la cartera de la semana:', e);
+            }
 
             // Los que estaban antes y ya no vienen en el archivo se quedaron fuera
             const borrados = Object.values(previoProv)

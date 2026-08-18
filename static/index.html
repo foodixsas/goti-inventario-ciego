@@ -161,13 +161,38 @@
         .fc-tabla .row-banco-item td { background:#fafafa; }
         .fc-tabla .row-banco-total td { background:#e3f2fd; font-weight:bold; font-style:italic; }
         .fc-tabla .row-total td { background:#c8e6c9; font-weight:bold; }
-        /* Fijar totales: la tabla toma alto propio y las filas de SALDO FINAL
-           quedan pegadas abajo mientras se hace scroll (como inmovilizar en Excel) */
-        #fc-tabla-container.fc-fijado { max-height:calc(100vh - 240px); overflow:auto; }
-        .fc-tabla tr.fc-fila-fijada td { position:sticky; bottom:0; z-index:12; box-shadow:0 -2px 6px rgba(0,0,0,.15); }
-        .fc-tabla tr.fc-fila-fijada td.col-concepto { left:0; z-index:14; }
-        .fc-tabla tr.fc-fila-fijada[data-fijable="SALDO FINAL PICHINCHA"] td { bottom:29px; }
-        .fc-tabla tr.fc-fila-fijada[data-fijable="SALDO FINAL PRODUBANCO"] td { bottom:58px; }
+        /* Barra de saldos: una franja delgada abajo, en vez de tres filas de la tabla
+           pegadas (que ademas dependian de un alto de fila fijo) */
+        #fc-barra-saldos { position:fixed; left:0; right:0; bottom:0; z-index:900; display:none;
+            background:rgba(15,23,42,.97); color:#e2e8f0; padding:6px 16px; font-size:10px;
+            box-shadow:0 -3px 14px rgba(0,0,0,.28); backdrop-filter:blur(6px);
+            align-items:center; gap:12px; flex-wrap:wrap; }
+        #fc-barra-saldos.visible { display:flex; }
+        #fc-barra-saldos .fc-bs-tit { font-size:9px; letter-spacing:1px; text-transform:uppercase;
+            color:#94a3b8; font-weight:700; white-space:nowrap; }
+        #fc-barra-saldos .fc-bs-et { font-size:8px; letter-spacing:.6px; color:#94a3b8;
+            text-transform:uppercase; font-weight:600; }
+        #fc-barra-saldos .fc-bs-sep { width:1px; height:24px; background:rgba(255,255,255,.14); }
+        #fc-barra-saldos .fc-bs-nav { display:inline-flex; align-items:center; gap:5px; }
+        #fc-barra-saldos .fc-bs-nav button { background:rgba(255,255,255,.09); border:none; color:#cbd5e1;
+            border-radius:5px; width:19px; height:19px; cursor:pointer; font-size:8px; line-height:1; }
+        #fc-barra-saldos .fc-bs-nav button:hover { background:rgba(255,255,255,.2); color:#fff; }
+        /* Los siete dias, juntos entre si pero separados del resto */
+        #fc-barra-saldos .fc-bs-dias { display:inline-flex; gap:2px; }
+        #fc-barra-saldos .fc-bs-dia { display:inline-flex; flex-direction:column; align-items:center;
+            min-width:76px; padding:2px 7px; border-radius:5px; background:rgba(255,255,255,.05);
+            line-height:1.3; }
+        #fc-barra-saldos .fc-bs-dia b { font-family:'JetBrains Mono',monospace; font-size:11px;
+            font-weight:600; letter-spacing:-.2px; }
+        #fc-barra-saldos .fc-bs-dia.hoy { background:rgba(56,189,248,.18);
+            box-shadow:inset 0 0 0 1px rgba(56,189,248,.5); }
+        #fc-barra-saldos .fc-bs-chip { display:inline-flex; align-items:center; gap:7px;
+            background:rgba(255,255,255,.07); border-radius:6px; padding:3px 10px; white-space:nowrap; }
+        #fc-barra-saldos .fc-bs-chip b { font-family:'JetBrains Mono',monospace; font-size:11px;
+            font-weight:600; }
+        #fc-barra-saldos .fc-bs-x { margin-left:auto; background:none; border:none; color:#94a3b8;
+            font-size:15px; cursor:pointer; padding:0 4px; }
+        #fc-barra-saldos .fc-bs-x:hover { color:#fff; }
         /* Valor proyectado que ya se pago */
         .fc-tabla td.fc-celda-pagada { position:relative; }
         .fc-tabla td.fc-celda-pagada::after { content:'¹3'; position:absolute; top:1px; right:3px; font-size:9px; color:#16a34a; font-weight:bold; pointer-events:none; }
@@ -2596,6 +2621,9 @@
                     <!-- Alertas de liquidez: lo llena fc_renderAlertasLiquidez() -->
                     <div id="fc-alertas-liquidez" style="display:none;"></div>
 
+                    <!-- Barra de saldos siempre a la vista: la llena fc_renderBarraSaldos() -->
+                    <div id="fc-barra-saldos"></div>
+
                     <div class="fc-container">
                         <div class="fc-header">
                             <div class="fc-titulo">Proyeccion de Ingresos y Egresos</div>
@@ -2605,7 +2633,7 @@
                                 <button class="fc-btn fc-btn-expand" onclick="fc_expandirTodo()" title="Expandir columnas"><i class="fas fa-arrows-alt-h"></i> Cols</button>
                                 <button class="fc-btn fc-btn-collapse" onclick="fc_colapsarTodo()" title="Colapsar columnas"><i class="fas fa-compress-arrows-alt"></i> Cols</button>
                                 <span style="border-left:1px solid #cbd5e1;height:20px;margin:0 6px;"></span>
-                                <button class="fc-btn" id="fc-btn-fijar" style="background:#0f766e;color:white;" onclick="fc_toggleFijarTotales()"><i class="fas fa-thumbtack"></i> Totales fijos</button>
+                                <button class="fc-btn" id="fc-btn-fijar" style="background:#0f766e;color:white;" onclick="fc_toggleFijarTotales()"><i class="fas fa-wallet"></i> Barra de saldos</button>
                                 <span style="border-left:1px solid #cbd5e1;height:20px;margin:0 6px;"></span>
                                 <button class="fc-btn" style="background:#7c3aed;" onclick="fc_expandirFilas()" title="Expandir filas"><i class="fas fa-arrows-alt-v"></i> Filas</button>
                                 <button class="fc-btn" style="background:#6d28d9;" onclick="fc_colapsarFilas()" title="Colapsar filas"><i class="fas fa-minus"></i> Filas</button>
@@ -2805,7 +2833,7 @@
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="js/config.js?v=20260317a"></script>
     <script src="js/app.js?v=20260812b"></script>
-    <script src="js/flujo-caja.js?v=20260818b"></script>
+    <script src="js/flujo-caja.js?v=20260818h"></script>
     <script src="js/nomina.js?v=20260812a"></script>
     <style>
         /* NOMINA MODULE STYLES */
