@@ -2653,6 +2653,9 @@ function fc_getFacturas(rowId) {
 
 // Vencimiento real: si hay dias de credito configurados mandan sobre el del XLS
 function fc_vencimientoReal(fac, diasCredito) {
+    // Un vencimiento escrito a mano manda sobre el calculo (plazo negociado
+    // para esa factura puntual). Si no, se calcula desde los dias de credito.
+    if (fac.venc_manual && fac.vencimiento) return fac.vencimiento;
     if (diasCredito > 0 && fac.fecha) {
         const fe = new Date(fac.fecha + 'T12:00:00');
         fe.setDate(fe.getDate() + diasCredito);
@@ -2665,6 +2668,9 @@ function fc_vencimientoReal(fac, diasCredito) {
 // orden en que hay que cancelarlas. Se ordena el arreglo real (no solo la vista)
 // porque eliminar/guardar trabajan por indice de fila.
 function fc_ordenarFacturasPorAntiguedad(facturas, diasCredito) {
+    // Guardar el vencimiento que traia el archivo antes de que la columna muestre
+    // el calculado (sirve para el tooltip y para no perder el dato de origen)
+    facturas.forEach(f => { if (!f.venc_xls && f.vencimiento) f.venc_xls = f.vencimiento; });
     facturas.sort((a, b) => {
         const va = fc_vencimientoReal(a, diasCredito) || a.fecha || '';
         const vb = fc_vencimientoReal(b, diasCredito) || b.fecha || '';
@@ -2743,6 +2749,26 @@ async function fc_abrirFacturas(row) {
     else if (maxDiasVenc > 30) { criticidad = 'ALTO'; criticidadStyle = 'background:#ea580c;color:#fff;'; }
     else if (maxDiasVenc > 0) { criticidad = 'MEDIO'; criticidadStyle = 'background:#ca8a04;color:#fff;'; }
 
+    // Conteo previo para los separadores de la tabla (van sobre el primer grupo
+    // y en el punto exacto donde arrancan las que todavia no vencen)
+    let sepVencidas = 0, sepVencidasMonto = 0, sepPorVencer = 0, sepPorVencerMonto = 0;
+    facturas.forEach(f => {
+        const v = fc_vencimientoReal(f, diasCredito);
+        const vencida = v && new Date(v + 'T12:00:00') < hoy;
+        if (vencida) { sepVencidas++; sepVencidasMonto += (f.monto || 0); }
+        else { sepPorVencer++; sepPorVencerMonto += (f.monto || 0); }
+    });
+    const _fmt = n => n.toLocaleString('en-US', {minimumFractionDigits: 2});
+    const _sepHtml = (texto, color, fondo) =>
+        `<tr class="fc-fac-separador"><td colspan="8" style="background:${fondo};color:${color};font-size:10px;font-weight:700;letter-spacing:.4px;padding:5px 8px;border-top:2px solid ${color};border-bottom:1px solid ${color}33;">${texto}</td></tr>`;
+    let sepPuesto = false;
+    if (sepVencidas > 0) {
+        facturasHtml += _sepHtml(`VENCIDAS (${sepVencidas}) &middot; $${_fmt(sepVencidasMonto)} &mdash; de la mas antigua a la mas reciente`, '#dc2626', '#fef2f2');
+    } else {
+        sepPuesto = true; // no hay vencidas: el separador de "por vencer" va arriba igual
+        if (sepPorVencer > 0) facturasHtml += _sepHtml(`POR VENCER (${sepPorVencer}) &middot; $${_fmt(sepPorVencerMonto)}`, '#16a34a', '#f0fdf4');
+    }
+
     facturas.forEach((fac, idx) => {
         const esPendiente = !fac.fecha_pago;
         if (esPendiente) totalPendiente += (fac.monto || 0);
@@ -2750,6 +2776,19 @@ async function fc_abrirFacturas(row) {
 
         // Vencimiento real: fecha emision + dias de credito (o el del XLS si no hay)
         const fechaVencReal = fc_vencimientoReal(fac, diasCredito);
+        // La columna muestra la fecha que MANDA, no la del archivo: si no, la
+        // pantalla se contradecia (vencimiento 19/05 y al lado "60d vencida")
+        const vencCalculado = !fac.venc_manual && diasCredito > 0 && fac.fecha;
+        const estiloVenc = fac.venc_manual
+            ? 'border-color:#7c3aed;color:#6d28d9;font-weight:600;'
+            : (vencCalculado ? 'color:#1d4ed8;font-weight:600;' : '');
+        const tituloVenc = fac.venc_manual
+            ? 'Vencimiento puesto a mano: manda sobre el calculo'
+            : (vencCalculado
+                ? `Calculado: emision + ${diasCredito} dias de credito`
+                  + (fac.venc_xls && fac.venc_xls !== fechaVencReal ? ` (el archivo traia ${fac.venc_xls})` : '')
+                  + '. Si lo edita, su fecha manda.'
+                : 'Vencimiento del archivo (el proveedor no tiene dias de credito)');
 
         // Calcular dias vencidos
         let diasVencido = '';
@@ -2780,11 +2819,19 @@ async function fc_abrirFacturas(row) {
         const restante = (fac.monto || 0) - abono;
         const restanteHtml = abono > 0 ? `<div style="font-size:9px;color:${restante<=0?'#16a34a':'#dc2626'};margin-top:2px;">${restante<=0?'Pagado':'Resta: $'+restante.toFixed(2)}</div>` : '';
 
+        if (!sepPuesto && !(fechaVencReal && new Date(fechaVencReal + 'T12:00:00') < hoy)) {
+            sepPuesto = true;
+            if (sepPorVencer > 0) {
+                facturasHtml += _sepHtml(`POR VENCER (${sepPorVencer}) &middot; $${_fmt(sepPorVencerMonto)}`, '#16a34a', '#f0fdf4');
+            }
+        }
+
         facturasHtml += `<tr class="${esPendiente ? 'fc-fac-pendiente' : 'fc-fac-programada'}">
             <td><input type="text" class="fc-fac-input fc-fac-num" value="${fac.num || ''}" data-idx="${idx}" data-field="num" placeholder="Nro factura"></td>
             <td><input type="date" class="fc-fac-input" value="${fac.fecha || ''}" data-idx="${idx}" data-field="fecha"></td>
             <td><input type="text" class="fc-fac-input fc-fac-monto" value="${fac.monto || ''}" data-idx="${idx}" data-field="monto" placeholder="0.00">${restanteHtml}</td>
-            <td><input type="date" class="fc-fac-input" value="${fac.vencimiento || ''}" data-idx="${idx}" data-field="vencimiento"></td>
+            <td><input type="date" class="fc-fac-input" value="${fechaVencReal || ''}" data-idx="${idx}" data-field="vencimiento"
+                       onchange="fc_marcarVencManual(this)" style="${estiloVenc}" title="${tituloVenc}"></td>
             <td class="fc-col-vencido ${claseVencido}">${diasVencido}</td>
             <td><input type="text" class="fc-fac-input fc-fac-abono" value="${abono || ''}" data-idx="${idx}" data-field="abono" placeholder="Parcial" style="width:70px;text-align:right;"></td>
             <td><select class="fc-fac-select-fecha" data-idx="${idx}" onchange="fc_cambiarFechaPagoFactura(this)">
@@ -2893,6 +2940,9 @@ function fc_cerrarFacturas() {
     const modal = document.getElementById('fc-modal-facturas');
     if (modal && modal.dataset.rowId) {
         fc_guardarInputsFacturas(modal.dataset.rowId);
+        // Refrescar el chip de vencido de la fila (pudo cambiar abono o fecha de pago)
+        const filaMod = document.querySelector(`[data-fc-row-id="${modal.dataset.rowId}"]`);
+        if (filaMod) fc_actualizarBadgeFacturas(filaMod);
     }
     if (modal) modal.classList.remove('active');
 }
@@ -2911,6 +2961,21 @@ function fc_eliminarFactura(rowId, idx) {
     facturas.splice(idx, 1);
     const row = document.querySelector(`[data-fc-row-id="${rowId}"]`);
     if (row) fc_abrirFacturas(row);
+}
+
+// El usuario edito el vencimiento a mano: esa fecha manda sobre el calculo
+function fc_marcarVencManual(input) {
+    const modal = document.getElementById('fc-modal-facturas');
+    if (!modal || !modal.dataset.rowId) return;
+    const facturas = fc_getFacturas(modal.dataset.rowId);
+    const idx = parseInt(input.dataset.idx);
+    if (!facturas[idx]) return;
+    facturas[idx].vencimiento = input.value;
+    facturas[idx].venc_manual = !!input.value;
+    input.style.borderColor = '#7c3aed';
+    input.style.color = '#6d28d9';
+    input.style.fontWeight = '600';
+    input.title = 'Vencimiento puesto a mano: manda sobre el calculo';
 }
 
 function fc_cambiarFechaPagoFactura(select) {
@@ -3014,6 +3079,42 @@ function fc_actualizarBadgeFacturas(row) {
     } else {
         badge.textContent = pendientes;
         badge.className = 'fc-badge-facturas fc-badge-pend';
+    }
+
+    // Vencido y dias vencidos a la vista, sin tener que abrir el modal.
+    // Solo cuenta lo que NO tiene fecha de pago programada, y descuenta abonos.
+    const diasCred = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
+    const hoyChip = new Date();
+    hoyChip.setHours(0, 0, 0, 0);
+    let montoVencido = 0, maxDias = 0;
+    facturas.forEach(f => {
+        if (f.fecha_pago) return;
+        const v = fc_vencimientoReal(f, diasCred);
+        if (!v) return;
+        const d = Math.round((hoyChip - new Date(v + 'T12:00:00')) / 86400000);
+        if (d > 0) {
+            montoVencido += (f.monto || 0) - (f.abono || 0);
+            if (d > maxDias) maxDias = d;
+        }
+    });
+
+    let chip = row.querySelector('.fc-chip-vencido');
+    if (montoVencido > 0.005) {
+        if (!chip) {
+            chip = document.createElement('span');
+            chip.className = 'fc-chip-vencido';
+            const btn = badge.closest('button');
+            if (btn) btn.insertAdjacentElement('afterend', chip);
+            else return;
+        }
+        const color = maxDias > 60 ? '#dc2626' : (maxDias > 30 ? '#ea580c' : '#ca8a04');
+        chip.textContent = `$${montoVencido.toLocaleString('en-US', {maximumFractionDigits: 0})} - ${maxDias}d`;
+        chip.title = `Vencido sin programar: $${montoVencido.toLocaleString('en-US', {minimumFractionDigits: 2})}`
+                   + ` | la mas antigua tiene ${maxDias} dias vencidos`;
+        chip.style.cssText = 'margin-left:6px;font-size:9px;font-weight:700;color:#fff;'
+                           + `background:${color};padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:middle;`;
+    } else if (chip) {
+        chip.remove();
     }
 }
 
@@ -3659,6 +3760,7 @@ function fc_procesarCarteraXLS(input) {
                 }
 
                 // Aplicar visibilidad correcta
+                fc_actualizarBadgeFacturas(newRow);
                 fc_aplicarVisibilidadNuevoItem(newRow);
             });
 
