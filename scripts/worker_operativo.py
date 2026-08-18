@@ -367,6 +367,14 @@ def descargar_saldos(driver, nombre_bodega_contifico, fecha_iso):
     # Usar carpeta de descarga del driver (puede ser específica por worker)
     download_dir = getattr(driver, '_download_dir', DOWNLOAD_DIR)
     fecha_dmY = datetime.strptime(fecha_iso, '%Y-%m-%d').strftime('%d/%m/%Y')
+
+    # exportarExcel() tarda y dispara una navegacion. El corte a los 90s venia
+    # del page_load_timeout, NO del de script: hay que subir LOS DOS. Va aqui
+    # dentro y no en cada llamador, porque asi lo heredan los tres caminos
+    # (cruce, conteo operativo y toma fisica). Antes solo estaba parcheado en la
+    # funcion de verificacion y el conteo real seguia cayendose.
+    driver.set_page_load_timeout(TIMEOUT_SCRIPT)
+    driver.set_script_timeout(TIMEOUT_SCRIPT)
     antes = set(glob.glob(os.path.join(download_dir, '*.xls*')))
 
     driver.get(CONTIFICO['reporte_url'])
@@ -1735,8 +1743,6 @@ def verificar_entorno():
         # exportarExcel() tarda y dispara una navegacion. El corte de 90s venia
         # del page_load_timeout, no del de script: hay que subir LOS DOS. Pasa
         # cuando el worker de la PC esta pidiendo el mismo reporte a la vez.
-        driver.set_script_timeout(TIMEOUT_SCRIPT)
-        driver.set_page_load_timeout(TIMEOUT_SCRIPT)
         archivo = descargar_saldos(driver, cfg['contifico'], fecha)
         log(f'[OK] Excel descargado: {os.path.basename(archivo)}')
 
