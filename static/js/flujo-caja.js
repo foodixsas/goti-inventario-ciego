@@ -247,6 +247,9 @@ function fc_renderTabla() {
 
     html += '</table>';
     container.innerHTML = html;
+
+    // Dejar fijas las filas de SALDO FINAL si el usuario asi lo tiene
+    fc_aplicarFijado();
 }
 
 // Saldo Inicial por Banco (Produbanco y Pichincha separados)
@@ -626,7 +629,7 @@ function fc_renderFlujoYSaldo() {
     html += '</tr>';
 
     // SALDO FINAL PRODUBANCO
-    html += `<tr class="row-total" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO FINAL PRODUBANCO</td>`;
+    html += `<tr class="row-total fc-fila-fijable" data-fijable="SALDO FINAL PRODUBANCO" style="background:#b3e5fc !important;"><td class="col-concepto" style="background:#b3e5fc !important; font-weight:bold;">SALDO FINAL PRODUBANCO</td>`;
     html += '<td class="col-saldo" style="background:#b3e5fc !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-produbanco-sem" data-semana="${sem.num}" style="background:#b3e5fc !important;">-</td>`;
@@ -639,7 +642,7 @@ function fc_renderFlujoYSaldo() {
     html += '</tr>';
 
     // SALDO FINAL PICHINCHA
-    html += `<tr class="row-total" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">SALDO FINAL PICHINCHA</td>`;
+    html += `<tr class="row-total fc-fila-fijable" data-fijable="SALDO FINAL PICHINCHA" style="background:#c8e6c9 !important;"><td class="col-concepto" style="background:#c8e6c9 !important; font-weight:bold;">SALDO FINAL PICHINCHA</td>`;
     html += '<td class="col-saldo" style="background:#c8e6c9 !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-pichincha-sem" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
@@ -652,7 +655,7 @@ function fc_renderFlujoYSaldo() {
     html += '</tr>';
 
     // SALDO FINAL TOTAL (suma de ambos bancos)
-    html += `<tr class="row-total" style="background:#81d4fa !important;"><td class="col-concepto" style="background:#81d4fa !important; font-weight:bold;">SALDO FINAL TOTAL</td>`;
+    html += `<tr class="row-total fc-fila-fijable" data-fijable="SALDO FINAL TOTAL" style="background:#81d4fa !important;"><td class="col-concepto" style="background:#81d4fa !important; font-weight:bold;">SALDO FINAL TOTAL</td>`;
     html += '<td class="col-saldo" style="background:#81d4fa !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
     fc_semanas.forEach(sem => {
         html += `<td class="col-semana sem-${sem.num}-header monto fc-saldo-final-sem" data-semana="${sem.num}" style="background:#81d4fa !important;">-</td>`;
@@ -1131,6 +1134,76 @@ function fc_actualizarResumen() {
             if (saldoEl) saldoEl.textContent = '$' + sfCell.textContent;
         }
     }
+}
+
+// ============ FIJAR LOS TOTALES (como inmovilizar filas en Excel) ============
+// La tabla toma alto propio y las filas de SALDO FINAL quedan pegadas abajo,
+// visibles mientras se hace scroll por los proveedores.
+function fc_aplicarFijado() {
+    const cont = document.getElementById('fc-tabla-container');
+    if (!cont) return;
+    const fijado = localStorage.getItem('fc_fijar_totales') !== '0'; // por defecto si
+    cont.classList.toggle('fc-fijado', fijado);
+    document.querySelectorAll('.fc-fila-fijable').forEach(tr => {
+        tr.classList.toggle('fc-fila-fijada', fijado);
+    });
+    const btn = document.getElementById('fc-btn-fijar');
+    if (btn) {
+        btn.innerHTML = fijado
+            ? '<i class="fas fa-thumbtack"></i> Totales fijos'
+            : '<i class="fas fa-thumbtack" style="opacity:.5;"></i> Fijar totales';
+        btn.style.background = fijado ? '#0f766e' : '#64748b';
+        btn.title = fijado
+            ? 'Las filas de SALDO FINAL quedan visibles al hacer scroll. Clic para soltarlas.'
+            : 'Clic para dejar fijas las filas de SALDO FINAL, como en Excel.';
+    }
+}
+
+function fc_toggleFijarTotales() {
+    const activo = localStorage.getItem('fc_fijar_totales') !== '0';
+    localStorage.setItem('fc_fijar_totales', activo ? '0' : '1');
+    fc_aplicarFijado();
+}
+
+// ============ YA PAGADO ============
+// Al presentar el flujo hay valores proyectados que YA se pagaron. El valor tiene
+// que seguir ahi para que el flujo cuadre, pero debe verse que ya salio.
+// Doble clic sobre el valor lo marca/desmarca. Se guarda en `pagados` del item.
+function fc_pintarPagado(input, si) {
+    const td = input.closest('td');
+    if (si) {
+        input.dataset.pagado = '1';
+        input.style.background = '#dcfce7';
+        input.style.borderColor = '#16a34a';
+        input.style.color = '#166534';
+        input.style.fontWeight = '700';
+        input.title = 'YA PAGADO - doble clic para desmarcar';
+        if (td) td.classList.add('fc-celda-pagada');
+    } else {
+        delete input.dataset.pagado;
+        input.style.background = '';
+        input.style.borderColor = '';
+        input.style.color = '';
+        input.style.fontWeight = '';
+        input.title = '';
+        if (td) td.classList.remove('fc-celda-pagada');
+    }
+}
+
+function fc_togglePagado(input) {
+    fc_pintarPagado(input, input.dataset.pagado !== '1');
+}
+
+let fc_pagadoListenerPuesto = false;
+function fc_activarMarcadoPagado() {
+    if (fc_pagadoListenerPuesto) return;
+    fc_pagadoListenerPuesto = true;
+    document.addEventListener('dblclick', e => {
+        const inp = e.target && e.target.closest && e.target.closest('input[class*="fc-input-egreso-"]');
+        if (!inp) return;
+        e.preventDefault();
+        fc_togglePagado(inp);
+    });
 }
 
 // ============ ALERTAS DE LIQUIDEZ (saldo minimo por banco) ============
@@ -1666,12 +1739,16 @@ async function fc_cargarDatosGuardados() {
                         // Buscar si ya existe este item por nombre
                         let existente = egresosConsolidados[grupo].find(e => e.nombre === item.nombre);
                         if (!existente) {
-                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, valores: {}, eliminadoDesde: elimDesde || null };
+                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, valores: {}, pagados: {}, eliminadoDesde: elimDesde || null };
                             egresosConsolidados[grupo].push(existente);
                         }
                         // Consolidar valores (fechas) — sin dias posteriores a la baja
                         for (const [dia, valor] of Object.entries(item.valores || {})) {
                             if (valor && (!elimDesde || dia < elimDesde)) existente.valores[dia] = valor;
+                        }
+                        // Dias marcados como ya pagados
+                        for (const [dia, ok] of Object.entries(item.pagados || {})) {
+                            if (ok && (!elimDesde || dia < elimDesde)) existente.pagados[dia] = true;
                         }
                         // Actualizar banco, deuda, saldo y dias si vienen
                         if (item.banco) existente.banco = item.banco;
@@ -1844,6 +1921,11 @@ async function fc_cargarDatosGuardados() {
                         const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
                         if (input && valor) input.value = valor;
                     }
+                    // Y marcar los que ya estaban pagados
+                    for (const dia of Object.keys(item.pagados || {})) {
+                        const input = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
+                        if (input) fc_pintarPagado(input, true);
+                    }
 
                     // Cada semana es unica: en las semanas cuya cartera NO trae a este
                     // proveedor sus dias quedan bloqueados (no hay nada que pagarle ahi).
@@ -1983,11 +2065,12 @@ async function fc_guardarDatos() {
                 const dias = diasInput ? (parseInt(diasInput.value) || 0) : 0;
                 const rowId = row.dataset.fcRowId || '';
                 const facturas = rowId ? (fc_facturas_data[rowId] || []) : [];
-                const itemData = { nombre, banco, deuda, saldo, dias, valores: {}, facturas };
+                const itemData = { nombre, banco, deuda, saldo, dias, valores: {}, pagados: {}, facturas };
                 sem.dias.forEach(dia => {
                     const input = row.querySelector(`[data-fecha="${dia}"].fc-input`);
                     if (input && input.value) {
                         itemData.valores[dia] = parseFloat(input.value.replace(/,/g, '')) || 0;
+                        if (input.dataset.pagado === '1') itemData.pagados[dia] = true;
                     }
                 });
                 egresos[grupo].push(itemData);
@@ -2690,6 +2773,16 @@ function fc_esc(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Primer celular ecuatoriano usable de la lista de telefonos, para WhatsApp
+function fc_celularWa(telefono) {
+    for (const bruto of String(telefono || '').split(/[\s,;\/|]+/)) {
+        const d = bruto.replace(/[^0-9]/g, '');
+        if (/^09\d{8}$/.test(d)) return '593' + d.slice(1);
+        if (/^5939\d{8}$/.test(d)) return d;
+    }
+    return '';
+}
+
 // Abrir modal de facturas para un item de egreso
 async function fc_abrirFacturas(row) {
     const rowId = row.dataset.fcRowId;
@@ -2859,12 +2952,36 @@ async function fc_abrirFacturas(row) {
         ? `<span title="Criticidad del proveedor" style="${critColores[critCat] || critColores.BAJO}padding:2px 7px;border-radius:10px;font-size:9px;font-weight:700;letter-spacing:.3px;">${fc_esc(critCat)}</span>`
         : `<span title="Sin clasificar en el catalogo" style="background:rgba(255,255,255,.12);color:#cbd5e1;padding:2px 7px;border-radius:10px;font-size:9px;">SIN CLASIFICAR</span>`;
 
+    const tipoProv = (provFicha?.tipo_proveedor || '').toUpperCase();
+    const tipoBadge = tipoProv === 'RECURRENTE'
+        ? '<span title="Proveedor regular: llega siempre" style="background:#16a34a;color:#fff;padding:2px 7px;border-radius:10px;font-size:9px;font-weight:700;">REGULAR</span>'
+        : (tipoProv === 'EVENTUAL'
+            ? '<span title="Proveedor eventual: compra suelta" style="background:#ca8a04;color:#fff;padding:2px 7px;border-radius:10px;font-size:9px;font-weight:700;">EVENTUAL</span>'
+            : '');
+
+    const ap = (provFicha?.apertura || '').toUpperCase();
+    const apInfo = { A:['A - Muy abierto','#16a34a'], B:['B - Flexible','#65a30d'],
+                     C:['C - Condicionado','#ca8a04'], D:['D - Rigido','#dc2626'] }[ap];
+    const apBadge = apInfo
+        ? `<span title="Apertura a negociar: ${fc_esc(apInfo[0])}" style="background:${apInfo[1]};color:#fff;padding:2px 7px;border-radius:10px;font-size:9px;font-weight:700;">${fc_esc(ap)}</span>`
+        : '';
+
+    const tel = (provFicha?.telefono || '').trim();
+    const wa = fc_celularWa(tel);
+    const telHtml = tel
+        ? (wa
+            ? `<a href="https://wa.me/${wa}" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;font-weight:700;" title="Escribir por WhatsApp">
+                   <i class="fab fa-whatsapp"></i> ${fc_esc(tel)}</a>`
+            : `<span><i class="fas fa-phone"></i> <b>${fc_esc(tel)}</b></span>`)
+        : '<span style="opacity:.55;">sin celular registrado</span>';
+
     const dato = (etiqueta, valor, vacio) => valor
         ? `<span>${etiqueta}: <b>${fc_esc(valor)}</b></span>`
         : `<span style="opacity:.55;">${etiqueta}: ${vacio}</span>`;
 
     const fichaHtml = provFicha
         ? `<div style="display:flex;gap:12px;margin-top:3px;font-size:10px;opacity:.9;flex-wrap:wrap;">
+               ${telHtml}
                ${dato('Despacha', provFicha.dia_despacho, 'sin definir')}
                ${provFicha.ruc ? `<span>RUC: <b style="font-family:monospace;">${fc_esc(provFicha.ruc)}</b></span>` : '<span style="opacity:.55;">sin RUC</span>'}
                ${provFicha.nombre_comercial && fc_normalizarNombre(provFicha.nombre_comercial) !== fc_normalizarNombre(provFicha.nombre)
@@ -2888,7 +3005,7 @@ async function fc_abrirFacturas(row) {
                 <span class="fc-modal-icon" style="background:rgba(255,255,255,.1);">F</span>
                 <div style="flex:1;">
                     <h3 style="margin:0;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                        ${fc_esc(nombre)} ${critBadge}
+                        ${fc_esc(nombre)} ${critBadge} ${apBadge} ${tipoBadge}
                     </h3>
                     <div style="display:flex;gap:12px;margin-top:4px;font-size:10px;opacity:.85;">
                         <span>Credito: <b>${diasCredito} dias</b></span>
@@ -3856,6 +3973,16 @@ function fc_normalizarNombre(nombre) {
 // ============ CATALOGO DE PROVEEDORES ============
 let fc_proveedores_bd = []; // Cache del catalogo
 
+// Apertura a negociar: que tan facil es hablar con el proveedor. NO se mezcla con
+// la criticidad del producto: son dos ejes y juntos deciden a quien pagar primero.
+const FC_APERTURAS = [
+    {v:'',  t:'- sin evaluar -',  c:'#fff'},
+    {v:'A', t:'A - Muy abierto',  c:'#dcfce7'},
+    {v:'B', t:'B - Flexible',     c:'#ecfccb'},
+    {v:'C', t:'C - Condicionado', c:'#fef3c7'},
+    {v:'D', t:'D - Rigido',       c:'#fecaca'},
+];
+
 async function fc_abrirProveedores() {
     let modal = document.getElementById('fc-modal-proveedores');
     if (!modal) {
@@ -3889,7 +4016,10 @@ async function fc_abrirProveedores() {
                             <th style="min-width:180px;">Proveedor</th>
                             <th style="width:110px;">RUC</th>
                             <th style="min-width:100px;">N. Comercial</th>
-                            <th style="min-width:80px;">Criticidad</th>
+                            <th style="width:105px;" title="Para gestion inmediata con el proveedor">Celular</th>
+                            <th style="width:95px;" title="Regular = llega siempre. Eventual = compra suelta">Tipo</th>
+                            <th style="min-width:80px;" title="Que tan critico es el producto para la operacion">Criticidad</th>
+                            <th style="width:120px;" title="Que tan facil es hablar/negociar con el proveedor">Apertura</th>
                             <th style="width:55px;">Dias Cr.</th>
                             <th style="width:80px;">Despacho</th>
                             <th style="min-width:120px;">Productos/Serv.</th>
@@ -3897,7 +4027,7 @@ async function fc_abrirProveedores() {
                             <th style="width:30px;"></th>
                         </tr>
                     </thead>
-                    <tbody id="fc-prov-body"><tr><td colspan="9" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
+                    <tbody id="fc-prov-body"><tr><td colspan="12" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
                 </table>
             </div>
             <div class="fc-fac-footer">
@@ -3928,7 +4058,7 @@ async function fc_provCargar() {
         fc_provRender();
     } catch (e) {
         console.error('Error cargando proveedores:', e);
-        document.getElementById('fc-prov-body').innerHTML = `<tr><td colspan="9" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
+        document.getElementById('fc-prov-body').innerHTML = `<tr><td colspan="12" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
     }
 }
 
@@ -3937,7 +4067,7 @@ function fc_provRender() {
     if (!tbody) return;
 
     if (fc_proveedores_bd.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8;">No hay proveedores. Agregue manualmente o sincronice desde la Cartera.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:30px;color:#94a3b8;">No hay proveedores. Agregue manualmente o sincronice desde la Cartera.</td></tr>';
         document.getElementById('fc-prov-count').textContent = '0 proveedores';
         return;
     }
@@ -3950,13 +4080,25 @@ function fc_provRender() {
 
         const critColor = {BAJO:'#e2e8f0',MEDIO:'#fef3c7',ALTO:'#fed7aa',CRITICO:'#fecaca'}[p.criticidad] || '#e2e8f0';
 
+        const tipoOpts = [['','- sin clasificar -'],['RECURRENTE','Regular'],['EVENTUAL','Eventual']]
+            .map(([v,t]) => `<option value="${v}" ${(p.tipo_proveedor||'')===v?'selected':''}>${t}</option>`).join('');
+        // Apertura: que tan facil es hablar con el proveedor. Es un eje aparte de la
+        // criticidad: un producto critico con proveedor abierto SI se puede negociar.
+        const apOpts = FC_APERTURAS
+            .map(a => `<option value="${a.v}" ${(p.apertura||'')===a.v?'selected':''}>${a.t}</option>`).join('');
+        const apColor = (FC_APERTURAS.find(a => a.v === (p.apertura||'')) || {}).c || '#fff';
+
         html += `<tr class="fc-prov-row" data-idx="${idx}">
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.nombre}" data-field="nombre" style="font-weight:600;"></td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.ruc || ''}" data-field="ruc" inputmode="numeric"
                        placeholder="sin RUC" title="RUC de Contifico"
                        style="font-family:monospace;font-size:10px;text-align:center;${p.ruc ? '' : 'background:#fff7ed;'}"></td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.nombre_comercial}" data-field="nombre_comercial"></td>
+            <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.telefono || ''}" data-field="telefono"
+                       placeholder="celular" style="font-size:10px;"></td>
+            <td><select class="fc-fac-select-fecha fc-prov-field" data-field="tipo_proveedor" style="font-size:10px;${p.tipo_proveedor === 'EVENTUAL' ? 'background:#fef3c7;' : (p.tipo_proveedor === 'RECURRENTE' ? 'background:#dcfce7;' : '')}">${tipoOpts}</select></td>
             <td><select class="fc-fac-select-fecha fc-prov-field" data-field="criticidad" style="background:${critColor};font-weight:600;font-size:10px;" onchange="this.style.background={'BAJO':'#e2e8f0','MEDIO':'#fef3c7','ALTO':'#fed7aa','CRITICO':'#fecaca'}[this.value]">${critOpts}</select></td>
+            <td><select class="fc-fac-select-fecha fc-prov-field" data-field="apertura" style="font-size:10px;background:${apColor};">${apOpts}</select></td>
             <td><input type="number" class="fc-fac-input fc-prov-field" value="${p.dias_credito}" data-field="dias_credito" style="width:45px;text-align:center;"></td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.dia_despacho}" data-field="dia_despacho" style="font-size:10px;"></td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.productos_servicios}" data-field="productos_servicios" style="font-size:10px;"></td>
@@ -3987,7 +4129,8 @@ function fc_provFiltrar() {
 function fc_provAgregar() {
     fc_proveedores_bd.push({
         id: 0, nombre: '', nombre_comercial: '', criticidad: 'BAJO',
-        dias_credito: 0, dia_despacho: '', productos_servicios: '', observaciones: '', ruc: ''
+        dias_credito: 0, dia_despacho: '', productos_servicios: '', observaciones: '', ruc: '',
+        telefono: '', tipo_proveedor: '', apertura: ''
     });
     fc_provRender();
     // Enfocar el ultimo
@@ -4873,3 +5016,4 @@ if (typeof window.viewInitializers === 'undefined') {
     window.viewInitializers = {};
 }
 window.viewInitializers['flujo-caja'] = fc_init;
+fc_activarMarcadoPagado();

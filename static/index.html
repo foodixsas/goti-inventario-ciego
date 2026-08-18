@@ -161,6 +161,16 @@
         .fc-tabla .row-banco-item td { background:#fafafa; }
         .fc-tabla .row-banco-total td { background:#e3f2fd; font-weight:bold; font-style:italic; }
         .fc-tabla .row-total td { background:#c8e6c9; font-weight:bold; }
+        /* Fijar totales: la tabla toma alto propio y las filas de SALDO FINAL
+           quedan pegadas abajo mientras se hace scroll (como inmovilizar en Excel) */
+        #fc-tabla-container.fc-fijado { max-height:calc(100vh - 240px); overflow:auto; }
+        .fc-tabla tr.fc-fila-fijada td { position:sticky; bottom:0; z-index:12; box-shadow:0 -2px 6px rgba(0,0,0,.15); }
+        .fc-tabla tr.fc-fila-fijada td.col-concepto { left:0; z-index:14; }
+        .fc-tabla tr.fc-fila-fijada[data-fijable="SALDO FINAL PICHINCHA"] td { bottom:29px; }
+        .fc-tabla tr.fc-fila-fijada[data-fijable="SALDO FINAL PRODUBANCO"] td { bottom:58px; }
+        /* Valor proyectado que ya se pago */
+        .fc-tabla td.fc-celda-pagada { position:relative; }
+        .fc-tabla td.fc-celda-pagada::after { content:'¹3'; position:absolute; top:1px; right:3px; font-size:9px; color:#16a34a; font-weight:bold; pointer-events:none; }
         .fc-tabla .monto { text-align:right; font-family:'JetBrains Mono',monospace; }
         .fc-tabla .dia-sab, .fc-tabla .dia-dom { background:#fff8e1 !important; }
         .fc-tabla .indent-1 { padding-left:20px !important; }
@@ -2595,6 +2605,8 @@
                                 <button class="fc-btn fc-btn-expand" onclick="fc_expandirTodo()" title="Expandir columnas"><i class="fas fa-arrows-alt-h"></i> Cols</button>
                                 <button class="fc-btn fc-btn-collapse" onclick="fc_colapsarTodo()" title="Colapsar columnas"><i class="fas fa-compress-arrows-alt"></i> Cols</button>
                                 <span style="border-left:1px solid #cbd5e1;height:20px;margin:0 6px;"></span>
+                                <button class="fc-btn" id="fc-btn-fijar" style="background:#0f766e;color:white;" onclick="fc_toggleFijarTotales()"><i class="fas fa-thumbtack"></i> Totales fijos</button>
+                                <span style="border-left:1px solid #cbd5e1;height:20px;margin:0 6px;"></span>
                                 <button class="fc-btn" style="background:#7c3aed;" onclick="fc_expandirFilas()" title="Expandir filas"><i class="fas fa-arrows-alt-v"></i> Filas</button>
                                 <button class="fc-btn" style="background:#6d28d9;" onclick="fc_colapsarFilas()" title="Colapsar filas"><i class="fas fa-minus"></i> Filas</button>
                             </div>
@@ -2793,7 +2805,7 @@
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="js/config.js?v=20260317a"></script>
     <script src="js/app.js?v=20260812b"></script>
-    <script src="js/flujo-caja.js?v=20260818a"></script>
+    <script src="js/flujo-caja.js?v=20260818b"></script>
     <script src="js/nomina.js?v=20260812a"></script>
     <style>
         /* NOMINA MODULE STYLES */

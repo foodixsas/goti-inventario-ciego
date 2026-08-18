@@ -7326,18 +7326,23 @@ def flujo_caja_proveedores_listar():
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         ''')
-        # La tabla ya existia sin ruc en las BD desplegadas
-        cur.execute("ALTER TABLE fc_proveedores ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT ''")
+        # La tabla ya existia sin estas columnas en las BD desplegadas
+        cur.execute("""ALTER TABLE fc_proveedores
+            ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS tipo_proveedor TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT ''""")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_fc_proveedores_ruc ON fc_proveedores(ruc) WHERE ruc <> ''")
         conn.commit()
-        cur.execute('SELECT id, nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc FROM fc_proveedores ORDER BY nombre')
+        cur.execute('SELECT id, nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura FROM fc_proveedores ORDER BY nombre')
         proveedores = []
         for r in cur.fetchall():
             proveedores.append({
                 'id': r[0], 'nombre': r[1], 'nombre_comercial': r[2] or '',
                 'criticidad': r[3] or 'BAJO', 'dias_credito': r[4] or 0,
                 'dia_despacho': r[5] or '', 'productos_servicios': r[6] or '',
-                'observaciones': r[7] or '', 'ruc': r[8] or ''
+                'observaciones': r[7] or '', 'ruc': r[8] or '',
+                'telefono': r[9] or '', 'tipo_proveedor': r[10] or '', 'apertura': r[11] or ''
             })
         return jsonify({'ok': True, 'proveedores': proveedores})
     except Exception as e:
@@ -7358,10 +7363,14 @@ def flujo_caja_proveedores_guardar():
             return jsonify({'error': 'Nombre requerido'}), 400
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
-        cur.execute("ALTER TABLE fc_proveedores ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT ''")
+        cur.execute("""ALTER TABLE fc_proveedores
+            ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS tipo_proveedor TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT ''""")
         cur.execute('''
-            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (nombre) DO UPDATE SET
                 nombre_comercial = EXCLUDED.nombre_comercial,
                 criticidad = EXCLUDED.criticidad,
@@ -7370,12 +7379,18 @@ def flujo_caja_proveedores_guardar():
                 productos_servicios = EXCLUDED.productos_servicios,
                 observaciones = EXCLUDED.observaciones,
                 ruc = EXCLUDED.ruc,
+                telefono = EXCLUDED.telefono,
+                tipo_proveedor = EXCLUDED.tipo_proveedor,
+                apertura = EXCLUDED.apertura,
                 updated_at = NOW()
             RETURNING id
         ''', (nombre, (data.get('nombre_comercial') or '').strip() or nombre, data.get('criticidad', 'BAJO'),
               data.get('dias_credito', 0), data.get('dia_despacho', ''),
               data.get('productos_servicios', ''), data.get('observaciones', ''),
-              re.sub(r'[^0-9]', '', str(data.get('ruc') or ''))))
+              re.sub(r'[^0-9]', '', str(data.get('ruc') or '')),
+              (data.get('telefono') or '').strip(),
+              (data.get('tipo_proveedor') or '').strip().upper(),
+              (data.get('apertura') or '').strip().upper()))
         prov_id = cur.fetchone()[0]
         conn.commit()
         return jsonify({'ok': True, 'id': prov_id})
@@ -7404,7 +7419,11 @@ def flujo_caja_proveedores_bulk():
             productos_servicios TEXT DEFAULT '', observaciones TEXT DEFAULT '',
             ruc TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW())''')
-        cur.execute("ALTER TABLE fc_proveedores ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT ''")
+        cur.execute("""ALTER TABLE fc_proveedores
+            ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS tipo_proveedor TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT ''""")
         # Un solo INSERT con todas las filas. Antes era un execute() por proveedor
         # dentro del loop: con 217 proveedores eran 217 viajes a Azure y se sentia.
         filas = []
@@ -7428,11 +7447,14 @@ def flujo_caja_proveedores_bulk():
                 p.get('productos_servicios') or '',
                 p.get('observaciones') or '',
                 re.sub(r'[^0-9]', '', str(p.get('ruc') or '')),
+                (p.get('telefono') or '').strip(),
+                (p.get('tipo_proveedor') or '').strip().upper(),
+                (p.get('apertura') or '').strip().upper(),
             ))
         if not filas:
             return jsonify({'error': 'Sin proveedores con nombre valido'}), 400
         execute_values(cur, '''
-            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc)
+            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura)
             VALUES %s
             ON CONFLICT (nombre) DO UPDATE SET
                 nombre_comercial = COALESCE(NULLIF(EXCLUDED.nombre_comercial, ''), fc_proveedores.nombre_comercial),
@@ -7442,6 +7464,9 @@ def flujo_caja_proveedores_bulk():
                 productos_servicios = COALESCE(NULLIF(EXCLUDED.productos_servicios, ''), fc_proveedores.productos_servicios),
                 observaciones = COALESCE(NULLIF(EXCLUDED.observaciones, ''), fc_proveedores.observaciones),
                 ruc = COALESCE(NULLIF(EXCLUDED.ruc, ''), fc_proveedores.ruc),
+                telefono = COALESCE(NULLIF(EXCLUDED.telefono, ''), fc_proveedores.telefono),
+                tipo_proveedor = COALESCE(NULLIF(EXCLUDED.tipo_proveedor, ''), fc_proveedores.tipo_proveedor),
+                apertura = COALESCE(NULLIF(EXCLUDED.apertura, ''), fc_proveedores.apertura),
                 updated_at = NOW()
         ''', filas, page_size=250)
         guardados = len(filas)
