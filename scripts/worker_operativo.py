@@ -1764,51 +1764,60 @@ def main():
     if os.environ.get('VERIFICAR', '0') == '1':
         return verificar_entorno()
 
+    # Las CUATRO colas que atendia la PC de Finanzas. Todas las funciones
+    # devuelven (driver_sigue_vivo, salio_bien), asi que se tratan igual.
+    COLAS = (
+        ('cruce',      get_pendientes,                     procesar_tarea),
+        ('carga',      get_pendientes_carga,               procesar_tarea_carga),
+        ('conteo',     get_pendientes_conteo_op,           procesar_tarea_conteo_op),
+        ('inventario', get_pendientes_inventario_locales,  procesar_tarea_inventario_locales),
+    )
     solo = os.environ.get('SOLO_COLA', '').strip().lower()
+    activas = [c for c in COLAS if not solo or c[0] == solo]
+    if solo and not activas:
+        log(f'SOLO_COLA={solo!r} no coincide con ninguna cola', 'ERROR')
+        return 1
+    log(f'colas atendidas: {", ".join(c[0] for c in activas)}')
+
     driver = None
     hechas = fallidas = 0
     try:
         while True:
-            conteo = [] if solo == 'inventario' else get_pendientes_conteo_op()
-            locales = [] if solo == 'conteo' else get_pendientes_inventario_locales()
-            if not conteo and not locales:
+            trabajo = [(nombre, t, proc) for nombre, traer, proc in activas
+                       for t in (traer() or [])]
+            if not trabajo:
                 break
+            log(f'{len(trabajo)} tarea(s) tomadas: '
+                + ', '.join(f'{n}#{t.get("id")}' for n, t, _ in trabajo))
 
-            if driver is None:
-                log('Iniciando Chrome y login en Contifico...')
-                driver = make_chrome()
-                login_contifico(driver)
-            elif not driver_sano(driver):
-                log('El driver murio, reiniciando...', 'WARN')
-                try: driver.quit()
-                except Exception: pass
-                driver = make_chrome()
-                login_contifico(driver)
+            for nombre, tarea, procesar in trabajo:
+                if driver is None:
+                    log('Iniciando Chrome y login en Contifico...')
+                    driver = make_chrome()
+                    login_contifico(driver)
+                elif not driver_sano(driver):
+                    log('El driver murio, reiniciando...', 'WARN')
+                    try: driver.quit()
+                    except Exception: pass
+                    driver = make_chrome()
+                    login_contifico(driver)
 
-            for tarea in conteo:
-                driver_ok, ok = procesar_tarea_conteo_op(tarea, driver)
+                try:
+                    driver_ok, ok = procesar(tarea, driver)
+                except Exception as e:
+                    log(f'{nombre}#{tarea.get("id")} reviento: {e}', 'ERROR')
+                    log(traceback.format_exc()[:600], 'ERROR')
+                    driver_ok, ok = False, False
+
                 hechas += 1 if ok else 0
                 fallidas += 0 if ok else 1
                 if not driver_ok:
                     try: driver.quit()
                     except Exception: pass
                     driver = None
-                    break
-
-            if driver is None:
-                continue
-
-            for tarea in locales:
-                driver_ok, ok = procesar_tarea_inventario_locales(tarea, driver)
-                hechas += 1 if ok else 0
-                fallidas += 0 if ok else 1
-                if not driver_ok:
-                    try: driver.quit()
-                    except Exception: pass
-                    driver = None
-                    break
     except Exception as e:
-        log(f'EXCEPCION en el bucle: {e}\n{traceback.format_exc()}', 'ERROR')
+        log(f'EXCEPCION en el bucle: {e}', 'ERROR')
+        log(traceback.format_exc()[:800], 'ERROR')
         return 1
     finally:
         if driver is not None:
