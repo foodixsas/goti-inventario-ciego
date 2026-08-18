@@ -1702,9 +1702,41 @@ def verificar_entorno():
         login_contifico(driver)
         log('[OK] Login en Contifico')
 
-        # exportarExcel() tarda: sin este timeout largo corta a los 90s.
-        # Paso una vez, compitiendo con el worker de la PC por Contifico.
+        # VERIFICAR_TOMA=1: ademas abre el formulario de toma fisica y comprueba
+        # que sus campos sigan existiendo. NO guarda ni genera nada: es el unico
+        # trozo del camino que no se puede probar de otra forma sin crear un
+        # documento real de ajuste de inventario en Contifico.
+        if os.environ.get('VERIFICAR_TOMA', '0') == '1':
+            log('')
+            log('--- formulario de TOMA FISICA (sin guardar) ---')
+            driver.get('https://1793168604001.contifico.com/sistema/inventario/tomafisica/registrar/')
+            WebDriverWait(driver, 60).until(
+                EC.presence_of_element_located((By.ID, 'id_fecha')))
+            time.sleep(2)
+            campos = {
+                'id_fecha': (By.ID, 'id_fecha'),
+                'bodega (autocomplete)': (By.CSS_SELECTOR,
+                    'input.object-description[data_id="id_bodega"]'),
+                'btn-guardar': (By.ID, 'btn-guardar'),
+            }
+            for etq, (como, sel) in campos.items():
+                driver.find_element(como, sel)
+                log(f'[OK] campo presente: {etq}')
+            # La fila de detalle se crea por JS; comprobar que la funcion existe.
+            hay_js = driver.execute_script(
+                "return typeof movimiento !== 'undefined' "
+                "&& typeof movimiento.agregarDetalle === 'function';")
+            log(f'[{"OK" if hay_js else "FALLO"}] movimiento.agregarDetalle() disponible')
+            if not hay_js:
+                raise RuntimeError('el formulario no expone movimiento.agregarDetalle()')
+            log('[OK] formulario de toma fisica utilizable (no se guardo nada)')
+
+
+        # exportarExcel() tarda y dispara una navegacion. El corte de 90s venia
+        # del page_load_timeout, no del de script: hay que subir LOS DOS. Pasa
+        # cuando el worker de la PC esta pidiendo el mismo reporte a la vez.
         driver.set_script_timeout(TIMEOUT_SCRIPT)
+        driver.set_page_load_timeout(TIMEOUT_SCRIPT)
         archivo = descargar_saldos(driver, cfg['contifico'], fecha)
         log(f'[OK] Excel descargado: {os.path.basename(archivo)}')
 
