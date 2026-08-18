@@ -705,12 +705,52 @@ def procesar_conteo(bodegas):
 # ============================================================
 # MAIN
 # ============================================================
+# ============================================================
+# HORARIO
+# ============================================================
+# Antes esto vivia en DOS cron de Render corriendo el MISMO script:
+#   carga-movimientos-api      */30 0-4,12-23   -> cada 30 min
+#   carga-movimientos-previo   25-29,31-39 2,3,4 -> cada minuto antes de la
+#                                                   carga de inventario
+# Render solo admite un horario por servicio, de ahi la duplicacion. Se unifico
+# en un solo cron '0,25-39 0-4,12-23' y es el script el que decide, igual que
+# hace carga_inventario_api.py.
+#
+# El contenedor corre en UTC, igual que el cron: 2,3,4 UTC = 21,22,23 Ecuador.
+# En esas horas se revisa cada minuto porque enseguida arranca la carga de
+# inventario y la cola tiene que estar vacia. El resto del dia, solo :00 y :30.
+# Los ~196 disparos sobrantes salen en un segundo sin tocar AirTable.
+HORAS_CADA_MINUTO = (2, 3, 4)
+MINUTOS_NORMALES = (0, 30)
+
+
+def toca_ahora(ahora):
+    """Devuelve (si_toca, motivo). IGNORAR_HORARIO=1 lo salta (disparo manual)."""
+    if os.getenv("IGNORAR_HORARIO") == "1":
+        return True, "forzado por IGNORAR_HORARIO"
+    if ahora.hour in HORAS_CADA_MINUTO:
+        return True, f"ventana previa a la carga de inventario ({ahora:%H:%M} UTC)"
+    if ahora.minute in MINUTOS_NORMALES:
+        return True, f"revision regular ({ahora:%H:%M} UTC)"
+    return False, (f"{ahora:%H:%M} UTC no toca: fuera de las horas "
+                   f"{HORAS_CADA_MINUTO} y no es minuto {MINUTOS_NORMALES}")
+
+
 def main():
     inicio = datetime.now()
     log("=" * 55)
     log("CARGA MOVIMIENTOS CONTIFICO VIA API")
     log(f"Inicio: {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
     log("=" * 55)
+
+    # UTC EXPLICITO: el cron de Render esta en UTC. En el contenedor
+    # datetime.now() ya da UTC, pero depender de eso es fragil -si algun dia la
+    # imagen trae otra zona, la compuerta se corre de hora sin avisar-.
+    hay_que_correr, motivo = toca_ahora(datetime.now(timezone.utc))
+    if not hay_que_correr:
+        log(motivo)
+        return
+    log(motivo)
 
     # Cargar solo el catálogo de bodegas (los productos se buscan por código individual)
     log("\nCargando bodegas desde Contifico API...")
