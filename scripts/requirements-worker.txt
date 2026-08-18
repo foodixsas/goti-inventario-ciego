@@ -1,0 +1,9 @@
+# Versiones iguales a las de la PC de Finanzas, donde este worker lleva meses
+# funcionando. El Excel de saldos puede venir .xls o .xlsx, por eso van openpyxl
+# y xlrd: pandas elige el motor segun la extension.
+selenium==4.40.0
+pandas==2.3.3
+openpyxl==3.1.5
+xlrd==2.0.2
+psycopg2-binary==2.9.11
+requests==2.32.5

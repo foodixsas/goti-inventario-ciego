@@ -1,0 +1,29 @@
+# Worker operativo: conteo de bodegas operativas y toma fisica.
+#
+# Va con Selenium y no con la API de Contifico por dos razones medidas:
+#   - la API NO da saldos a una fecha de corte (acepta el parametro, responde
+#     200 y devuelve siempre el stock de HOY)
+#   - la API NO da el costo unitario, que el Excel si trae y que se necesita
+#     para valorizar el descuadre
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    CHROME_BIN=/usr/bin/chromium \
+    CHROMEDRIVER=/usr/bin/chromedriver \
+    DOWNLOAD_DIR=/tmp/descargas
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium \
+        chromium-driver \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-worker.txt .
+RUN pip install --no-cache-dir -r requirements-worker.txt
+
+COPY worker_operativo.py ./
+RUN mkdir -p /tmp/descargas
+
+CMD ["python", "worker_operativo.py"]
