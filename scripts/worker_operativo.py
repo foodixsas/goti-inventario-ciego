@@ -1758,7 +1758,14 @@ def _marcar_traslado_hecho(record_id, num_doc):
 
 
 def _autocompletar(driver, elemento, texto):
-    """Escribe en un autocomplete de Contifico y escoge la primera sugerencia."""
+    """Escribe en un autocomplete de Contifico y escoge la primera sugerencia.
+
+    Al final CIERRA la lista de sugerencias. Sin eso, el desplegable de la
+    bodega se queda abierto flotando sobre el campo del producto y Selenium
+    falla con 'element not interactable' al intentar escribir debajo. Por eso
+    unos traslados entraban y otros no: dependia de si la lista se habia
+    cerrado sola a tiempo.
+    """
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", elemento)
     time.sleep(0.4)
     elemento.click()
@@ -1769,7 +1776,24 @@ def _autocompletar(driver, elemento, texto):
     elemento.send_keys(Keys.DOWN)
     time.sleep(0.5)
     elemento.send_keys(Keys.ENTER)
-    time.sleep(1)
+    time.sleep(0.8)
+    _cerrar_sugerencias(driver, elemento)
+
+
+def _cerrar_sugerencias(driver, elemento=None):
+    """Cierra cualquier lista de autocompletado que haya quedado abierta."""
+    if elemento is not None:
+        try:
+            elemento.send_keys(Keys.ESCAPE)
+        except Exception:
+            pass
+    try:
+        driver.execute_script(
+            "document.querySelectorAll('ul.ui-autocomplete').forEach("
+            "  function(u){ u.style.display='none'; });")
+    except Exception:
+        pass
+    time.sleep(0.4)
 
 
 def procesar_traslado(reg, driver):
@@ -1898,37 +1922,71 @@ def procesar_traslado(reg, driver):
 
 
 def _fila_producto(driver, codigo, cantidad):
-    """Escribe codigo y cantidad en la fila de detalle."""
-    inputs = driver.find_elements(By.CSS_SELECTOR, 'input.ui-autocomplete-input')
-    puesto = False
-    for inp in inputs:
-        data_id = (inp.get_attribute('data_id') or '').lower()
-        placeholder = inp.get_attribute('placeholder') or ''
-        # Los autocompletes de cabecera (bodega, centro de costo, proyecto...)
-        # se parecen al del producto; se descartan por su data_id.
-        if any(x in data_id for x in ('empresa', 'bodega', 'produccion', 'movimiento',
-                                      'ordencompra', 'cuenta', 'centro', 'proyecto')):
-            continue
-        if 'FOODIX' in placeholder or not inp.is_displayed():
-            continue
-        try:
-            inp.find_element(By.XPATH, './ancestor::tr')
-        except Exception:
-            continue
-        _autocompletar(driver, inp, codigo)
-        puesto = True
-        break
-    if not puesto:
-        return False
+    """Escribe codigo y cantidad en la fila de detalle del movimiento.
 
-    for campo in driver.find_elements(By.CSS_SELECTOR, "input[name*='cantidad']"):
-        if 'template' in (campo.get_attribute('name') or ''):
-            continue
-        if campo.is_displayed():
-            campo.clear()
-            campo.send_keys(str(cantidad))
-            return True
-    return False
+    La fila 1 ya viene creada por Contifico; sus campos son
+    'id_detalle_1-producto_id' y 'id_detalle_1-cantidad'. Al elegir el producto
+    la pagina agrega sola una fila 2 vacia, asi que NO hay que crear filas.
+
+    La cantidad se pone por JS y no con send_keys: buscando "el primer input de
+    cantidad visible" se acababa escribiendo en un campo que Selenium rechazaba
+    con 'element not interactable' -pasa cuando la lista del autocompletado
+    sigue abierta encima-. Yendo al id exacto de la fila y disparando los
+    eventos a mano, Contifico recalcula igual y no depende de que el campo este
+    despejado en pantalla.
+    """
+    # 1. Producto: el autocomplete de la fila de detalle, nunca los de cabecera.
+    campos = [i for i in driver.find_elements(
+        By.CSS_SELECTOR, "input.ui-autocomplete-input[data_id^='id_detalle_']")
+        if i.get_attribute('data_id').endswith('-producto_id') and i.is_displayed()]
+    if not campos:
+        log('  no aparece el campo de producto en el detalle', 'ERROR')
+        return False
+    inp = campos[0]
+    data_id = inp.get_attribute('data_id')           # id_detalle_1-producto_id
+    fila = data_id.replace('id_detalle_', '').replace('-producto_id', '')
+
+    # Por si el desplegable de la bodega destino sigue abierto sobre esta fila.
+    _cerrar_sugerencias(driver)
+    _autocompletar(driver, inp, codigo)
+
+    # Comprobar que de verdad quedo un producto elegido y no solo el texto.
+    valor = (inp.get_attribute('value') or '').strip()
+    if codigo.upper() not in valor.upper():
+        # 'no-results' significa que el buscador de Contifico no ofrece ese
+        # codigo. Casi siempre es que el producto esta INACTIVO (estado I): el
+        # formulario solo lista los activos. Lo arregla alguien en Contifico o
+        # corrigiendo el producto en AirTable, no el worker.
+        if 'no-results' in valor.lower():
+            log(f'  [DATO] Contifico no encuentra el codigo {codigo}: '
+                f'lo normal es que este INACTIVO. Hay que activarlo o corregir '
+                f'el producto en AirTable.', 'ERROR')
+        else:
+            log(f'  el producto no quedo seleccionado (campo dice {valor[:60]!r})', 'ERROR')
+        return False
+    log(f'  producto: {valor[:60]}')
+
+    # 2. Cantidad, por id exacto de la misma fila.
+    cid = f'id_detalle_{fila}-cantidad'
+    try:
+        campo = driver.find_element(By.ID, cid)
+    except Exception:
+        log(f'  no existe el campo {cid}', 'ERROR')
+        return False
+    driver.execute_script(
+        "arguments[0].value = arguments[1];"
+        "arguments[0].dispatchEvent(new Event('input',  {bubbles:true}));"
+        "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));"
+        "arguments[0].dispatchEvent(new Event('keyup',  {bubbles:true}));"
+        "arguments[0].dispatchEvent(new Event('blur',   {bubbles:true}));",
+        campo, str(cantidad))
+    time.sleep(1)
+    puesto = (campo.get_attribute('value') or '').strip()
+    if not puesto or float(puesto or 0) != float(cantidad):
+        log(f'  la cantidad no se fijo: quedo {puesto!r} en vez de {cantidad}', 'ERROR')
+        return False
+    log(f'  cantidad: {puesto}')
+    return True
 
 
 def notificar_traslado_ok(centro, detalle, num_doc):
