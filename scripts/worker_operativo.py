@@ -2195,39 +2195,70 @@ def hora_ecuador():
 
 
 def programar_tomas_fisicas():
-    """Encola las tomas fisicas que tocan a esta hora. Devuelve cuantas encolo."""
+    """Encola las tomas fisicas del dia. Devuelve cuantas encolo.
+
+    Dos cosas aprendidas el 19-ago, el dia que esto se estreno:
+
+    1. NO encolar si no hay conteos. Ese dia las cinco tareas de las 16:00
+       fallaron con "No hay conteos en BD": el horario habia disparado
+       puntual, pero los locales aun no habian contado. Cinco errores falsos y,
+       con los avisos por Telegram, cinco sustos a las bodegas.
+
+    2. ESPERAR al que cuenta tarde. Antes solo se miraba la hora exacta: si el
+       conteo entraba a las 17:00, ese dia se quedaba sin subir -es justo lo
+       que le venia pasando a Simon Bolon-. Ahora, a partir de su hora, se
+       revisa en cada pasada y se encola en cuanto aparecen los conteos.
+    """
     if os.environ.get('SIN_HORARIO_TOMAS', '0') == '1':
         return 0
 
     ahora = hora_ecuador()
-    bodegas = HORARIO_TOMAS.get(ahora.hour)
-    if not bodegas:
+    fecha = ahora.date().isoformat()
+
+    # Bodegas cuya hora ya paso hoy. A partir de ahi se sigue mirando hasta
+    # que aparezcan los conteos o hasta que acabe el dia.
+    pendientes = [b for hora, bods in HORARIO_TOMAS.items()
+                  if ahora.hour >= hora for b in bods]
+    if not pendientes:
         return 0
 
-    # La toma fisica es la del propio dia.
-    fecha = ahora.date().isoformat()
     creadas = 0
     con = None
     try:
         con = psycopg2.connect(**DB_CONFIG)
         cur = con.cursor()
-        for bodega in bodegas:
+        for bodega in pendientes:
+            # Ya atendida hoy? Un 'error' del propio horario NO cuenta: casi
+            # siempre es "aun no hay conteos" y hay que reintentarlo luego.
             cur.execute("""
-                SELECT id, estado FROM goti.tareas_inventario_locales
+                SELECT estado, solicitado_por FROM goti.tareas_inventario_locales
                 WHERE bodega = %s AND fecha = %s AND accion = 'toma_fisica'
                 ORDER BY id DESC LIMIT 1
             """, (bodega, fecha))
             ya = cur.fetchone()
             if ya:
-                log(f'  {bodega}: ya habia tarea #{ya[0]} ({ya[1]}), no se repite')
-                continue
+                estado, quien = ya[0], (ya[1] or '')
+                if estado != 'error' or quien != 'horario':
+                    continue
+
+            # Hay algo que subir?
+            cur.execute("""
+                SELECT COUNT(*) FROM goti.inventario_ciego_conteos
+                WHERE fecha = %s AND local = %s
+                  AND COALESCE(cantidad_contada_2, cantidad_contada) > 0
+            """, (fecha, bodega))
+            n = cur.fetchone()[0]
+            if not n:
+                continue      # aun no han contado; se vuelve a mirar luego
+
             cur.execute("""
                 INSERT INTO goti.tareas_inventario_locales
                     (bodega, fecha, accion, solicitado_por)
                 VALUES (%s, %s, 'toma_fisica', 'horario')
                 RETURNING id
             """, (bodega, fecha))
-            log(f'  {bodega}: encolada toma fisica #{cur.fetchone()[0]} para {fecha}')
+            log(f'  {bodega}: encolada toma fisica #{cur.fetchone()[0]} '
+                f'({n} productos contados)')
             creadas += 1
         con.commit()
     except Exception as e:
@@ -2245,7 +2276,6 @@ def programar_tomas_fisicas():
     if creadas:
         log(f'Horario {ahora:%H:%M} Ecuador: {creadas} toma(s) fisica(s) encoladas')
     return creadas
-
 
 
 BODEGAS_CONTEO_DIARIO = ('bodega_principal', 'materia_prima', 'planta')
