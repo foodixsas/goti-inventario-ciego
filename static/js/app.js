@@ -10605,6 +10605,21 @@ async function clEnviarTarea() {
 // Aviso de "hay tareas corriendo", arriba y con boton para pararlas todas.
 // En el historial el boton llegaba tarde: una tarea deja de ser cancelable en
 // menos de tres minutos.
+
+// El backend manda la fecha como 'Tue, 18 Aug 2026 00:00:00 GMT'. Partirla por
+// 'T' -como se hacia antes- corta por la T de "Tue" y devuelve cadena vacia:
+// los martes salian en blanco y el resto de dias mostraban el texto entero.
+// Se lee como fecha de verdad y se fuerza UTC, porque a las 00:00 GMT
+// cualquier huso al oeste la correria al dia anterior.
+function clFechaCorta(valor) {
+    if (!valor) return '-';
+    const d = new Date(valor);
+    if (isNaN(d)) return String(valor).slice(0, 10);
+    return d.toLocaleDateString('es-EC', {
+        day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC'
+    });
+}
+
 function clPintarEnMarcha(tareas) {
     const caja = document.getElementById('cl-en-marcha');
     if (!caja) return;
@@ -10619,7 +10634,7 @@ function clPintarEnMarcha(tareas) {
         vivas.map(t => {
             const nom = CL_LOCALES_NOMBRES[t.bodega] || t.bodega;
             const acc = t.accion === 'actualizar_cantidad' ? 'Actualizar cantidad' : 'Toma fisica';
-            const f = t.fecha ? t.fecha.split('T')[0].split('-').reverse().join('/') : '';
+            const f = clFechaCorta(t.fecha);
             return `#${t.id} ${nom} — ${acc} ${f} <b>(${t.estado})</b>`;
         }).join('<br>')
         + (enCurso ? `<br><br>Las ${enCurso} que ya empezaron pueden alcanzar a `
@@ -10702,7 +10717,7 @@ async function clCargarHistorial() {
             const sePuedeCancelar = t.estado === 'pendiente' || t.estado === 'en_proceso';
 
             const accionTxt = t.accion === 'actualizar_cantidad' ? 'Actualizar Cant.' : 'Toma Fisica';
-            const fechaCorta = t.fecha ? t.fecha.split('T')[0].split('-').reverse().join('/') : '-';
+            const fechaCorta = clFechaCorta(t.fecha);
             const solicitadoAt = t.solicitado_at ? new Date(t.solicitado_at).toLocaleString('es-EC', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'}) : '-';
 
             return `
