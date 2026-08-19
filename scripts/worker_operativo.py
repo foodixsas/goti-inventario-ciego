@@ -12,7 +12,7 @@ Ejecutar:
 
 Tarea programada Windows para arrancar al boot.
 """
-import os, sys, time, glob, json, traceback, subprocess, threading
+import os, sys, time, glob, json, re, traceback, subprocess, threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1375,7 +1375,24 @@ def procesar_actualizar_cantidad(tarea, driver):
 
 
 def procesar_toma_fisica_local(tarea, driver):
-    """Lee conteos de BD y registra toma fisica en Contifico."""
+    """Lee conteos de BD y registra la toma fisica en Contifico por CARGA MASIVA.
+
+    Antes se llenaba el formulario producto por producto: 36 autocompletados
+    encadenados que tardaban ~13 minutos, y bastaba que uno se descuadrara para
+    que Contifico descartara el formulario al guardar. Peor: el codigo marcaba
+    'completado' aunque no se hubiera creado nada, porque solo miraba que no
+    saltara una excepcion. Asi se reportaron como subidas tomas del 17-ago que
+    no existian.
+
+    Ahora se sube el Excel por la pestana 'Carga Masiva' (input id_archivo), el
+    camino que ofrece Contifico en su plantilla oficial
+    (.../tomafisica/descargar_plantilla): dos columnas, 'Producto (Codigo)' y
+    'Cantidad'. Tarda ~35s en vez de 13 min y Contifico valida el archivo.
+
+    Y AHORA SE VERIFICA: no se reporta 'completado' si no aparece el numero TFI
+    y el documento no queda en estado 'Generado', que es el paso que realmente
+    ajusta el inventario.
+    """
     ejec_id = tarea['id']
     bodega = tarea['bodega']
     fecha = tarea['fecha']
@@ -1384,51 +1401,64 @@ def procesar_toma_fisica_local(tarea, driver):
 
     log(f'>>> TOMA FISICA ejec_id={ejec_id} bodega={bodega} fecha={fecha_iso}')
 
-    cfg = BODEGAS_LOCALES.get(bodega)
+    cfg = BODEGAS_LOCALES.get(bodega) or BODEGAS.get(bodega)
     if not cfg:
-        post_resultado_inventario_locales({'id': ejec_id, 'estado': 'error', 'error_msg': f'bodega desconocida: {bodega}'})
+        post_resultado_inventario_locales({'id': ejec_id, 'estado': 'error',
+                                           'error_msg': f'bodega desconocida: {bodega}'})
         return True, False
 
     driver_ok = True
     conn = None
     try:
-        # 1. Leer conteos de BD
+        # 1. Conteos de la BD
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
         cur.execute("""
-            SELECT codigo, nombre, COALESCE(cantidad_contada_2, cantidad_contada) as cantidad, unidad
+            SELECT codigo, COALESCE(cantidad_contada_2, cantidad_contada) AS cantidad
             FROM goti.inventario_ciego_conteos
             WHERE fecha = %s AND local = %s
               AND COALESCE(cantidad_contada_2, cantidad_contada) IS NOT NULL
               AND COALESCE(cantidad_contada_2, cantidad_contada) > 0
             ORDER BY nombre
         """, (fecha_iso, bodega))
-        productos = [{'codigo': r[0], 'nombre': r[1], 'cantidad': float(r[2]), 'unidad': r[3]} for r in cur.fetchall()]
+        productos = [(r[0], float(r[1])) for r in cur.fetchall()]
         conn.close()
         conn = None
-
         if not productos:
             raise Exception(f'No hay conteos en BD para {bodega} fecha {fecha_iso}')
         log(f'  - Productos con conteo: {len(productos)}')
 
-        # 2. Navegar a formulario toma fisica
-        URL_TOMA = 'https://1793168604001.contifico.com/sistema/inventario/tomafisica/registrar/'
-        driver.get(URL_TOMA)
+        # 2. Excel con el formato de la plantilla oficial
+        import openpyxl
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        ruta = os.path.join(DOWNLOAD_DIR, f'tf_{bodega}_{fecha_iso}.xlsx')
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(['Producto (Código)', 'Cantidad'])
+        for cod, cant in productos:
+            # El codigo va como TEXTO: la plantilla lo exige.
+            ws.cell(row=ws.max_row + 1, column=1, value=str(cod)).number_format = '@'
+            ws.cell(row=ws.max_row, column=2,
+                    value=int(cant) if cant == int(cant) else cant)
+        wb.save(ruta)
+        log(f'  - Excel generado: {os.path.basename(ruta)}')
+
+        # 3. Cabecera del formulario
+        driver.get('https://1793168604001.contifico.com/sistema/inventario/tomafisica/registrar/')
         wait = WebDriverWait(driver, 60)
         wait.until(EC.presence_of_element_located((By.ID, 'id_fecha')))
         time.sleep(2)
 
-        # 3. Configurar fecha
         campo_fecha = driver.find_element(By.ID, 'id_fecha')
         driver.execute_script("arguments[0].value = '';", campo_fecha)
         campo_fecha.click()
         campo_fecha.clear()
         campo_fecha.send_keys(fecha_dmY)
         campo_fecha.send_keys(Keys.ESCAPE)
-        time.sleep(0.5)
+        time.sleep(1)
 
-        # 4. Seleccionar bodega
-        campo_bodega = driver.find_element(By.CSS_SELECTOR, 'input.object-description[data_id="id_bodega"]')
+        campo_bodega = driver.find_element(
+            By.CSS_SELECTOR, 'input.object-description[data_id="id_bodega"]')
         campo_bodega.click()
         campo_bodega.clear()
         campo_bodega.send_keys(cfg['contifico'])
@@ -1437,162 +1467,76 @@ def procesar_toma_fisica_local(tarea, driver):
         campo_bodega.send_keys(Keys.ENTER)
         time.sleep(2)
 
-        # 5. Esperar formulario listo
-        for _ in range(10):
-            try:
-                primer_campo = driver.find_element(By.CSS_SELECTOR, 'input.object-description[data_id="id_detalle_1-producto"]')
-                if primer_campo.is_displayed():
-                    break
-            except:
-                pass
-            time.sleep(1)
-        time.sleep(1)
-
-        # 6. Descripcion
         descripcion = f'AJUSTE DE INVENTARIO {cfg["contifico"]} - {fecha_dmY}'
         campo_desc = driver.find_element(By.ID, 'id_descripcion')
         driver.execute_script("arguments[0].focus();", campo_desc)
         campo_desc.clear()
         campo_desc.send_keys(descripcion)
-        time.sleep(0.5)
+        log(f'  - {fecha_dmY} | {cfg["contifico"]}')
 
-        # 7. Agregar productos
-        productos_ok = 0
-        fila_actual = 1
-        total_prods = len(productos)
-        log(f'  - Agregando {total_prods} productos al formulario...')
-
-        for idx, prod in enumerate(productos, 1):
-            codigo = prod['codigo']
-            cantidad = prod['cantidad']
-
-            try:
-                # Cerrar modales
-                driver.execute_script("""
-                    document.querySelectorAll('.bootbox.modal, .modal-backdrop').forEach(function(el){
-                        el.style.display='none'; el.classList.remove('in');
-                    });
-                    document.body.classList.remove('modal-open');
-                """)
-
-                selector_prod = f'input.object-description[data_id="id_detalle_{fila_actual}-producto"]'
-                try:
-                    campo_producto = driver.find_element(By.CSS_SELECTOR, selector_prod)
-                    if not campo_producto.is_displayed():
-                        raise Exception('No visible')
-                except:
-                    driver.execute_script('movimiento.agregarDetalle();')
-                    time.sleep(1)
-                    all_prods = driver.find_elements(By.CSS_SELECTOR, 'input.object-description[data_id*="detalle_"]')
-                    visible_prods = [p for p in all_prods if p.is_displayed() and 'producto' in (p.get_attribute('data_id') or '')]
-                    if visible_prods:
-                        campo_producto = visible_prods[-1]
-                        data_id = campo_producto.get_attribute('data_id')
-                        fila_actual = int(data_id.split('detalle_')[1].split('-')[0])
-                    else:
-                        continue
-
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", campo_producto)
-                time.sleep(0.2)
-                driver.execute_script("arguments[0].focus(); arguments[0].click();", campo_producto)
-                campo_producto.clear()
-                campo_producto.send_keys(codigo)
-                time.sleep(1.5)
-                campo_producto.send_keys(Keys.DOWN)
-                time.sleep(0.3)
-                campo_producto.send_keys(Keys.ENTER)
-                time.sleep(1.5)
-
-                # Cantidad
-                id_cantidad = f'id_detalle_{fila_actual}-cantidad_registrada'
-                campo_cantidad = driver.find_element(By.ID, id_cantidad)
-                cant_str = str(int(cantidad)) if cantidad == int(cantidad) else str(cantidad)
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", campo_cantidad)
-                driver.execute_script("arguments[0].value = '';", campo_cantidad)
-                campo_cantidad.click()
-                campo_cantidad.clear()
-                campo_cantidad.send_keys(cant_str)
-                campo_cantidad.send_keys(Keys.TAB)
-                time.sleep(0.3)
-
-                fila_actual += 1
-                productos_ok += 1
-                # Log progreso cada 5 productos
-                if productos_ok % 5 == 0 or productos_ok == total_prods:
-                    log(f'    Progreso: {productos_ok}/{total_prods} productos')
-
-            except Exception as e:
-                log(f'    Error producto {codigo}: {e}', 'WARN')
-                try:
-                    driver.execute_script('movimiento.agregarDetalle();')
-                    time.sleep(0.5)
-                    fila_actual += 1
-                except:
-                    pass
-
-        log(f'  - Productos cargados: {productos_ok}/{len(productos)}')
-
-        # 8. Guardar
-        log('  - Guardando formulario...')
+        # 4. Carga masiva
+        inp = driver.find_element(By.ID, 'id_archivo')
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", inp)
+        inp.send_keys(ruta)
         time.sleep(2)
-        try:
-            btn_guardar = driver.find_element(By.ID, 'btn-guardar')
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn_guardar)
-            time.sleep(0.5)
-            driver.execute_script("document.getElementById('btn-guardar').click();")
-            log('    btn-guardar clickeado')
-            time.sleep(5)
-        except Exception as e:
-            log(f'    WARN btn-guardar: {e}', 'WARN')
+        log('  - Archivo adjuntado, guardando...')
+        driver.execute_script("registrarMovimiento();")
+        time.sleep(9)
 
-        # 9. Generar
-        log('  - Generando movimiento...')
-        try:
-            driver.execute_script("document.getElementById('btn-generar').click();")
-            log('    btn-generar clickeado')
-            time.sleep(3)
-        except Exception as e:
-            log(f'    WARN btn-generar: {e}', 'WARN')
+        # 5. VERIFICAR que se creo: sin numero TFI no hay documento
+        cuerpo = driver.find_element(By.TAG_NAME, 'body').text
+        m = re.search(r'TFI\s+\d+', cuerpo)
+        if not m:
+            resumen = ' | '.join(l.strip() for l in cuerpo.split('\n')[:12] if l.strip())
+            raise Exception(f'Contifico no devolvio numero TFI. Pantalla: {resumen[:300]}')
+        num_doc = m.group(0)
+        url_doc = driver.current_url
+        log(f'  - Registrado: {num_doc}  (Pendiente)')
 
-        # 10. Confirmar
-        log('  - Confirmando...')
-        time.sleep(2)
+        # 6. Generar: es el paso que ajusta el inventario
+        driver.execute_script("mostrar_generar_movimientos();")
+        time.sleep(3)
         try:
-            btn_continuar = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, 'btndlgContinuar')))
-            btn_continuar.click()
-            log('    btndlgContinuar clickeado')
-            time.sleep(5)
-        except:
-            try:
-                driver.execute_script('generarMovimiento();')
-                log('    generarMovimiento() ejecutado')
-                time.sleep(5)
-            except Exception as e:
-                log(f'    WARN confirmar: {e}', 'WARN')
+            WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.ID, 'btndlgContinuar'))).click()
+        except Exception:
+            driver.execute_script("generarMovimiento();")
+        time.sleep(8)
 
-        url_final = driver.current_url
-        log(f'  - URL final: {url_final}')
+        # 7. VERIFICAR el estado final releyendo el documento
+        driver.get(url_doc)
+        time.sleep(3)
+        cuerpo = driver.find_element(By.TAG_NAME, 'body').text
+        if 'Generado' not in cuerpo:
+            raise Exception(f'{num_doc} se registro pero NO quedo Generado '
+                            f'(no ajusta inventario). Revisar en Contifico.')
+        log(f'  - {num_doc} GENERADO: el inventario quedo ajustado')
 
         post_resultado_inventario_locales({
             'id': ejec_id,
             'estado': 'completado',
-            'total_productos': productos_ok,
-            'url_contifico': url_final,
+            'total_productos': len(productos),
+            'url_contifico': url_doc,
+            'num_documento': num_doc,
         })
         return True, True
 
     except Exception as e:
-        tb = traceback.format_exc()
-        log(f'ERROR toma_fisica {ejec_id}: {e}\n{tb}', 'ERROR')
-        post_resultado_inventario_locales({'id': ejec_id, 'estado': 'error', 'error_msg': str(e)[:500]})
+        log(f'ERROR toma_fisica {ejec_id}: {e}', 'ERROR')
+        log(traceback.format_exc()[:600], 'ERROR')
+        post_resultado_inventario_locales({'id': ejec_id, 'estado': 'error',
+                                           'error_msg': str(e)[:500]})
         msg = str(e).lower()
         if any(k in msg for k in ('invalid session', 'disconnected', 'not connected',
-                                   'no such window', 'connection refused', 'target closed')):
+                                  'no such window', 'connection refused', 'target closed',
+                                  'chrome not reachable')):
             driver_ok = False
         return driver_ok, False
     finally:
         if conn:
             conn.close()
+
+
 
 
 def procesar_tarea_inventario_locales(tarea, driver):
