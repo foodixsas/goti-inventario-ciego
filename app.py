@@ -9343,6 +9343,7 @@ def telegram_sincronizar_nombres():
 
     conn = None
     actualizados = sin_datos = 0
+    motivo = ''          # primer fallo, para poder decir POR QUE no se pudo
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -9355,12 +9356,19 @@ def telegram_sincronizar_nombres():
                 resp = requests.get(f'https://api.telegram.org/bot{token}/getChat',
                                     params={'chat_id': r['chat_id']}, timeout=12)
                 d = resp.json() if resp.ok else {}
-            except Exception:
+            except Exception as e:
                 d = {}
+                if not motivo:
+                    motivo = f'no se pudo llamar a Telegram: {str(e)[:120]}'
             chat = (d.get('result') or {}) if d.get('ok') else {}
             nombre = (f"{chat.get('first_name', '')} {chat.get('last_name', '')}".strip()
                       or chat.get('title') or '')
             if not nombre:
+                # Sin esto el panel decia "sin datos" y no habia forma de saber si
+                # Telegram no conocia el chat o si la llamada ni siquiera salio.
+                if not motivo:
+                    motivo = (d.get('description')
+                              or f'Telegram respondio sin nombre: {str(d)[:120]}')
                 sin_datos += 1
                 continue
             cur.execute("""UPDATE goti.telegram_destinatarios
@@ -9373,7 +9381,8 @@ def telegram_sincronizar_nombres():
 
         conn.commit()
         return jsonify({'ok': True, 'actualizados': actualizados,
-                        'sin_datos': sin_datos, 'revisados': len(pendientes)})
+                        'sin_datos': sin_datos, 'revisados': len(pendientes),
+                        'motivo': motivo})
     except Exception as e:
         if conn:
             conn.rollback()

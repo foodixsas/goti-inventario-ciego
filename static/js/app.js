@@ -10935,7 +10935,9 @@ async function tgTraerNombres() {
         const d = await res.json();
         if (d.ok) {
             tgEstado(`${d.actualizados} nombre(s) completados` +
-                     (d.sin_datos ? `, ${d.sin_datos} sin datos en Telegram (ponlos a mano)` : ''), 'ok');
+                     (d.sin_datos ? `, ${d.sin_datos} sin resolver` : '') +
+                     (d.motivo ? ` — ${d.motivo}` : ''),
+                     d.actualizados ? 'ok' : 'err');
             tgCargarTabla();
         } else {
             tgEstado('Error: ' + (d.error || '?'), 'err');
