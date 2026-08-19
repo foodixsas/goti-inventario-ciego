@@ -13,7 +13,7 @@ Ejecutar:
 Tarea programada Windows para arrancar al boot.
 """
 import os, sys, time, glob, json, re, traceback, subprocess, threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Forzar UTF-8 en stdout
@@ -2082,6 +2082,91 @@ def _correr_traslados(driver_actual):
 
 
 
+
+# ============================================================
+# TOMAS FISICAS PROGRAMADAS
+# ============================================================
+# En la PC de Finanzas las tomas fisicas se subian a hora fija: Simon Bolon a
+# las 12:00 y los demas locales a las 16:00. Al migrar a Render eso se perdio y
+# quedaron dependiendo de que alguien pulsara el boton del panel.
+#
+# Aqui se recupera: en cada pasada el worker mira la hora de Ecuador y, si toca,
+# encola las tomas fisicas del dia. Encolar -y no subir directamente- deja el
+# trabajo en la misma cola que usa el boton, con su mismo control de estados, y
+# se ve igual en el panel.
+#
+# Se encola una sola vez por bodega y dia: antes de insertar se comprueba que no
+# exista ya una tarea de toma fisica para esa bodega y esa fecha, sea del
+# horario o pedida a mano. Sin eso, el cron dispara cada 3 minutos y crearia una
+# tarea nueva en cada pasada durante toda la hora.
+
+HORARIO_TOMAS = {
+    12: ['simon_bolon'],
+    16: ['real_audiencia', 'floreana', 'portugal',
+         'santo_cachon_real', 'santo_cachon_portugal'],
+}
+TZ_ECUADOR = timezone(timedelta(hours=-5))
+
+
+def hora_ecuador():
+    """Hora local de Ecuador. Render corre en UTC, asi que no vale datetime.now()
+    a secas: daria las 21:00 cuando en el local son las 16:00."""
+    return datetime.now(TZ_ECUADOR)
+
+
+def programar_tomas_fisicas():
+    """Encola las tomas fisicas que tocan a esta hora. Devuelve cuantas encolo."""
+    if os.environ.get('SIN_HORARIO_TOMAS', '0') == '1':
+        return 0
+
+    ahora = hora_ecuador()
+    bodegas = HORARIO_TOMAS.get(ahora.hour)
+    if not bodegas:
+        return 0
+
+    # La toma fisica es la del propio dia.
+    fecha = ahora.date().isoformat()
+    creadas = 0
+    con = None
+    try:
+        con = psycopg2.connect(**DB_CONFIG)
+        cur = con.cursor()
+        for bodega in bodegas:
+            cur.execute("""
+                SELECT id, estado FROM goti.tareas_inventario_locales
+                WHERE bodega = %s AND fecha = %s AND accion = 'toma_fisica'
+                ORDER BY id DESC LIMIT 1
+            """, (bodega, fecha))
+            ya = cur.fetchone()
+            if ya:
+                log(f'  {bodega}: ya habia tarea #{ya[0]} ({ya[1]}), no se repite')
+                continue
+            cur.execute("""
+                INSERT INTO goti.tareas_inventario_locales
+                    (bodega, fecha, accion, solicitado_por)
+                VALUES (%s, %s, 'toma_fisica', 'horario')
+                RETURNING id
+            """, (bodega, fecha))
+            log(f'  {bodega}: encolada toma fisica #{cur.fetchone()[0]} para {fecha}')
+            creadas += 1
+        con.commit()
+    except Exception as e:
+        if con:
+            con.rollback()
+        log(f'No se pudieron programar las tomas fisicas: {str(e)[:150]}', 'ERROR')
+        return 0
+    finally:
+        if con:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    if creadas:
+        log(f'Horario {ahora:%H:%M} Ecuador: {creadas} toma(s) fisica(s) encoladas')
+    return creadas
+
+
 # ============ MAIN LOOP ============
 def verificar_entorno():
     """Prueba de humo: Chrome + login + descarga del Excel de saldos + parseo.
@@ -2220,6 +2305,11 @@ def main():
         log(f'SOLO_COLA={solo!r} no coincide con ninguna cola', 'ERROR')
         return 1
     log(f'colas atendidas: {", ".join(c[0] for c in activas)}')
+
+    try:
+        programar_tomas_fisicas()
+    except Exception as e:
+        log(f'Fallo al programar tomas fisicas: {str(e)[:150]}', 'ERROR')
 
     driver = None
     hechas = fallidas = 0
