@@ -1622,6 +1622,408 @@ def procesar_tareas_paralelo(tareas_por_tipo):
     log(f'Paralelo terminado: {resultados["ok"]} OK, {resultados["error"]} errores')
 
 
+
+# ============================================================
+# TRASLADOS ENTRE BODEGAS (Selenium)
+# ============================================================
+# Los traslados son el unico movimiento que la API de Contifico NO puede crear:
+# manda el mismo payload que un ingreso mas bodega_destino_id y responde
+#     500 {"mensaje": "... 'NoneType' object has no attribute 'parametros'"}
+# Pasa igual en v1 y en v2, con cualquier bodega, asi que no es el payload: es
+# un fallo del lado de ellos. Por eso quedaban pendientes reintentandose para
+# siempre sin llegar nunca a crearse.
+#
+# Se hace por el formulario web, que es el mismo camino que ya usan produccion
+# y las tomas fisicas. Los selectores vienen de 'carga airtable bot/
+# test_traslados.py', el bot que corria en la PC de Finanzas.
+#
+# NO se marca Hecho si el documento no aparece con su numero TRA: preferimos
+# reintentar a dar por bueno algo que no existe.
+
+AIRTABLE_TOKEN_GLOG = os.environ.get('AIRTABLE_TOKEN_GLOG', '')
+AT_BASE_GLOG = 'appETTeYKD0DQpuN7'
+AT_TABLA_TRASLADOS = 'tblpeKmVHSsMopxBQ'   # Egresos Emergentes Tiendas
+AT_TABLA_GLOG_PRODUCTOS = 'tblOCyYpGJDFcGVvr'   # Matriz General de Productos
+AT_TABLA_GLOG_CONTIFICO = 'tblxC58veM7i1UnYc'   # Matriz Contifico
+
+CONTIFICO_MOVIMIENTOS_URL = ('https://1793168604001.contifico.com'
+                             '/sistema/inventario/movimiento/registrar/')
+
+MAPEO_BODEGAS_GLOG = {
+    'recCypzc9E9uEhJYv': 'PLANTA DE PRODUCCION',
+    'recGDd0jYLlVz9b6f': 'BODEGA SANTO CACHON PORTUGAL',
+    'recKYprt4weEisem9': 'BODEGA SANTO CACHON REAL',
+    'recM8vqHzgEMsff38': 'BODEGA SIMON BOLON',
+    'reccM8WyxFZPhS7QL': 'BODEGA CHIOS REAL',
+    'reco7xJnelmRE54f5': 'BODEGA CHIOS PORTUGAL',
+    'recwIOf9ff2VU3IuS': 'BODEGA CHIOS FLOREANA',
+    'recEgtaLkUBCT1fpj': 'BODEGA PRINCIPAL',
+    'recQtytIc02x1pZWm': 'BODEGA MATERIA PRIMA',
+    'recNUlLpZcSPD2TZt': 'BODEGA PULMON',
+}
+MAPEO_CENTROS_GLOG = {
+    'recCypzc9E9uEhJYv': 'PLANTA DE PRODUCCION',
+    'recGDd0jYLlVz9b6f': 'SANTO CACHON PORTUGAL',
+    'recKYprt4weEisem9': 'SANTO CACHON REAL',
+    'recM8vqHzgEMsff38': 'SIMON BOLON',
+    'reccM8WyxFZPhS7QL': 'REAL',
+    'reco7xJnelmRE54f5': 'PORTUGAL',
+    'recwIOf9ff2VU3IuS': 'FLOREANA',
+    'recEgtaLkUBCT1fpj': 'BODEGA PRINCIPAL',
+    'recQtytIc02x1pZWm': 'BODEGA MATERIA PRIMA',
+    'recNUlLpZcSPD2TZt': 'BODEGA PULMON',
+}
+
+
+def _at_glog(tabla, params=None):
+    """Lee una tabla completa de la base GLOG, paginando.
+
+    Sin paginar solo llegan los primeros 100 registros: con 'pendientes' eso
+    daria una lista corta y aparentemente correcta.
+    """
+    filas, offset = [], None
+    while True:
+        p = dict(params or {})
+        if offset:
+            p['offset'] = offset
+        r = requests.get(f'https://api.airtable.com/v0/{AT_BASE_GLOG}/{tabla}',
+                         headers={'Authorization': f'Bearer {AIRTABLE_TOKEN_GLOG}'},
+                         params=p, timeout=40)
+        r.raise_for_status()
+        d = r.json()
+        filas.extend(d.get('records', []))
+        offset = d.get('offset')
+        if not offset:
+            return filas
+
+
+_catalogo_glog = None
+
+
+def _codigo_contifico(producto_rec_id):
+    """record_id de Matriz General -> codigo de Contifico, cruzando por nombre."""
+    global _catalogo_glog
+    if _catalogo_glog is None:
+        general = {r['id']: r['fields'] for r in _at_glog(AT_TABLA_GLOG_PRODUCTOS)}
+        contifico = [r['fields'] for r in _at_glog(AT_TABLA_GLOG_CONTIFICO)]
+        _catalogo_glog = (general, contifico)
+        log(f'  catalogo GLOG: {len(general)} productos, {len(contifico)} en matriz Contifico')
+    general, contifico = _catalogo_glog
+
+    nombre = (general.get(producto_rec_id, {}).get('Productos') or '').upper()
+    if not nombre:
+        return None, ''
+    for ct in contifico:
+        ct_nombre = (ct.get('Nombre Producto') or '').upper()
+        if ct_nombre and (ct_nombre == nombre or nombre in ct_nombre or ct_nombre in nombre):
+            return ct.get('Código', ''), nombre
+    return None, nombre
+
+
+def traslados_pendientes():
+    """Traslados de AirTable sin marcar como Hecho."""
+    if not AIRTABLE_TOKEN_GLOG:
+        log('AIRTABLE_TOKEN_GLOG no configurado: no se revisan traslados', 'WARN')
+        return []
+    try:
+        regs = _at_glog(AT_TABLA_TRASLADOS)
+    except Exception as e:
+        log(f'No se pudo leer traslados de AirTable: {str(e)[:150]}', 'ERROR')
+        return []
+    pend = [r for r in regs if not r['fields'].get('Hecho', False)]
+    if pend:
+        log(f'{len(pend)} traslado(s) pendientes de {len(regs)}')
+    return pend
+
+
+def _marcar_traslado_hecho(record_id, num_doc):
+    """Marca Hecho y guarda el numero. Si el update entero falla, reintenta con
+    SOLO 'Hecho': perder el numero molesta, duplicar el traslado es grave."""
+    url = (f'https://api.airtable.com/v0/{AT_BASE_GLOG}/{AT_TABLA_TRASLADOS}/{record_id}')
+    cab = {'Authorization': f'Bearer {AIRTABLE_TOKEN_GLOG}',
+           'Content-Type': 'application/json'}
+    r = requests.patch(url, headers=cab,
+                       json={'fields': {'Hecho': True, 'num_documento': num_doc}},
+                       timeout=30)
+    if r.status_code == 200:
+        log(f'  [AT] Marcado: Hecho=True, num_documento={num_doc}')
+        return True
+    log(f'  [AT] update completo fallo ({r.status_code}): {r.text[:150]}', 'WARN')
+    r2 = requests.patch(url, headers=cab, json={'fields': {'Hecho': True}}, timeout=30)
+    if r2.status_code == 200:
+        log(f'  [AT] Marcado solo Hecho (sin numero) para no duplicar', 'WARN')
+        return True
+    log(f'  [AT] NO se pudo marcar Hecho: {r2.text[:150]}', 'ERROR')
+    return False
+
+
+def _autocompletar(driver, elemento, texto):
+    """Escribe en un autocomplete de Contifico y escoge la primera sugerencia."""
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", elemento)
+    time.sleep(0.4)
+    elemento.click()
+    time.sleep(0.4)
+    elemento.clear()
+    elemento.send_keys(texto)
+    time.sleep(2.5)
+    elemento.send_keys(Keys.DOWN)
+    time.sleep(0.5)
+    elemento.send_keys(Keys.ENTER)
+    time.sleep(1)
+
+
+def procesar_traslado(reg, driver):
+    """Crea un traslado en Contifico por el formulario web.
+
+    Devuelve (driver_sigue_vivo, salio_bien).
+    """
+    from selenium.webdriver.support.ui import Select
+
+    rid = reg['id']
+    f = reg['fields']
+    origen_rec = (f.get('Tienda Origen') or [''])[0]
+    destino_rec = (f.get('Tienda Destino') or [''])[0]
+    prod_rec = (f.get('Productos') or [''])[0]
+    cantidad = f.get('Cantidad') or 0
+
+    bod_origen = MAPEO_BODEGAS_GLOG.get(origen_rec, '')
+    bod_destino = MAPEO_BODEGAS_GLOG.get(destino_rec, '')
+    centro = MAPEO_CENTROS_GLOG.get(origen_rec, bod_origen)
+
+    fecha_raw = f.get('Fecha de Registro') or ''
+    try:
+        fecha = datetime.strptime(fecha_raw, '%Y-%m-%d').strftime('%d/%m/%Y')
+    except Exception:
+        fecha = datetime.now().strftime('%d/%m/%Y')
+
+    codigo, nombre_prod = _codigo_contifico(prod_rec)
+
+    log(f'>>> TRASLADO {rid} | {codigo or "?"} x{cantidad} | '
+        f'{bod_origen} -> {bod_destino} ({fecha})')
+
+    # Datos malos: no se toca Contifico y el registro queda pendiente para que
+    # alguien lo corrija en AirTable.
+    if not bod_origen or not bod_destino:
+        log(f'  [DATO] bodega no mapeada: origen={origen_rec!r} destino={destino_rec!r}', 'ERROR')
+        return True, False
+    if bod_origen == bod_destino:
+        log('  [DATO] origen y destino son la misma bodega', 'ERROR')
+        return True, False
+    if not codigo:
+        log(f'  [DATO] producto sin codigo de Contifico: {nombre_prod!r}', 'ERROR')
+        return True, False
+    if not cantidad:
+        log('  [DATO] sin cantidad', 'ERROR')
+        return True, False
+
+    try:
+        driver.get(CONTIFICO_MOVIMIENTOS_URL)
+        wait = WebDriverWait(driver, 40)
+        wait.until(EC.presence_of_element_located((By.NAME, 'tipo')))
+        time.sleep(2)
+
+        # 1. tipo TRASLADO
+        sel = Select(driver.find_element(By.NAME, 'tipo'))
+        opcion = next((o.text for o in sel.options if 'TRASLADO' in o.text.upper()), None)
+        if not opcion:
+            raise Exception('el formulario no ofrece el tipo TRASLADO')
+        sel.select_by_visible_text(opcion)
+        time.sleep(1.5)
+
+        # 2. fecha
+        campo = driver.find_element(By.NAME, 'fecha')
+        campo.clear()
+        campo.send_keys(fecha)
+        campo.send_keys(Keys.ESCAPE)
+        time.sleep(0.5)
+        driver.find_element(By.TAG_NAME, 'body').click()
+        time.sleep(0.5)
+
+        # 3. bodegas
+        _autocompletar(driver, wait.until(EC.element_to_be_clickable(
+            (By.CSS_SELECTOR, "input[data_id='id_bodega_origen_id']"))), bod_origen)
+        _autocompletar(driver, wait.until(EC.element_to_be_clickable(
+            (By.CSS_SELECTOR, "input[data_id='id_bodega_destino_id']"))), bod_destino)
+
+        # 4. descripcion
+        desc = f'TRASLADO ENTRE BODEGAS {bod_origen}/{bod_destino}'
+        cd = driver.find_element(By.NAME, 'descripcion')
+        cd.clear()
+        cd.send_keys(desc)
+
+        # 5. producto y cantidad
+        if not _fila_producto(driver, codigo, cantidad):
+            raise Exception(f'no se pudo cargar el producto {codigo} en el detalle')
+
+        # 6. guardar
+        btn = wait.until(EC.element_to_be_clickable((By.ID, 'btn-guardar')))
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+        time.sleep(0.5)
+        btn.click()
+        time.sleep(6)
+
+        # 7. VERIFICAR: sin numero TRA no hay documento, por muy verde que se
+        #    vea la pantalla. Este es el control que faltaba en las tomas
+        #    fisicas y por el que se reportaron como subidas sin existir.
+        cuerpo = driver.find_element(By.TAG_NAME, 'body').text
+        m = re.search(r'TRA\s+\d+', cuerpo)
+        if not m:
+            resumen = ' | '.join(l.strip() for l in cuerpo.split('\n')[:12] if l.strip())
+            raise Exception(f'Contifico no devolvio numero TRA. Pantalla: {resumen[:300]}')
+        num_doc = m.group(0)
+        url_doc = driver.current_url
+        estado = 'Generado' if 'Generado' in cuerpo else (
+                 'Pendiente' if 'Pendiente' in cuerpo else '?')
+        log(f'  [OK] {num_doc} creado (estado en pantalla: {estado})')
+
+        _marcar_traslado_hecho(rid, num_doc)
+
+        try:
+            detalle = (f'📦 {nombre_prod or codigo} ({codigo}) x {cantidad}\n'
+                       f'📅 {fecha}\n'
+                       f'🔄 {bod_origen} ➜ {bod_destino}')
+            notificar_traslado_ok(centro, detalle, num_doc)
+        except Exception as e:
+            log(f'  aviso por Telegram fallo: {str(e)[:100]}', 'WARN')
+        return True, True
+
+    except Exception as e:
+        log(f'ERROR traslado {rid}: {str(e)[:250]}', 'ERROR')
+        log(traceback.format_exc()[:500], 'ERROR')
+        msg = str(e).lower()
+        vivo = not any(k in msg for k in (
+            'invalid session', 'disconnected', 'not connected', 'no such window',
+            'connection refused', 'target closed', 'chrome not reachable'))
+        return vivo, False
+
+
+def _fila_producto(driver, codigo, cantidad):
+    """Escribe codigo y cantidad en la fila de detalle."""
+    inputs = driver.find_elements(By.CSS_SELECTOR, 'input.ui-autocomplete-input')
+    puesto = False
+    for inp in inputs:
+        data_id = (inp.get_attribute('data_id') or '').lower()
+        placeholder = inp.get_attribute('placeholder') or ''
+        # Los autocompletes de cabecera (bodega, centro de costo, proyecto...)
+        # se parecen al del producto; se descartan por su data_id.
+        if any(x in data_id for x in ('empresa', 'bodega', 'produccion', 'movimiento',
+                                      'ordencompra', 'cuenta', 'centro', 'proyecto')):
+            continue
+        if 'FOODIX' in placeholder or not inp.is_displayed():
+            continue
+        try:
+            inp.find_element(By.XPATH, './ancestor::tr')
+        except Exception:
+            continue
+        _autocompletar(driver, inp, codigo)
+        puesto = True
+        break
+    if not puesto:
+        return False
+
+    for campo in driver.find_elements(By.CSS_SELECTOR, "input[name*='cantidad']"):
+        if 'template' in (campo.get_attribute('name') or ''):
+            continue
+        if campo.is_displayed():
+            campo.clear()
+            campo.send_keys(str(cantidad))
+            return True
+    return False
+
+
+def notificar_traslado_ok(centro, detalle, num_doc):
+    """Avisa por Telegram reusando el modulo comun, el mismo que usan los
+    demas bots, para que el mensaje salga con el formato de siempre."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from notificar_telegram import notificar_exito
+    notificar_exito('Traslado', centro, detalle, num_doc)
+
+
+# Clave arbitraria pero fija para el lock de Postgres. Tiene que ser la misma
+# en todas las corridas: es lo que las identifica entre si.
+LOCK_TRASLADOS = 918273645
+
+
+def correr_traslados(driver_actual):
+    """Atiende los traslados pendientes. Devuelve (driver, hechos, fallidos).
+
+    Se le pasa el driver que ya tenga el worker para no abrir un segundo Chrome.
+
+    Va con un lock de Postgres porque el cron dispara cada 3 minutos y cinco
+    traslados tardan mas que eso: sin el lock, la corrida siguiente empezaria
+    con los mismos registros -en AirTable no se marcan hasta despues de
+    crearlos- y los duplicaria en Contifico. Es lo que paso con los 23 egresos
+    del 15-ago. Si otra corrida lo tiene tomado, esta se salta los traslados y
+    ya los cogera en 3 minutos.
+    """
+    con = lock = None
+    try:
+        con = psycopg2.connect(**DB_CONFIG)
+        con.autocommit = True
+        cur = con.cursor()
+        cur.execute('SELECT pg_try_advisory_lock(%s)', (LOCK_TRASLADOS,))
+        lock = bool(cur.fetchone()[0])
+    except Exception as e:
+        log(f'No se pudo tomar el lock de traslados: {str(e)[:120]}', 'WARN')
+        if con:
+            try: con.close()
+            except Exception: pass
+        return driver_actual, 0, 0
+
+    if not lock:
+        log('Otra corrida esta subiendo traslados; esta se los salta.')
+        try: con.close()
+        except Exception: pass
+        return driver_actual, 0, 0
+
+    try:
+        return _correr_traslados(driver_actual)
+    finally:
+        try:
+            cur.execute('SELECT pg_advisory_unlock(%s)', (LOCK_TRASLADOS,))
+            con.close()
+        except Exception:
+            pass
+
+
+def _correr_traslados(driver_actual):
+    pend = traslados_pendientes()
+    if not pend:
+        return driver_actual, 0, 0
+
+    driver = driver_actual
+    hechos = fallidos = 0
+    for reg in pend:
+        if driver is None:
+            log('Iniciando Chrome y login en Contifico (traslados)...')
+            driver = make_chrome()
+            login_contifico(driver)
+        elif not driver_sano(driver):
+            log('El driver murio, reiniciando...', 'WARN')
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            driver = make_chrome()
+            login_contifico(driver)
+        try:
+            vivo, ok = procesar_traslado(reg, driver)
+        except Exception as e:
+            log(f'traslado {reg["id"]} reviento: {e}', 'ERROR')
+            vivo, ok = False, False
+        hechos += 1 if ok else 0
+        fallidos += 0 if ok else 1
+        if not vivo:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            driver = None
+    log(f'Traslados: {hechos} hechos, {fallidos} pendientes para la proxima')
+    return driver, hechos, fallidos
+
+
+
 # ============ MAIN LOOP ============
 def verificar_entorno():
     """Prueba de humo: Chrome + login + descarga del Excel de saldos + parseo.
@@ -1806,6 +2208,26 @@ def main():
             try: driver.quit()
             except Exception: pass
             log('Navegador cerrado.')
+
+    # Traslados de AirTable. Van al final y con su propio try para que un
+    # fallo aqui no tire las cuatro colas del panel, que son lo urgente.
+    # Se reusa el driver que quedo abierto en vez de arrancar otro Chrome.
+    if os.environ.get('SALTAR_TRASLADOS', '0') != '1' and not solo:
+        try:
+            # El bloque de arriba ya cerro el navegador en su finally, asi que
+            # se empieza con None: correr_traslados solo abre Chrome si de
+            # verdad hay algo pendiente que subir.
+            driver, t_ok, t_mal = correr_traslados(None)
+            hechas += t_ok
+            fallidas += t_mal
+        except Exception as e:
+            log(f'Traslados fallaron enteros: {str(e)[:200]}', 'ERROR')
+            log(traceback.format_exc()[:500], 'ERROR')
+        finally:
+            if driver is not None:
+                try: driver.quit()
+                except Exception: pass
+                driver = None
 
     fin = datetime.now()
     log('=' * 62)

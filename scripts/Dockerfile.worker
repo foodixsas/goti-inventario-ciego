@@ -24,6 +24,9 @@ COPY requirements-worker.txt .
 RUN pip install --no-cache-dir -r requirements-worker.txt
 
 COPY worker_operativo.py ./
+# El worker avisa por Telegram de los traslados; sin este archivo el
+# import falla y el movimiento se crea pero nadie se entera.
+COPY notificar_telegram.py ./
 RUN mkdir -p /tmp/descargas
 
 CMD ["python", "worker_operativo.py"]

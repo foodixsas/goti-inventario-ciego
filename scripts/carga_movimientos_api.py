@@ -476,6 +476,22 @@ def procesar_traslados(bodegas):
     log("BOT 2: TRASLADOS")
     log("="*55)
 
+    # DESACTIVADO A PROPOSITO. Los traslados los hace ahora worker_operativo.py
+    # con Selenium, porque la API de Contifico los rechaza siempre:
+    #   500 {"mensaje": "... 'NoneType' object has no attribute 'parametros'"}
+    # Es un fallo del lado de ellos -mismo error en v1 y en v2, con cualquier
+    # bodega-, asi que reintentar por aqui solo gasta corridas y nunca crea nada.
+    #
+    # No se borra el codigo por si algun dia arreglan el endpoint: para volver a
+    # este camino basta poner TRASLADOS_POR_API=1.
+    #
+    # OJO: si se reactiva sin apagar los traslados del worker, cada registro se
+    # crearia DOS veces en Contifico.
+    if os.getenv("TRASLADOS_POR_API", "0") != "1":
+        log("  [SKIP] Los traslados los hace el worker con Selenium "
+            "(la API responde 500). TRASLADOS_POR_API=1 para volver a la API.")
+        return
+
     api = Api(AIRTABLE_TOKEN_GLOG)
 
     # Precargar tablas de lookup en cache (evita multiples llamadas)
