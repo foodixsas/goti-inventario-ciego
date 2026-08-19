@@ -10733,7 +10733,7 @@ async function clCargarHistorial() {
                         ${sePuedeCancelar
                             ? `<button class="cl-btn-cancelar" data-id="${t.id}"
                                  data-estado="${t.estado}">Cancelar</button>`
-                            : ''}
+                            : '<span style="color:#cbd5e1;">&mdash;</span>'}
                     </td>
                 </tr>
             `;

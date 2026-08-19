@@ -6847,4 +6847,56 @@ body.dark #view-dashboard .chart-card { background: #1e293b !important; border-c
     border-radius: 6px; padding: 5px 12px; font-size: 13px; cursor: pointer;
 }
 .cl-btn-cancelar:hover { background: #fef2f2; }
+
+/* ============================================================
+   HISTORIAL DE TAREAS (Carga Inventario Locales)
+   ============================================================
+   La tabla usaba .data-table y los estados .cl-badge-*, y NINGUNA de esas
+   clases existia en esta hoja: salia sin bordes ni separacion, con el ID
+   pegado a la fecha ("26018/08/2026") y el local pegado a la accion
+   ("Santo Cachon PortugalToma Fisica"). Aqui van sus estilos. */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    background: #fff;
+}
+.data-table th {
+    background: #f8fafc;
+    color: #475569;
+    font-weight: 600;
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 2px solid #e5e7eb;
+    white-space: nowrap;
+}
+.data-table td {
+    padding: 11px 16px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+    color: #334155;
+}
+/* Numeros a la derecha: leidos en columna se comparan de un vistazo. */
+.data-table td:first-child { font-weight: 600; color: #0f172a; text-align: right; }
+.data-table tbody tr:hover { background: #f8fafc; }
+
+#cl-historial-container {
+    overflow-x: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+/* Estados: el color dice el resultado sin tener que leer. */
+.cl-badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.cl-badge-pendiente { background: #fef3c7; color: #92400e; }
+.cl-badge-proceso   { background: #dbeafe; color: #1e40af; }
+.cl-badge-ok        { background: #dcfce7; color: #166534; }
+.cl-badge-err       { background: #fee2e2; color: #991b1b; }
 .cl-badge-cancelado { background: #e2e8f0; color: #475569; }
