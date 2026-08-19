@@ -10601,6 +10601,53 @@ async function clEnviarTarea() {
 }
 
 
+
+// Aviso de "hay tareas corriendo", arriba y con boton para pararlas todas.
+// En el historial el boton llegaba tarde: una tarea deja de ser cancelable en
+// menos de tres minutos.
+function clPintarEnMarcha(tareas) {
+    const caja = document.getElementById('cl-en-marcha');
+    if (!caja) return;
+    const vivas = (tareas || []).filter(t => t.estado === 'pendiente' || t.estado === 'en_proceso');
+    if (!vivas.length) { caja.style.display = 'none'; return; }
+
+    const enCurso = vivas.filter(t => t.estado === 'en_proceso').length;
+    const esperando = vivas.length - enCurso;
+    document.getElementById('cl-em-titulo').textContent =
+        `${vivas.length} tarea(s) en marcha`;
+    document.getElementById('cl-em-detalle').innerHTML =
+        vivas.map(t => {
+            const nom = CL_LOCALES_NOMBRES[t.bodega] || t.bodega;
+            const acc = t.accion === 'actualizar_cantidad' ? 'Actualizar cantidad' : 'Toma fisica';
+            const f = t.fecha ? t.fecha.split('T')[0].split('-').reverse().join('/') : '';
+            return `#${t.id} ${nom} — ${acc} ${f} <b>(${t.estado})</b>`;
+        }).join('<br>')
+        + (enCurso ? `<br><br>Las ${enCurso} que ya empezaron pueden alcanzar a `
+                   + `crear el documento en Contifico aunque las canceles.` : '');
+    caja.dataset.ids = vivas.map(t => t.id).join(',');
+    caja.dataset.esperando = esperando;
+    caja.style.display = 'flex';
+}
+
+async function clCancelarTodo() {
+    const caja = document.getElementById('cl-en-marcha');
+    const ids = (caja.dataset.ids || '').split(',').filter(Boolean);
+    if (!ids.length) return;
+    if (!confirm(`Cancelar ${ids.length} tarea(s)?\n\nLas que ya empezaron pueden `
+               + `alcanzar a crear el documento en Contifico igualmente.`)) return;
+    let ok = 0, fallo = 0;
+    for (const id of ids) {
+        try {
+            const r = await fetch(`${CONFIG.API_URL}/api/inventario-locales/cancelar/${id}`,
+                                  { method: 'POST' });
+            (await r.json()).ok ? ok++ : fallo++;
+        } catch (e) { fallo++; }
+    }
+    showToast(`${ok} cancelada(s)` + (fallo ? `, ${fallo} no se pudieron` : ''),
+              fallo ? 'warning' : 'success');
+    clCargarHistorial();
+}
+
 async function clCancelarTarea(id, estado) {
     // Si el worker ya empezo, el documento puede acabar creandose igual: mas
     // vale decirlo antes que dejar creer que se paro en seco.
@@ -10649,7 +10696,7 @@ async function clCargarHistorial() {
                 'en_proceso': 'cl-badge-proceso',
                 'completado': 'cl-badge-ok',
                 'error': 'cl-badge-err',
-                'cancelado': 'cl-badge-err'
+                'cancelado': 'cl-badge-cancelado'
             }[t.estado] || 'cl-badge-pendiente';
             // Solo tiene sentido cancelar lo que aun no ha terminado.
             const sePuedeCancelar = t.estado === 'pendiente' || t.estado === 'en_proceso';
@@ -10680,6 +10727,8 @@ async function clCargarHistorial() {
         // data-id + addEventListener: nada de onclick en linea.
         tbody.querySelectorAll('.cl-btn-cancelar').forEach(b =>
             b.addEventListener('click', () => clCancelarTarea(b.dataset.id, b.dataset.estado)));
+
+        clPintarEnMarcha(data);
 
         const hayEnProceso = data.some(t => t.estado === 'pendiente' || t.estado === 'en_proceso');
         if (!hayEnProceso && _clPollInterval) {
@@ -10999,4 +11048,10 @@ document.addEventListener('DOMContentLoaded', () => {
     on('tg-editor-fondo', 'click', e => {
         if (e.target.id === 'tg-editor-fondo') tgCerrarEditor();
     });
+});
+
+
+document.addEventListener('DOMContentLoaded', () => {
+    const parar = document.getElementById('cl-cancelar-todo');
+    if (parar) parar.addEventListener('click', clCancelarTodo);
 });
