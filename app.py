@@ -8,6 +8,7 @@ import psycopg2
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor, execute_values
 import os, re, secrets, smtplib, json
+import requests   # lo usan los endpoints de Telegram (probar / traer nombres)
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
