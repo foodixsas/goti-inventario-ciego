@@ -260,6 +260,13 @@ TIMEOUT_SCRIPT = 180     # aumentado para exportarExcel()
 TIMEOUT_DESCARGA = 120   # antes: 300
 TIMEOUT_WAIT = 45        # antes: 120
 
+# Timeout de la conexion HTTP entre Selenium y chromedriver. urllib3 lo pone en
+# 120s y ese corte no lo cambia ningun set_*_timeout: la tarea 249 murio con
+# "HTTPConnectionPool ... Read timed out (read timeout=120)" mientras Contifico
+# seguia generando el Excel. Tiene que quedar POR ENCIMA de TIMEOUT_SCRIPT para
+# que el que corte sea Selenium, que da un error legible, y no la conexion.
+TIMEOUT_CONEXION = int(os.environ.get('TIMEOUT_CONEXION', '300'))
+
 # Modo headless (sin ventana) - mas rapido y menos recursos
 USE_HEADLESS = os.environ.get('CRUCE_HEADLESS', '1') == '1'
 
@@ -310,6 +317,14 @@ def make_chrome(parallel_id=None):
     # Timeouts reducidos
     driver.set_page_load_timeout(TIMEOUT_PAGE_LOAD)
     driver.set_script_timeout(TIMEOUT_SCRIPT)
+    # El corte de 120s que mato la tarea 249 vive aqui, en el cliente HTTP que
+    # habla con chromedriver, y no lo toca ningun set_*_timeout. En selenium
+    # 4.40 hay que escribirlo en la instancia: RemoteConnection.set_timeout()
+    # lanza AttributeError y se queda en nada.
+    try:
+        driver.command_executor.client_config.timeout = TIMEOUT_CONEXION
+    except Exception as e:
+        log(f'no se pudo fijar el timeout de conexion: {str(e)[:80]}', 'WARN')
     driver.implicitly_wait(5)
 
     # Guardar la carpeta de descarga en el driver para uso posterior

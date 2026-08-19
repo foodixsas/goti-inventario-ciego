@@ -10600,6 +10600,31 @@ async function clEnviarTarea() {
     }
 }
 
+
+async function clCancelarTarea(id, estado) {
+    // Si el worker ya empezo, el documento puede acabar creandose igual: mas
+    // vale decirlo antes que dejar creer que se paro en seco.
+    const aviso = estado === 'en_proceso'
+        ? `\n\nOJO: el worker YA esta trabajando en esta tarea. Se marcara como `
+          + `cancelada para que no se reintente, pero puede que alcance a crear `
+          + `el documento en Contifico.`
+        : '';
+    if (!confirm(`Cancelar la tarea #${id}?${aviso}`)) return;
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/inventario-locales/cancelar/${id}`,
+                                { method: 'POST' });
+        const d = await res.json();
+        if (d.ok) {
+            showToast(d.aviso || `Tarea #${id} cancelada`, d.aviso ? 'warning' : 'success');
+            clCargarHistorial();
+        } else {
+            showToast(d.error || 'No se pudo cancelar', 'error');
+        }
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
 async function clCargarHistorial() {
     const tbody = document.getElementById('cl-historial-body');
     if (!tbody) return;
@@ -10609,12 +10634,12 @@ async function clCargarHistorial() {
         const data = await res.json();
 
         if (data.error) {
-            tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center;">Error: ${data.error}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" style="color:#dc2626;text-align:center;">Error: ${data.error}</td></tr>`;
             return;
         }
 
         if (!data.length) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;">No hay tareas registradas</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#94a3b8;">No hay tareas registradas</td></tr>';
             return;
         }
 
@@ -10623,8 +10648,11 @@ async function clCargarHistorial() {
                 'pendiente': 'cl-badge-pendiente',
                 'en_proceso': 'cl-badge-proceso',
                 'completado': 'cl-badge-ok',
-                'error': 'cl-badge-err'
+                'error': 'cl-badge-err',
+                'cancelado': 'cl-badge-err'
             }[t.estado] || 'cl-badge-pendiente';
+            // Solo tiene sentido cancelar lo que aun no ha terminado.
+            const sePuedeCancelar = t.estado === 'pendiente' || t.estado === 'en_proceso';
 
             const accionTxt = t.accion === 'actualizar_cantidad' ? 'Actualizar Cant.' : 'Toma Fisica';
             const fechaCorta = t.fecha ? t.fecha.split('T')[0].split('-').reverse().join('/') : '-';
@@ -10639,9 +10667,19 @@ async function clCargarHistorial() {
                     <td><span class="cl-badge ${badgeClass}">${t.estado}</span></td>
                     <td>${t.total_productos || '-'}</td>
                     <td>${solicitadoAt}</td>
+                    <td style="text-align:center;">
+                        ${sePuedeCancelar
+                            ? `<button class="cl-btn-cancelar" data-id="${t.id}"
+                                 data-estado="${t.estado}">Cancelar</button>`
+                            : ''}
+                    </td>
                 </tr>
             `;
         }).join('');
+
+        // data-id + addEventListener: nada de onclick en linea.
+        tbody.querySelectorAll('.cl-btn-cancelar').forEach(b =>
+            b.addEventListener('click', () => clCancelarTarea(b.dataset.id, b.dataset.estado)));
 
         const hayEnProceso = data.some(t => t.estado === 'pendiente' || t.estado === 'en_proceso');
         if (!hayEnProceso && _clPollInterval) {
@@ -10649,7 +10687,7 @@ async function clCargarHistorial() {
             _clPollInterval = null;
         }
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center;">Error: ${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="color:#dc2626;text-align:center;">Error: ${e.message}</td></tr>`;
     }
 }
 

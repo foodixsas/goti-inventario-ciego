@@ -8441,6 +8441,58 @@ def inventario_locales_estado(tarea_id):
         if conn: release_db(conn)
 
 
+@app.route('/api/inventario-locales/cancelar/<int:tarea_id>', methods=['POST'])
+def inventario_locales_cancelar(tarea_id):
+    """Cancela una tarea de carga a locales.
+
+    Se podia crear tareas pero no pararlas: si alguien pedia una por error o
+    con la fecha equivocada, solo quedaba esperar a que el worker la hiciera.
+
+    Que se puede cancelar y que no:
+      - 'pendiente'  : se cancela limpio, el worker ya no la toma.
+      - 'en_proceso' : el worker YA la esta haciendo. Se marca cancelada para
+                       que no se reintente, pero puede que el documento acabe
+                       creandose igual en Contifico: el navegador no se entera.
+                       Por eso se avisa en la respuesta en vez de decir que se
+                       paro, que seria mentira.
+      - terminadas   : no se tocan. Cancelar algo ya hecho no deshace nada.
+    """
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT id, estado, bodega, fecha, accion
+                       FROM goti.tareas_inventario_locales WHERE id = %s""", (tarea_id,))
+        t = cur.fetchone()
+        if not t:
+            return jsonify({'error': 'no existe esa tarea'}), 404
+        if t['estado'] in ('completado', 'cancelado'):
+            return jsonify({'error': f"la tarea ya esta {t['estado']}, no hay nada que cancelar"}), 409
+
+        era = t['estado']
+        cur.execute("""UPDATE goti.tareas_inventario_locales
+                       SET estado = 'cancelado',
+                           error_msg = %s,
+                           timestamp_fin = NOW()
+                       WHERE id = %s""",
+                    (f'cancelada desde el panel (estaba en {era})', tarea_id))
+        conn.commit()
+
+        aviso = None
+        if era == 'en_proceso':
+            aviso = ('El worker ya la habia empezado. No se reintentara, pero '
+                     'revisa en Contifico por si alcanzo a crear el documento.')
+        return jsonify({'ok': True, 'id': tarea_id, 'estado_anterior': era,
+                        'aviso': aviso})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 @app.route('/api/inventario-locales/borrar', methods=['POST'])
 def inventario_locales_borrar():
     """Borra datos de inventario (cantidad + conteos) para un local y fecha."""
