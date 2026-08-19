@@ -2195,7 +2195,7 @@ def hora_ecuador():
 
 
 def programar_tomas_fisicas():
-    """Encola las tomas fisicas del dia. Devuelve cuantas encolo.
+    """Encola las tomas fisicas del DIA ANTERIOR. Devuelve cuantas encolo.
 
     Dos cosas aprendidas el 19-ago, el dia que esto se estreno:
 
@@ -2213,7 +2213,15 @@ def programar_tomas_fisicas():
         return 0
 
     ahora = hora_ecuador()
-    fecha = ahora.date().isoformat()
+
+    # La toma fisica que se sube hoy es la del DIA ANTERIOR. El local cuenta a
+    # lo largo del dia y al dia siguiente se carga a Contifico; la descarga de
+    # saldos si es del dia en curso, pero la carga no.
+    #
+    # Estaba puesto con la fecha de hoy y por eso las cinco tareas de las 16:00
+    # fallaron con "No hay conteos": buscaba conteos del 19 cuando lo que habia
+    # que subir era el 18.
+    fecha = (ahora.date() - timedelta(days=1)).isoformat()
 
     # Bodegas cuya hora ya paso hoy. A partir de ahi se sigue mirando hasta
     # que aparezcan los conteos o hasta que acabe el dia.
@@ -2258,7 +2266,7 @@ def programar_tomas_fisicas():
                 RETURNING id
             """, (bodega, fecha))
             log(f'  {bodega}: encolada toma fisica #{cur.fetchone()[0]} '
-                f'({n} productos contados)')
+                f'del {fecha} ({n} productos contados)')
             creadas += 1
         con.commit()
     except Exception as e:
