@@ -2030,62 +2030,108 @@
                         <h2><i class="fab fa-telegram"></i> Avisos de Telegram</h2>
                     </div>
 
-                    <div class="obs-filtros" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                        <p style="margin:0;color:#555;">
-                            Quien quiera recibir avisos debe escribirle
-                            <b>/start</b> a <b>@ChiosInventariosBot</b>. Aparecera aqui como
-                            <b>pendiente</b> y solo hay que asignarle las bodegas.
-                        </p>
-                        <div id="tg-pendientes-aviso" style="display:none;color:#b45309;font-weight:600;"></div>
+                    <div class="tg-ayuda">
+                        <b>Como funciona:</b> la persona le escribe <b>/start</b> a
+                        <b>@ChiosInventariosBot</b> y aparece aqui en la lista.
+                        Mientras no se le indique <b>de que bodegas</b> y <b>de que movimientos</b>
+                        quiere enterarse, no recibe nada. Eso se hace con el boton
+                        <b>Configurar</b> de su fila.
                     </div>
 
-                    <div class="obs-filtros" style="flex-wrap:wrap;gap:12px;align-items:flex-end;">
-                        <div class="obs-filtro-grupo">
-                            <label for="tg-chat-id">Chat ID</label>
-                            <input type="text" id="tg-chat-id" class="obs-filtro-input" placeholder="numerico">
-                        </div>
-                        <div class="obs-filtro-grupo">
-                            <label for="tg-nombre">Nombre</label>
-                            <input type="text" id="tg-nombre" class="obs-filtro-input" placeholder="a quien pertenece">
-                        </div>
-                        <div class="obs-filtro-grupo">
-                            <label for="tg-bodegas">Bodegas (varias con Ctrl)</label>
-                            <select id="tg-bodegas" class="obs-filtro-input" multiple size="5"></select>
-                        </div>
-                        <div class="obs-filtro-grupo">
-                            <label for="tg-operaciones">Operaciones</label>
-                            <select id="tg-operaciones" class="obs-filtro-input" multiple size="5"></select>
-                        </div>
-                        <div class="obs-filtro-grupo">
-                            <label for="tg-avisos">Recibe</label>
-                            <select id="tg-avisos" class="obs-filtro-input">
-                                <option value="ambos">Exitos y errores</option>
-                                <option value="exito">Solo exitos</option>
-                                <option value="error">Solo errores</option>
-                            </select>
-                        </div>
-                        <div class="obs-filtro-grupo">
-                            <button id="tg-guardar" class="btn-primary">
-                                <i class="fas fa-save"></i> Guardar
-                            </button>
-                        </div>
-                        <div class="obs-filtro-grupo">
-                            <button id="tg-limpiar" class="btn-secondary">Limpiar</button>
-                        </div>
-                    </div>
-                    <div id="tg-status" style="margin:8px 0;"></div>
+                    <div id="tg-pendientes-aviso" class="tg-pendientes" style="display:none;"></div>
 
-                    <div class="tabla-scroll">
-                        <table class="tabla-datos">
+                    <div class="tg-barra">
+                        <button id="tg-refrescar" class="btn-secondary">
+                            <i class="fas fa-sync"></i> Actualizar lista
+                        </button>
+                        <button id="tg-nombres" class="btn-secondary">
+                            <i class="fas fa-address-book"></i> Traer nombres de Telegram
+                        </button>
+                        <button id="tg-nuevo" class="btn-primary">
+                            <i class="fas fa-plus"></i> Agregar a mano
+                        </button>
+                        <span id="tg-status" class="tg-status"></span>
+                    </div>
+
+                    <div class="tg-tabla-wrap">
+                        <table class="tg-tabla">
                             <thead>
                                 <tr>
-                                    <th>Estado</th><th>Nombre</th><th>Chat ID</th>
-                                    <th>Bodegas</th><th>Operaciones</th><th>Recibe</th>
-                                    <th>Activo</th><th>Acciones</th>
+                                    <th>Persona</th>
+                                    <th>Recibe avisos de estas bodegas</th>
+                                    <th>De estos movimientos</th>
+                                    <th class="tg-c">Le llega</th>
+                                    <th class="tg-c">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody id="tg-tabla-body"></tbody>
                         </table>
+                    </div>
+
+                    <!-- Editor: se abre al pulsar Configurar. Casillas en vez de
+                         listas con Ctrl, que nadie entiende. -->
+                    <div id="tg-editor-fondo" class="tg-editor-fondo" style="display:none;">
+                      <div class="tg-editor">
+                        <div class="tg-editor-cab">
+                            <h3 id="tg-editor-titulo">Configurar avisos</h3>
+                            <button id="tg-cerrar" class="tg-x" title="Cerrar">&times;</button>
+                        </div>
+
+                        <div class="tg-editor-cuerpo">
+                            <div id="tg-alta-manual" class="tg-paso" style="display:none;">
+                                <div class="tg-paso-tit"><span class="tg-num">0</span> Datos de la persona</div>
+                                <div class="tg-campos">
+                                    <label>Chat ID de Telegram
+                                        <input type="text" id="tg-chat-id" placeholder="ej. 5220304609">
+                                    </label>
+                                    <label>Nombre
+                                        <input type="text" id="tg-nombre" placeholder="a quien pertenece">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="tg-paso">
+                                <div class="tg-paso-tit"><span class="tg-num">1</span> &iquest;De que bodegas quiere enterarse?</div>
+                                <label class="tg-todas">
+                                    <input type="checkbox" id="tg-bod-todas">
+                                    <b>Todas las bodegas</b>
+                                    <small>recibe lo que pase en cualquier local o bodega</small>
+                                </label>
+                                <div id="tg-bodegas-lista" class="tg-casillas"></div>
+                            </div>
+
+                            <div class="tg-paso">
+                                <div class="tg-paso-tit"><span class="tg-num">2</span> &iquest;De que movimientos?</div>
+                                <label class="tg-todas">
+                                    <input type="checkbox" id="tg-op-todas">
+                                    <b>Todos los movimientos</b>
+                                    <small>bajas, ingresos, traslados, conteos, produccion y tomas fisicas</small>
+                                </label>
+                                <div id="tg-operaciones-lista" class="tg-casillas"></div>
+                            </div>
+
+                            <div class="tg-paso">
+                                <div class="tg-paso-tit"><span class="tg-num">3</span> &iquest;Que le mandamos?</div>
+                                <div class="tg-radios">
+                                    <label><input type="radio" name="tg-avisos" value="ambos" checked>
+                                        <b>Todo</b><small>cuando sale bien y cuando falla</small></label>
+                                    <label><input type="radio" name="tg-avisos" value="error">
+                                        <b>Solo problemas</b><small>unicamente cuando algo falla</small></label>
+                                    <label><input type="radio" name="tg-avisos" value="exito">
+                                        <b>Solo confirmaciones</b><small>unicamente cuando sale bien</small></label>
+                                </div>
+                            </div>
+
+                            <div id="tg-resumen" class="tg-resumen"></div>
+                        </div>
+
+                        <div class="tg-editor-pie">
+                            <button id="tg-cancelar" class="btn-secondary">Cancelar</button>
+                            <button id="tg-guardar" class="btn-primary">
+                                <i class="fas fa-save"></i> Guardar
+                            </button>
+                        </div>
+                      </div>
                     </div>
                 </div>
 
@@ -2902,7 +2948,7 @@
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="js/config.js?v=20260317a"></script>
-    <script src="js/app.js?v=20260819tg"></script>
+    <script src="js/app.js?v=20260819tg2"></script>
     <script src="js/flujo-caja.js?v=20260818h"></script>
     <script src="js/nomina.js?v=20260812a"></script>
     <style>

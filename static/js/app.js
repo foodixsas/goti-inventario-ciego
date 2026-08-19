@@ -10666,167 +10666,253 @@ function clDetenerPolling() {
 }
 
 // ============================================================
-// AVISOS DE TELEGRAM — destinatarios por bodega
+// AVISOS DE TELEGRAM — quien recibe que
 // ============================================================
 // Antes los chat_id vivian escritos en notificar_telegram.py y cambiarlos
 // obligaba a editar el codigo y desplegar. Ahora se administran desde aqui.
-// Quien escribe /start al bot entra solo como 'pendiente' y aqui se le asignan
-// las bodegas.
+// Quien escribe /start al bot entra solo como 'pendiente' y aqui se le dice
+// de que bodegas y de que movimientos quiere enterarse.
+//
+// La primera version pedia elegir bodegas en una lista con Ctrl y no se
+// entendia que era obligatorio para que a la persona le llegara algo. Ahora
+// se configura con casillas, en tres pasos, y con un resumen en castellano de
+// lo que se le va a mandar.
 let tgOpciones = { bodegas: [], operaciones: [] };
+let tgFilas = [];
+let tgEditando = null;   // fila que se esta configurando (null = alta nueva)
+
+// Nombres bonitos para la tabla y el resumen; el valor guardado es la clave.
+const TG_NOMBRE_OP = {
+    'Baja': 'Bajas',
+    'Ingreso Extraordinario': 'Ingresos extraordinarios',
+    'Traslado': 'Traslados',
+    'Conteo': 'Conteos',
+    'Produccion': 'Producciones',
+    'Toma Fisica': 'Tomas fisicas'
+};
 
 async function tgInit() {
     if (!tgOpciones.bodegas.length) {
         try {
             const res = await fetch(`${CONFIG.API_URL}/api/telegram/opciones`);
             tgOpciones = await res.json();
-            tgLlenarSelect('tg-bodegas', tgOpciones.bodegas);
-            tgLlenarSelect('tg-operaciones', tgOpciones.operaciones);
         } catch (e) { /* si falla, la tabla igual carga */ }
     }
+    tgPintarCasillas();
     tgCargarTabla();
 }
 
-function tgLlenarSelect(id, valores) {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    sel.innerHTML = valores.map(v => `<option value="${v}">${v}</option>`).join('');
+function tgPintarCasillas() {
+    const sinTodas = arr => (arr || []).filter(v => v !== 'TODAS');
+    const cont = document.getElementById('tg-bodegas-lista');
+    if (cont) {
+        cont.innerHTML = sinTodas(tgOpciones.bodegas).map(b =>
+            `<label><input type="checkbox" class="tg-bod" value="${b}"> ${b}</label>`).join('');
+    }
+    const cop = document.getElementById('tg-operaciones-lista');
+    if (cop) {
+        cop.innerHTML = sinTodas(tgOpciones.operaciones).map(o =>
+            `<label><input type="checkbox" class="tg-op" value="${o}"> ${TG_NOMBRE_OP[o] || o}</label>`).join('');
+    }
+    document.querySelectorAll('.tg-bod, .tg-op').forEach(c =>
+        c.addEventListener('change', tgResumen));
 }
 
 function tgEstado(msg, clase) {
     const el = document.getElementById('tg-status');
     if (!el) return;
     el.textContent = msg || '';
-    el.className = clase || '';
+    el.className = 'tg-status ' + (clase || '');
 }
 
+// ---------- tabla ----------
 async function tgCargarTabla() {
     const tbody = document.getElementById('tg-tabla-body');
     if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="8">Cargando...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5">Cargando...</td></tr>';
     try {
         const res = await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios`);
         const data = await res.json();
-        const filas = data.destinatarios || [];
+        tgFilas = data.destinatarios || [];
 
         const aviso = document.getElementById('tg-pendientes-aviso');
         if (aviso) {
-            if (data.pendientes > 0) {
-                aviso.textContent = `${data.pendientes} persona(s) activaron el bot y esperan que les asignes bodega.`;
-                aviso.style.display = 'block';
-            } else {
-                aviso.style.display = 'none';
-            }
+            const n = data.pendientes || 0;
+            aviso.style.display = n ? 'block' : 'none';
+            aviso.innerHTML = n
+                ? `<i class="fas fa-exclamation-circle"></i> ${n} persona(s) activaron el bot y ` +
+                  `todavia no reciben nada. Pulsa <b>Configurar</b> en sus filas (las amarillas) ` +
+                  `para indicarles de que bodegas y movimientos deben enterarse.`
+                : '';
         }
 
-        if (!filas.length) {
-            tbody.innerHTML = '<tr><td colspan="8">Nadie registrado todavia</td></tr>';
+        if (!tgFilas.length) {
+            tbody.innerHTML = '<tr><td colspan="5">Nadie registrado todavia</td></tr>';
             return;
         }
+
+        const chips = (vals, vacio) => {
+            if (!vals || !vals.length) return `<span class="tg-chip tg-nada">${vacio}</span>`;
+            if (vals.includes('TODAS')) return '<span class="tg-chip tg-todas-chip">TODAS</span>';
+            return vals.map(v => `<span class="tg-chip">${TG_NOMBRE_OP[v] || v}</span>`).join('');
+        };
+        const comoLlega = { ambos: 'Todo', error: 'Solo problemas', exito: 'Solo confirmaciones' };
+
         tbody.innerHTML = '';
-        filas.forEach((f, idx) => {
+        tgFilas.forEach((f, idx) => {
             const tr = document.createElement('tr');
-            const pend = f.estado === 'pendiente';
+            const pend = !(f.bodegas || []).length;
+            tr.className = (pend ? 'tg-pend ' : '') + (f.activo ? '' : 'tg-off');
+            const quien = f.nombre
+                ? `<b>${f.nombre}</b>` + (f.username ? `<small>@${f.username} · ${f.chat_id}</small>`
+                                                     : `<small>${f.chat_id}</small>`)
+                : `<b>Sin nombre</b><small>${f.chat_id}</small>`;
             tr.innerHTML =
-                `<td>${pend ? '<b style="color:#b45309;">PENDIENTE</b>' : 'asignado'}</td>` +
-                `<td>${f.nombre || '-'}${f.username ? ' <small>@' + f.username + '</small>' : ''}</td>` +
-                `<td>${f.chat_id}</td>` +
-                `<td>${(f.bodegas || []).join(', ') || '<i>sin asignar</i>'}</td>` +
-                `<td>${(f.operaciones || []).join(', ')}</td>` +
-                `<td>${f.avisos}</td>` +
-                `<td>${f.activo ? 'si' : 'no'}</td>` +
-                `<td>
-                    <button class="btn-secondary tg-editar" data-idx="${idx}">Editar</button>
-                    <button class="btn-secondary tg-probar" data-id="${f.id}">Probar</button>
-                    <button class="btn-secondary tg-baja" data-id="${f.id}">${f.activo ? 'Desactivar' : 'Activar'}</button>
-                 </td>`;
+                `<td class="tg-persona">${quien}</td>` +
+                `<td>${chips(f.bodegas, 'sin configurar — no recibe nada')}</td>` +
+                `<td>${chips(f.operaciones, '-')}</td>` +
+                `<td class="tg-c">${comoLlega[f.avisos] || f.avisos}</td>` +
+                `<td class="tg-c"><div class="tg-acciones">
+                    <button class="tg-btn-mini tg-principal tg-editar" data-idx="${idx}">Configurar</button>
+                    <button class="tg-btn-mini tg-probar" data-idx="${idx}">Probar</button>
+                    <button class="tg-btn-mini tg-baja" data-idx="${idx}">${f.activo ? 'Desactivar' : 'Activar'}</button>
+                 </div></td>`;
             tbody.appendChild(tr);
         });
         // Nada de onclick inline: se enganchan por data-idx para no romper con
         // nombres o comillas dentro de los datos.
         tbody.querySelectorAll('.tg-editar').forEach(b =>
-            b.addEventListener('click', () => tgEditar(filas[parseInt(b.dataset.idx, 10)])));
+            b.addEventListener('click', () => tgAbrirEditor(tgFilas[+b.dataset.idx])));
         tbody.querySelectorAll('.tg-probar').forEach(b =>
-            b.addEventListener('click', () => tgProbar(b.dataset.id)));
+            b.addEventListener('click', () => tgProbar(tgFilas[+b.dataset.idx])));
         tbody.querySelectorAll('.tg-baja').forEach(b =>
-            b.addEventListener('click', () => tgAlternar(b.dataset.id, filas)));
+            b.addEventListener('click', () => tgAlternar(tgFilas[+b.dataset.idx])));
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="8">Error: ${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5">Error: ${e.message}</td></tr>`;
     }
 }
 
-function tgEditar(f) {
-    document.getElementById('tg-chat-id').value = f.chat_id;
-    document.getElementById('tg-nombre').value = f.nombre || '';
-    document.getElementById('tg-avisos').value = f.avisos || 'ambos';
-    const marcar = (id, vals) => {
-        const sel = document.getElementById(id);
-        if (!sel) return;
-        Array.from(sel.options).forEach(o => { o.selected = (vals || []).includes(o.value); });
-    };
-    marcar('tg-bodegas', f.bodegas);
-    marcar('tg-operaciones', f.operaciones);
-    tgEstado(`Editando a ${f.nombre || f.chat_id}. Cambia lo que quieras y Guardar.`, 'cl-status-info');
+// ---------- editor ----------
+function tgAbrirEditor(fila) {
+    tgEditando = fila || null;
+    const alta = !fila;
+    document.getElementById('tg-alta-manual').style.display = alta ? 'block' : 'none';
+    document.getElementById('tg-editor-titulo').textContent = alta
+        ? 'Agregar persona'
+        : `Avisos de ${fila.nombre || fila.chat_id}`;
+
+    document.getElementById('tg-chat-id').value = fila ? fila.chat_id : '';
+    document.getElementById('tg-nombre').value = fila ? (fila.nombre || '') : '';
+
+    const bods = (fila && fila.bodegas) || [];
+    const ops = (fila && fila.operaciones) || ['TODAS'];
+    document.getElementById('tg-bod-todas').checked = bods.includes('TODAS');
+    document.getElementById('tg-op-todas').checked = !ops.length || ops.includes('TODAS');
+    document.querySelectorAll('.tg-bod').forEach(c => { c.checked = bods.includes(c.value); });
+    document.querySelectorAll('.tg-op').forEach(c => { c.checked = ops.includes(c.value); });
+
+    const av = (fila && fila.avisos) || 'ambos';
+    const r = document.querySelector(`input[name="tg-avisos"][value="${av}"]`);
+    if (r) r.checked = true;
+
+    tgApagarListas();
+    tgResumen();
+    document.getElementById('tg-editor-fondo').style.display = 'flex';
 }
 
-function tgLimpiar() {
-    ['tg-chat-id', 'tg-nombre'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
-    ['tg-bodegas', 'tg-operaciones'].forEach(id => {
-        const s = document.getElementById(id);
-        if (s) Array.from(s.options).forEach(o => o.selected = false);
-    });
-    const a = document.getElementById('tg-avisos');
-    if (a) a.value = 'ambos';
-    tgEstado('');
+function tgCerrarEditor() {
+    document.getElementById('tg-editor-fondo').style.display = 'none';
+    tgEditando = null;
+}
+
+// Marcar "todas" deja sin sentido las casillas de abajo: se atenuan.
+function tgApagarListas() {
+    const bt = document.getElementById('tg-bod-todas').checked;
+    document.getElementById('tg-bodegas-lista').className = 'tg-casillas' + (bt ? ' tg-apagado' : '');
+    const ot = document.getElementById('tg-op-todas').checked;
+    document.getElementById('tg-operaciones-lista').className = 'tg-casillas' + (ot ? ' tg-apagado' : '');
+}
+
+function tgLeerFormulario() {
+    const marcadas = sel => Array.from(document.querySelectorAll(sel))
+        .filter(c => c.checked).map(c => c.value);
+    const bodegas = document.getElementById('tg-bod-todas').checked ? ['TODAS'] : marcadas('.tg-bod');
+    const operaciones = document.getElementById('tg-op-todas').checked ? ['TODAS'] : marcadas('.tg-op');
+    const av = document.querySelector('input[name="tg-avisos"]:checked');
+    return {
+        chat_id: (document.getElementById('tg-chat-id').value || '').trim(),
+        nombre: (document.getElementById('tg-nombre').value || '').trim(),
+        bodegas: bodegas,
+        operaciones: operaciones,
+        avisos: av ? av.value : 'ambos',
+        activo: tgEditando ? tgEditando.activo : true
+    };
+}
+
+// Resumen en castellano: el usuario ve exactamente que le va a llegar antes
+// de guardar, sin tener que deducirlo de las casillas.
+function tgResumen() {
+    const el = document.getElementById('tg-resumen');
+    if (!el) return;
+    const d = tgLeerFormulario();
+    if (!d.bodegas.length) {
+        el.className = 'tg-resumen tg-vacio';
+        el.innerHTML = '<b>Sin bodegas no recibe nada.</b> Marca al menos una, o "Todas las bodegas".';
+        return;
+    }
+    const quien = d.nombre || (tgEditando && tgEditando.nombre) || 'Esta persona';
+    const bod = d.bodegas.includes('TODAS')
+        ? 'de <b>todas las bodegas</b>'
+        : 'de <b>' + d.bodegas.join(', ') + '</b>';
+    const op = d.operaciones.includes('TODAS')
+        ? '<b>todos los movimientos</b>'
+        : '<b>' + d.operaciones.map(o => (TG_NOMBRE_OP[o] || o).toLowerCase()).join(', ') + '</b>';
+    const av = { ambos: 'tanto cuando salen bien como cuando fallan',
+                 error: 'solo cuando fallan',
+                 exito: 'solo cuando salen bien' }[d.avisos];
+    el.className = 'tg-resumen';
+    el.innerHTML = `<i class="fas fa-check-circle"></i> ${quien} recibira ${op} ${bod}, ${av}.`;
 }
 
 async function tgGuardar() {
-    const chatId = (document.getElementById('tg-chat-id').value || '').trim();
-    if (!chatId) { tgEstado('Falta el Chat ID', 'cl-status-err'); return; }
-    const sel = id => Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
-    const cuerpo = {
-        chat_id: chatId,
-        nombre: document.getElementById('tg-nombre').value.trim(),
-        bodegas: sel('tg-bodegas'),
-        operaciones: sel('tg-operaciones'),
-        avisos: document.getElementById('tg-avisos').value,
-        activo: true
-    };
+    const d = tgLeerFormulario();
+    if (!d.chat_id) { tgEstado('Falta el Chat ID', 'err'); return; }
+    if (!d.bodegas.length) {
+        tgEstado('Marca al menos una bodega: sin eso no le llega nada.', 'err');
+        return;
+    }
     try {
         const res = await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(cuerpo)
+            body: JSON.stringify(d)
         });
-        const d = await res.json();
-        if (d.ok) {
-            tgEstado(d.estado === 'pendiente'
-                ? 'Guardado, pero sin bodegas NO recibira avisos.'
-                : 'Guardado. Ya recibira avisos.', 'cl-status-ok');
-            tgLimpiar();
+        const r = await res.json();
+        if (r.ok) {
+            tgCerrarEditor();
+            tgEstado('Guardado. Ya recibira avisos.', 'ok');
             tgCargarTabla();
         } else {
-            tgEstado('Error: ' + (d.error || '?'), 'cl-status-err');
+            tgEstado('Error: ' + (r.error || '?'), 'err');
         }
-    } catch (e) { tgEstado('Error: ' + e.message, 'cl-status-err'); }
+    } catch (e) { tgEstado('Error: ' + e.message, 'err'); }
 }
 
-async function tgProbar(id) {
-    tgEstado('Enviando mensaje de prueba...', 'cl-status-info');
+async function tgProbar(f) {
+    tgEstado('Enviando mensaje de prueba...', 'info');
     try {
-        const res = await fetch(`${CONFIG.API_URL}/api/telegram/probar/${id}`, { method: 'POST' });
+        const res = await fetch(`${CONFIG.API_URL}/api/telegram/probar/${f.id}`, { method: 'POST' });
         const d = await res.json();
-        tgEstado(d.ok ? 'Mensaje enviado. Confirma que le llego.'
+        tgEstado(d.ok ? `Mensaje enviado a ${f.nombre || f.chat_id}. Confirma que le llego.`
                       : 'No se pudo enviar: ' + (d.error || '?'),
-                 d.ok ? 'cl-status-ok' : 'cl-status-err');
-    } catch (e) { tgEstado('Error: ' + e.message, 'cl-status-err'); }
+                 d.ok ? 'ok' : 'err');
+    } catch (e) { tgEstado('Error: ' + e.message, 'err'); }
 }
 
-async function tgAlternar(id, filas) {
-    const f = filas.find(x => String(x.id) === String(id));
-    if (!f) return;
+async function tgAlternar(f) {
     try {
         if (f.activo) {
             // Desactivar conserva el historial; no se borra la fila.
-            await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios/${id}`, { method: 'DELETE' });
+            await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios/${f.id}`, { method: 'DELETE' });
         } else {
             await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -10837,12 +10923,40 @@ async function tgAlternar(id, filas) {
             });
         }
         tgCargarTabla();
-    } catch (e) { tgEstado('Error: ' + e.message, 'cl-status-err'); }
+    } catch (e) { tgEstado('Error: ' + e.message, 'err'); }
+}
+
+// Los 14 numeros que venian del codigo llegaron sin nombre: se le preguntan a
+// Telegram en vez de teclearlos uno por uno.
+async function tgTraerNombres() {
+    tgEstado('Preguntandole los nombres a Telegram...', 'info');
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/telegram/sincronizar-nombres`, { method: 'POST' });
+        const d = await res.json();
+        if (d.ok) {
+            tgEstado(`${d.actualizados} nombre(s) completados` +
+                     (d.sin_datos ? `, ${d.sin_datos} sin datos en Telegram (ponlos a mano)` : ''), 'ok');
+            tgCargarTabla();
+        } else {
+            tgEstado('Error: ' + (d.error || '?'), 'err');
+        }
+    } catch (e) { tgEstado('Error: ' + e.message, 'err'); }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const g = document.getElementById('tg-guardar');
-    if (g) g.addEventListener('click', tgGuardar);
-    const l = document.getElementById('tg-limpiar');
-    if (l) l.addEventListener('click', tgLimpiar);
+    const on = (id, ev, fn) => { const e = document.getElementById(id); if (e) e.addEventListener(ev, fn); };
+    on('tg-guardar', 'click', tgGuardar);
+    on('tg-cancelar', 'click', tgCerrarEditor);
+    on('tg-cerrar', 'click', tgCerrarEditor);
+    on('tg-nuevo', 'click', () => tgAbrirEditor(null));
+    on('tg-refrescar', 'click', tgCargarTabla);
+    on('tg-nombres', 'click', tgTraerNombres);
+    on('tg-bod-todas', 'change', () => { tgApagarListas(); tgResumen(); });
+    on('tg-op-todas', 'change', () => { tgApagarListas(); tgResumen(); });
+    document.querySelectorAll('input[name="tg-avisos"]').forEach(r =>
+        r.addEventListener('change', tgResumen));
+    // Cerrar pulsando fuera del cuadro.
+    on('tg-editor-fondo', 'click', e => {
+        if (e.target.id === 'tg-editor-fondo') tgCerrarEditor();
+    });
 });

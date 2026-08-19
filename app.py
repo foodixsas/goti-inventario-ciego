@@ -9324,6 +9324,64 @@ def telegram_probar(dest_id):
             release_db(conn)
 
 
+
+@app.route('/api/telegram/sincronizar-nombres', methods=['POST'])
+def telegram_sincronizar_nombres():
+    """Completa los nombres preguntandoselos a Telegram.
+
+    Los 14 destinatarios que venian escritos en notificar_telegram.py se
+    migraron solo con el numero: en la tabla salian todos como '-' y no habia
+    forma de saber de quien era cada chat. getChat devuelve nombre y usuario de
+    cualquier chat que el bot conozca, asi que se rellenan solos en vez de
+    teclearlos uno por uno.
+
+    Solo toca las filas sin nombre; lo que ya se escribio a mano no se pisa.
+    """
+    token = os.environ.get('TELEGRAM_TOKEN', '')
+    if not token:
+        return jsonify({'error': 'falta TELEGRAM_TOKEN en el servidor'}), 500
+
+    conn = None
+    actualizados = sin_datos = 0
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT id, chat_id FROM goti.telegram_destinatarios
+                       WHERE nombre IS NULL OR nombre = ''""")
+        pendientes = cur.fetchall()
+
+        for r in pendientes:
+            try:
+                resp = requests.get(f'https://api.telegram.org/bot{token}/getChat',
+                                    params={'chat_id': r['chat_id']}, timeout=12)
+                d = resp.json() if resp.ok else {}
+            except Exception:
+                d = {}
+            chat = (d.get('result') or {}) if d.get('ok') else {}
+            nombre = (f"{chat.get('first_name', '')} {chat.get('last_name', '')}".strip()
+                      or chat.get('title') or '')
+            if not nombre:
+                sin_datos += 1
+                continue
+            cur.execute("""UPDATE goti.telegram_destinatarios
+                           SET nombre = %s,
+                               username = COALESCE(%s, username),
+                               actualizado_at = NOW()
+                           WHERE id = %s""",
+                        (nombre[:120], (chat.get('username') or None), r['id']))
+            actualizados += 1
+
+        conn.commit()
+        return jsonify({'ok': True, 'actualizados': actualizados,
+                        'sin_datos': sin_datos, 'revisados': len(pendientes)})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
