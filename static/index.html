@@ -348,6 +348,10 @@
                             <i class="fas fa-store"></i>
                             <span>Carga Locales</span>
                         </button>
+                        <button class="nav-btn" data-view="telegram-avisos" style="display:none;">
+                            <i class="fab fa-telegram"></i>
+                            <span>Avisos Telegram</span>
+                        </button>
                     </div>
                 </div>
 
@@ -2019,6 +2023,72 @@
                 </div>
 
                 <!-- Vista Carga Locales (Actualizar Cantidad / Toma Fisica) -->
+
+                <!-- MODULO: AVISOS TELEGRAM -->
+                <div id="view-telegram-avisos" class="view">
+                    <div class="view-header">
+                        <h2><i class="fab fa-telegram"></i> Avisos de Telegram</h2>
+                    </div>
+
+                    <div class="obs-filtros" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                        <p style="margin:0;color:#555;">
+                            Quien quiera recibir avisos debe escribirle
+                            <b>/start</b> a <b>@ChiosInventariosBot</b>. Aparecera aqui como
+                            <b>pendiente</b> y solo hay que asignarle las bodegas.
+                        </p>
+                        <div id="tg-pendientes-aviso" style="display:none;color:#b45309;font-weight:600;"></div>
+                    </div>
+
+                    <div class="obs-filtros" style="flex-wrap:wrap;gap:12px;align-items:flex-end;">
+                        <div class="obs-filtro-grupo">
+                            <label for="tg-chat-id">Chat ID</label>
+                            <input type="text" id="tg-chat-id" class="obs-filtro-input" placeholder="numerico">
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label for="tg-nombre">Nombre</label>
+                            <input type="text" id="tg-nombre" class="obs-filtro-input" placeholder="a quien pertenece">
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label for="tg-bodegas">Bodegas (varias con Ctrl)</label>
+                            <select id="tg-bodegas" class="obs-filtro-input" multiple size="5"></select>
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label for="tg-operaciones">Operaciones</label>
+                            <select id="tg-operaciones" class="obs-filtro-input" multiple size="5"></select>
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label for="tg-avisos">Recibe</label>
+                            <select id="tg-avisos" class="obs-filtro-input">
+                                <option value="ambos">Exitos y errores</option>
+                                <option value="exito">Solo exitos</option>
+                                <option value="error">Solo errores</option>
+                            </select>
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <button id="tg-guardar" class="btn-primary">
+                                <i class="fas fa-save"></i> Guardar
+                            </button>
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <button id="tg-limpiar" class="btn-secondary">Limpiar</button>
+                        </div>
+                    </div>
+                    <div id="tg-status" style="margin:8px 0;"></div>
+
+                    <div class="tabla-scroll">
+                        <table class="tabla-datos">
+                            <thead>
+                                <tr>
+                                    <th>Estado</th><th>Nombre</th><th>Chat ID</th>
+                                    <th>Bodegas</th><th>Operaciones</th><th>Recibe</th>
+                                    <th>Activo</th><th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tg-tabla-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <div id="view-carga-locales" class="view">
                     <div class="view-header">
                         <h2><i class="fas fa-store"></i> Carga Inventario Locales</h2>
@@ -2832,7 +2902,7 @@
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="js/config.js?v=20260317a"></script>
-    <script src="js/app.js?v=20260812b"></script>
+    <script src="js/app.js?v=20260819tg"></script>
     <script src="js/flujo-caja.js?v=20260818h"></script>
     <script src="js/nomina.js?v=20260812a"></script>
     <style>

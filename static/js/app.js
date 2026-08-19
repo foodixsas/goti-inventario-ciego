@@ -1463,6 +1463,11 @@ function cambiarVista(viewName) {
         clInit();
     }
 
+    // Auto-inicializar avisos de Telegram
+    if (viewName === 'telegram-avisos') {
+        tgInit();
+    }
+
     // Auto-inicializar cuadres de caja
     if (viewName === 'cuadre-registro') { cuadreInit(); }
     if (viewName === 'cuadre-historial' || viewName === 'cuadre-dashboard') {
@@ -10659,3 +10664,185 @@ function clDetenerPolling() {
         _clPollInterval = null;
     }
 }
+
+// ============================================================
+// AVISOS DE TELEGRAM — destinatarios por bodega
+// ============================================================
+// Antes los chat_id vivian escritos en notificar_telegram.py y cambiarlos
+// obligaba a editar el codigo y desplegar. Ahora se administran desde aqui.
+// Quien escribe /start al bot entra solo como 'pendiente' y aqui se le asignan
+// las bodegas.
+let tgOpciones = { bodegas: [], operaciones: [] };
+
+async function tgInit() {
+    if (!tgOpciones.bodegas.length) {
+        try {
+            const res = await fetch(`${CONFIG.API_URL}/api/telegram/opciones`);
+            tgOpciones = await res.json();
+            tgLlenarSelect('tg-bodegas', tgOpciones.bodegas);
+            tgLlenarSelect('tg-operaciones', tgOpciones.operaciones);
+        } catch (e) { /* si falla, la tabla igual carga */ }
+    }
+    tgCargarTabla();
+}
+
+function tgLlenarSelect(id, valores) {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = valores.map(v => `<option value="${v}">${v}</option>`).join('');
+}
+
+function tgEstado(msg, clase) {
+    const el = document.getElementById('tg-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.className = clase || '';
+}
+
+async function tgCargarTabla() {
+    const tbody = document.getElementById('tg-tabla-body');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8">Cargando...</td></tr>';
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios`);
+        const data = await res.json();
+        const filas = data.destinatarios || [];
+
+        const aviso = document.getElementById('tg-pendientes-aviso');
+        if (aviso) {
+            if (data.pendientes > 0) {
+                aviso.textContent = `${data.pendientes} persona(s) activaron el bot y esperan que les asignes bodega.`;
+                aviso.style.display = 'block';
+            } else {
+                aviso.style.display = 'none';
+            }
+        }
+
+        if (!filas.length) {
+            tbody.innerHTML = '<tr><td colspan="8">Nadie registrado todavia</td></tr>';
+            return;
+        }
+        tbody.innerHTML = '';
+        filas.forEach((f, idx) => {
+            const tr = document.createElement('tr');
+            const pend = f.estado === 'pendiente';
+            tr.innerHTML =
+                `<td>${pend ? '<b style="color:#b45309;">PENDIENTE</b>' : 'asignado'}</td>` +
+                `<td>${f.nombre || '-'}${f.username ? ' <small>@' + f.username + '</small>' : ''}</td>` +
+                `<td>${f.chat_id}</td>` +
+                `<td>${(f.bodegas || []).join(', ') || '<i>sin asignar</i>'}</td>` +
+                `<td>${(f.operaciones || []).join(', ')}</td>` +
+                `<td>${f.avisos}</td>` +
+                `<td>${f.activo ? 'si' : 'no'}</td>` +
+                `<td>
+                    <button class="btn-secondary tg-editar" data-idx="${idx}">Editar</button>
+                    <button class="btn-secondary tg-probar" data-id="${f.id}">Probar</button>
+                    <button class="btn-secondary tg-baja" data-id="${f.id}">${f.activo ? 'Desactivar' : 'Activar'}</button>
+                 </td>`;
+            tbody.appendChild(tr);
+        });
+        // Nada de onclick inline: se enganchan por data-idx para no romper con
+        // nombres o comillas dentro de los datos.
+        tbody.querySelectorAll('.tg-editar').forEach(b =>
+            b.addEventListener('click', () => tgEditar(filas[parseInt(b.dataset.idx, 10)])));
+        tbody.querySelectorAll('.tg-probar').forEach(b =>
+            b.addEventListener('click', () => tgProbar(b.dataset.id)));
+        tbody.querySelectorAll('.tg-baja').forEach(b =>
+            b.addEventListener('click', () => tgAlternar(b.dataset.id, filas)));
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="8">Error: ${e.message}</td></tr>`;
+    }
+}
+
+function tgEditar(f) {
+    document.getElementById('tg-chat-id').value = f.chat_id;
+    document.getElementById('tg-nombre').value = f.nombre || '';
+    document.getElementById('tg-avisos').value = f.avisos || 'ambos';
+    const marcar = (id, vals) => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        Array.from(sel.options).forEach(o => { o.selected = (vals || []).includes(o.value); });
+    };
+    marcar('tg-bodegas', f.bodegas);
+    marcar('tg-operaciones', f.operaciones);
+    tgEstado(`Editando a ${f.nombre || f.chat_id}. Cambia lo que quieras y Guardar.`, 'cl-status-info');
+}
+
+function tgLimpiar() {
+    ['tg-chat-id', 'tg-nombre'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+    ['tg-bodegas', 'tg-operaciones'].forEach(id => {
+        const s = document.getElementById(id);
+        if (s) Array.from(s.options).forEach(o => o.selected = false);
+    });
+    const a = document.getElementById('tg-avisos');
+    if (a) a.value = 'ambos';
+    tgEstado('');
+}
+
+async function tgGuardar() {
+    const chatId = (document.getElementById('tg-chat-id').value || '').trim();
+    if (!chatId) { tgEstado('Falta el Chat ID', 'cl-status-err'); return; }
+    const sel = id => Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
+    const cuerpo = {
+        chat_id: chatId,
+        nombre: document.getElementById('tg-nombre').value.trim(),
+        bodegas: sel('tg-bodegas'),
+        operaciones: sel('tg-operaciones'),
+        avisos: document.getElementById('tg-avisos').value,
+        activo: true
+    };
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cuerpo)
+        });
+        const d = await res.json();
+        if (d.ok) {
+            tgEstado(d.estado === 'pendiente'
+                ? 'Guardado, pero sin bodegas NO recibira avisos.'
+                : 'Guardado. Ya recibira avisos.', 'cl-status-ok');
+            tgLimpiar();
+            tgCargarTabla();
+        } else {
+            tgEstado('Error: ' + (d.error || '?'), 'cl-status-err');
+        }
+    } catch (e) { tgEstado('Error: ' + e.message, 'cl-status-err'); }
+}
+
+async function tgProbar(id) {
+    tgEstado('Enviando mensaje de prueba...', 'cl-status-info');
+    try {
+        const res = await fetch(`${CONFIG.API_URL}/api/telegram/probar/${id}`, { method: 'POST' });
+        const d = await res.json();
+        tgEstado(d.ok ? 'Mensaje enviado. Confirma que le llego.'
+                      : 'No se pudo enviar: ' + (d.error || '?'),
+                 d.ok ? 'cl-status-ok' : 'cl-status-err');
+    } catch (e) { tgEstado('Error: ' + e.message, 'cl-status-err'); }
+}
+
+async function tgAlternar(id, filas) {
+    const f = filas.find(x => String(x.id) === String(id));
+    if (!f) return;
+    try {
+        if (f.activo) {
+            // Desactivar conserva el historial; no se borra la fila.
+            await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios/${id}`, { method: 'DELETE' });
+        } else {
+            await fetch(`${CONFIG.API_URL}/api/telegram/destinatarios`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: f.chat_id, nombre: f.nombre, bodegas: f.bodegas,
+                    operaciones: f.operaciones, avisos: f.avisos, activo: true
+                })
+            });
+        }
+        tgCargarTabla();
+    } catch (e) { tgEstado('Error: ' + e.message, 'cl-status-err'); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const g = document.getElementById('tg-guardar');
+    if (g) g.addEventListener('click', tgGuardar);
+    const l = document.getElementById('tg-limpiar');
+    if (l) l.addEventListener('click', tgLimpiar);
+});

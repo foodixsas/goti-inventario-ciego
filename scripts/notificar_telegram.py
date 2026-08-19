@@ -58,6 +58,83 @@ CHATS_POR_LOCAL = {
 # Chat contabilidad (siempre recibe todos los errores y exitos)
 CHAT_CONTABILIDAD = [5220304609, 1416079799, 7148059883]  # JN, Shavii, Diana Coque
 
+# ============================================================
+# DESTINATARIOS: se leen de la BD, no del codigo
+# ============================================================
+# Antes los chat_id estaban escritos aqui: para dar de alta o de baja a alguien
+# habia que editar el archivo y desplegar. Ahora viven en
+# goti.telegram_destinatarios y se administran desde el panel.
+#
+# Si la BD no responde se usa el diccionario de abajo como respaldo, para que un
+# problema de base no deje a nadie sin aviso.
+_DESTINATARIOS = None
+
+
+def _conectar_bd():
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    return psycopg2.connect(
+        host=os.getenv('DB_HOST', 'chiosburguer.postgres.database.azure.com'),
+        dbname=os.getenv('DB_NAME', 'InventariosLocales'),
+        user=os.getenv('DB_USER', ''), password=os.getenv('DB_PASSWORD', ''),
+        port=5432, sslmode='require', connect_timeout=15,
+        cursor_factory=RealDictCursor)
+
+
+def cargar_destinatarios():
+    """Lee la tabla una vez por ejecucion. Devuelve [] si la BD falla."""
+    global _DESTINATARIOS
+    if _DESTINATARIOS is not None:
+        return _DESTINATARIOS
+    _DESTINATARIOS = []
+    try:
+        con = _conectar_bd()
+        cur = con.cursor()
+        cur.execute("""SELECT chat_id, nombre, bodegas, operaciones, avisos
+                       FROM goti.telegram_destinatarios
+                       WHERE activo = TRUE AND estado = 'asignado'""")
+        _DESTINATARIOS = [dict(r) for r in cur.fetchall()]
+        con.close()
+        print(f'   [TELEGRAM] {len(_DESTINATARIOS)} destinatarios cargados de la BD')
+    except Exception as e:
+        print(f'   [TELEGRAM] BD no disponible ({str(e)[:60]}), uso la lista del codigo')
+    return _DESTINATARIOS
+
+
+def _norma(t):
+    return (t or '').strip().upper()
+
+
+def destinatarios_para(local_nombre, operacion=None, tipo_aviso='exito'):
+    """Chat ids que deben recibir este aviso.
+
+    - bodegas: coincide con el local, o el comodin 'TODAS'
+    - operaciones: coincide con la operacion, o 'TODAS'
+    - avisos: 'ambos', o justo el tipo ('exito' / 'error')
+
+    Sin datos en la BD, cae a CHATS_POR_LOCAL + CHAT_CONTABILIDAD del codigo.
+    """
+    filas = cargar_destinatarios()
+    if not filas:
+        ids = list(CHAT_CONTABILIDAD) + list(CHATS_POR_LOCAL.get(local_nombre, []))
+        return list(dict.fromkeys(ids))
+
+    local = _norma(local_nombre)
+    oper = _norma(operacion)
+    elegidos = []
+    for f in filas:
+        bods = [_norma(b) for b in (f.get('bodegas') or [])]
+        if 'TODAS' not in bods and local not in bods:
+            continue
+        opers = [_norma(o) for o in (f.get('operaciones') or [])]
+        if oper and 'TODAS' not in opers and oper not in opers:
+            continue
+        av = (f.get('avisos') or 'ambos').lower()
+        if av != 'ambos' and av != tipo_aviso:
+            continue
+        elegidos.append(f['chat_id'])
+    return list(dict.fromkeys(elegidos))
+
 
 def enviar_mensaje(chat_id, mensaje):
     """Envia un mensaje de texto por Telegram"""
@@ -87,22 +164,10 @@ def notificar_error(bot_nombre, local_nombre, detalle, error_msg):
         f"⚠️ {error_msg}\n"
     )
 
-    enviados = set()
-
-    # Enviar a contabilidad siempre
-    for chat_id in CHAT_CONTABILIDAD:
-        if chat_id not in enviados:
-            enviar_mensaje(chat_id, mensaje)
-            enviados.add(chat_id)
-
-    # Enviar al local correspondiente
-    chats_local = CHATS_POR_LOCAL.get(local_nombre, [])
-    for chat_id in chats_local:
-        if chat_id not in enviados:
-            enviar_mensaje(chat_id, mensaje)
-            enviados.add(chat_id)
-
-    print(f'   [TELEGRAM] Notificacion enviada a {len(enviados)} chats')
+    enviados = destinatarios_para(local_nombre, bot_nombre, 'error')
+    for chat_id in enviados:
+        enviar_mensaje(chat_id, mensaje)
+    print(f'   [TELEGRAM] Error enviado a {len(enviados)} chats')
 
 
 def notificar_exito(bot_nombre, local_nombre, detalle, num_documento):
@@ -114,19 +179,7 @@ def notificar_exito(bot_nombre, local_nombre, detalle, num_documento):
         f"📄 {num_documento}\n"
     )
 
-    enviados = set()
-
-    # Enviar a contabilidad (consolidado JN + Shavii)
-    for chat_id in CHAT_CONTABILIDAD:
-        if chat_id not in enviados:
-            enviar_mensaje(chat_id, mensaje)
-            enviados.add(chat_id)
-
-    # Enviar al local
-    chats_local = CHATS_POR_LOCAL.get(local_nombre, [])
-    for chat_id in chats_local:
-        if chat_id not in enviados:
-            enviar_mensaje(chat_id, mensaje)
-            enviados.add(chat_id)
-
-    print(f'   [TELEGRAM] Notificacion enviada a {len(enviados)} chats')
+    enviados = destinatarios_para(local_nombre, bot_nombre, 'exito')
+    for chat_id in enviados:
+        enviar_mensaje(chat_id, mensaje)
+    print(f'   [TELEGRAM] Aviso enviado a {len(enviados)} chats')

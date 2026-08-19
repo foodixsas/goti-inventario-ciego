@@ -9139,6 +9139,191 @@ def nomina_aprobar(grupo_id):
         if conn: _release_mov(conn)
 
 
+
+# ============================================================
+# TELEGRAM: destinatarios de las notificaciones
+# ============================================================
+# Antes los chat_id vivian escritos en notificar_telegram.py: dar de alta o de
+# baja a alguien obligaba a editar el codigo y desplegar. Ahora estan en
+# goti.telegram_destinatarios y se administran desde el panel.
+#
+# Quien le escribe /start al bot entra solo como 'pendiente' (lo hace el cron
+# registrar_telegram.py); desde aqui se le asignan bodegas y pasa a 'asignado'.
+
+BODEGAS_TELEGRAM = [
+    'TODAS',
+    'REAL', 'FLOREANA', 'PORTUGAL',
+    'SANTO CACHON REAL', 'SANTO CACHON PORTUGAL', 'SIMON BOLON',
+    'BODEGA PRINCIPAL', 'BODEGA MATERIA PRIMA', 'PLANTA DE PRODUCCION', 'BODEGA PULMON',
+]
+OPERACIONES_TELEGRAM = [
+    'TODAS', 'Baja', 'Ingreso Extraordinario', 'Traslado',
+    'Conteo', 'Produccion', 'Toma Fisica',
+]
+
+
+@app.route('/api/telegram/opciones', methods=['GET'])
+def telegram_opciones():
+    """Listas para armar los desplegables del panel."""
+    return jsonify({'bodegas': BODEGAS_TELEGRAM, 'operaciones': OPERACIONES_TELEGRAM})
+
+
+@app.route('/api/telegram/destinatarios', methods=['GET'])
+def telegram_listar():
+    """Lista los destinatarios. Los 'pendiente' salen primero: son los que
+    acaban de activar el bot y esperan que se les asigne bodega."""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, chat_id, nombre, username, bodegas, operaciones,
+                   avisos, activo, estado, notas, creado_at
+            FROM goti.telegram_destinatarios
+            ORDER BY (estado = 'pendiente') DESC, nombre NULLS LAST, chat_id
+        """)
+        filas = []
+        for r in cur.fetchall():
+            filas.append({
+                'id': r['id'],
+                'chat_id': str(r['chat_id']),          # str: JS pierde precision en enteros grandes
+                'nombre': r['nombre'],
+                'username': r['username'],
+                'bodegas': r['bodegas'] or [],
+                'operaciones': r['operaciones'] or [],
+                'avisos': r['avisos'],
+                'activo': r['activo'],
+                'estado': r['estado'],
+                'notas': r['notas'],
+                'creado_at': r['creado_at'].isoformat() if r['creado_at'] else None,
+            })
+        pendientes = sum(1 for f in filas if f['estado'] == 'pendiente')
+        return jsonify({'destinatarios': filas, 'total': len(filas),
+                        'pendientes': pendientes})
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/telegram/destinatarios', methods=['POST'])
+def telegram_guardar():
+    """Crea o actualiza un destinatario.
+
+    Si se le asignan bodegas, pasa automaticamente de 'pendiente' a 'asignado':
+    asi no hay que acordarse de cambiar el estado a mano.
+    """
+    data = request.json or {}
+    chat_id = str(data.get('chat_id', '')).strip()
+    if not chat_id.lstrip('-').isdigit():
+        return jsonify({'error': 'chat_id debe ser numerico'}), 400
+
+    bodegas = [b for b in (data.get('bodegas') or []) if b]
+    operaciones = [o for o in (data.get('operaciones') or []) if o] or ['TODAS']
+    avisos = (data.get('avisos') or 'ambos').lower()
+    if avisos not in ('ambos', 'exito', 'error'):
+        return jsonify({'error': "avisos debe ser ambos, exito o error"}), 400
+    activo = bool(data.get('activo', True))
+    estado = 'asignado' if bodegas else 'pendiente'
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO goti.telegram_destinatarios
+                (chat_id, nombre, username, bodegas, operaciones, avisos,
+                 activo, estado, notas, actualizado_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s, NOW())
+            ON CONFLICT (chat_id) DO UPDATE SET
+                nombre = EXCLUDED.nombre,
+                username = COALESCE(EXCLUDED.username, goti.telegram_destinatarios.username),
+                bodegas = EXCLUDED.bodegas,
+                operaciones = EXCLUDED.operaciones,
+                avisos = EXCLUDED.avisos,
+                activo = EXCLUDED.activo,
+                estado = EXCLUDED.estado,
+                notas = EXCLUDED.notas,
+                actualizado_at = NOW()
+            RETURNING id, estado
+        """, (int(chat_id), (data.get('nombre') or '')[:120] or None,
+              (data.get('username') or '')[:80] or None,
+              bodegas, operaciones, avisos, activo, estado,
+              (data.get('notas') or '')[:500] or None))
+        r = cur.fetchone()
+        conn.commit()
+        return jsonify({'ok': True, 'id': r['id'], 'estado': r['estado']})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/telegram/destinatarios/<int:dest_id>', methods=['DELETE'])
+def telegram_borrar(dest_id):
+    """Da de baja. Por defecto solo DESACTIVA (activo=false) para conservar el
+    historial; con ?definitivo=1 borra la fila."""
+    definitivo = request.args.get('definitivo') == '1'
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        if definitivo:
+            cur.execute("DELETE FROM goti.telegram_destinatarios WHERE id = %s", (dest_id,))
+            accion = 'eliminado'
+        else:
+            cur.execute("""UPDATE goti.telegram_destinatarios
+                           SET activo = FALSE, actualizado_at = NOW() WHERE id = %s""", (dest_id,))
+            accion = 'desactivado'
+        conn.commit()
+        if cur.rowcount == 0:
+            return jsonify({'error': 'no encontrado'}), 404
+        return jsonify({'ok': True, 'accion': accion})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/telegram/probar/<int:dest_id>', methods=['POST'])
+def telegram_probar(dest_id):
+    """Manda un mensaje de prueba para confirmar que el numero recibe."""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT chat_id, nombre, bodegas FROM goti.telegram_destinatarios
+                       WHERE id = %s""", (dest_id,))
+        r = cur.fetchone()
+        if not r:
+            return jsonify({'error': 'no encontrado'}), 404
+        token = os.environ.get('TELEGRAM_TOKEN', '')
+        if not token:
+            return jsonify({'error': 'falta TELEGRAM_TOKEN en el servidor'}), 500
+        bods = ', '.join(r['bodegas']) if r['bodegas'] else 'ninguna'
+        texto = ('🔔 <b>Mensaje de prueba</b>\n\n'
+                 f'Si lees esto, tus avisos estan llegando bien.\n'
+                 f'Bodegas asignadas: <b>{bods}</b>')
+        resp = requests.post(f'https://api.telegram.org/bot{token}/sendMessage',
+                             json={'chat_id': r['chat_id'], 'text': texto,
+                                   'parse_mode': 'HTML'}, timeout=15)
+        if resp.ok:
+            return jsonify({'ok': True})
+        return jsonify({'error': f'Telegram respondio {resp.status_code}: {resp.text[:150]}'}), 502
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
