@@ -1113,15 +1113,28 @@ def procesar_tarea_conteo_op(tarea, driver):
             log(f'    Error consultando backend: {e}, usando BD directa', 'WARN')
             codigos_seleccionados = []
 
-        # Fallback: si el backend no tiene productos, leer de productos_por_marca
+        # Si el backend no contesta se leen los MISMOS productos de la semana
+        # desde la BD. Antes, para MP y Planta, se sorteaban 10 al azar con
+        # ORDER BY RANDOM(): ese dia la bodega habria contado unos productos
+        # distintos a los de su semana y el cruce compararia cosas que no se
+        # corresponden. Ahora se respeta la rotacion, y si no la hay se falla.
         if not codigos_seleccionados:
             marca = cfg.get('marca', bodega.upper())
             if bodega == 'bodega_principal':
-                rows = db_query("SELECT codigo FROM goti.productos_por_marca WHERE marca = %s AND tipo_conteo = 'fijo' AND activo = TRUE", (marca,))
+                rows = db_query(
+                    "SELECT codigo FROM goti.productos_por_marca "
+                    "WHERE marca = %s AND tipo_conteo = 'fijo' AND activo = TRUE",
+                    (marca,))
+                codigos_seleccionados = [r['codigo'] for r in rows]
+                log(f'    Sin backend: uso los {len(codigos_seleccionados)} fijos de la BD')
             else:
-                rows = db_query("SELECT codigo FROM goti.productos_por_marca WHERE marca = %s AND activo = TRUE ORDER BY RANDOM() LIMIT 10", (marca,))
-            codigos_seleccionados = [r['codigo'] for r in rows]
-            log(f'    Fallback BD: {len(codigos_seleccionados)} productos')
+                rows = db_query(
+                    "SELECT codigos FROM goti.rotacion_semanal_bodegas "
+                    "WHERE bodega = %s AND %s BETWEEN semana_inicio AND semana_fin",
+                    (bodega, fecha))
+                codigos_seleccionados = list(rows[0]['codigos']) if rows and rows[0]['codigos'] else []
+                log(f'    Sin backend: rotacion de la semana en BD -> '
+                    f'{len(codigos_seleccionados)} productos')
 
         if not codigos_seleccionados:
             post_resultado_conteo_op({'id': ejec_id, 'estado': 'error', 'error_msg': 'No hay productos seleccionados'})
@@ -1374,6 +1387,56 @@ def procesar_actualizar_cantidad(tarea, driver):
             conn.close()
 
 
+# Nombre de bodega tal y como se guarda en goti.telegram_destinatarios. Las
+# claves internas ('real_audiencia') no coinciden con las que se ven en el
+# panel ('REAL'); sin traducir, la consulta no encuentra a nadie y el aviso se
+# pierde en silencio.
+BODEGA_TELEGRAM = {
+    'real_audiencia': 'REAL',
+    'floreana': 'FLOREANA',
+    'portugal': 'PORTUGAL',
+    'santo_cachon_real': 'SANTO CACHON REAL',
+    'santo_cachon_portugal': 'SANTO CACHON PORTUGAL',
+    'simon_bolon': 'SIMON BOLON',
+    'bodega_principal': 'BODEGA PRINCIPAL',
+    'materia_prima': 'BODEGA MATERIA PRIMA',
+    'planta': 'PLANTA DE PRODUCCION',
+    'bodega_pulmon': 'BODEGA PULMON',
+}
+
+
+def avisar_toma_fisica(bodega, fecha_dmY, num_doc, productos, url=None, error=None):
+    """Avisa por Telegram del resultado de la toma fisica.
+
+    Va con su propio try: que falle el aviso no puede tumbar una toma que ya
+    quedo generada en Contifico. Perder un mensaje molesta; marcar como fallida
+    una toma que si ajusto el inventario es peor.
+
+    A quien le llega lo decide goti.telegram_destinatarios: se filtra por
+    bodega y por operacion 'Toma Fisica', asi que cada local recibe la suya.
+    """
+    nombre = BODEGA_TELEGRAM.get(bodega, bodega.upper())
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from notificar_telegram import notificar_exito, notificar_error
+        if error:
+            notificar_error('Toma Fisica', nombre,
+                            'Fecha: {}{}{} productos contados'.format(
+                                fecha_dmY, '\n', productos),
+                            error[:200])
+            return
+        partes = [
+            'Fecha: {}'.format(fecha_dmY),
+            '{} productos contados'.format(productos),
+            'Estado: GENERADO (el inventario quedo ajustado)',
+        ]
+        if url:
+            partes.append(url)
+        notificar_exito('Toma Fisica', nombre, '\n'.join(partes), num_doc)
+    except Exception as e:
+        log('  aviso por Telegram fallo: {}'.format(str(e)[:120]), 'WARN')
+
+
 def procesar_toma_fisica_local(tarea, driver):
     """Lee conteos de BD y registra la toma fisica en Contifico por CARGA MASIVA.
 
@@ -1511,6 +1574,8 @@ def procesar_toma_fisica_local(tarea, driver):
             raise Exception(f'{num_doc} se registro pero NO quedo Generado '
                             f'(no ajusta inventario). Revisar en Contifico.')
         log(f'  - {num_doc} GENERADO: el inventario quedo ajustado')
+
+        avisar_toma_fisica(bodega, fecha_dmY, num_doc, len(productos), url_doc)
 
         post_resultado_inventario_locales({
             'id': ejec_id,
@@ -2167,6 +2232,52 @@ def programar_tomas_fisicas():
     return creadas
 
 
+
+BODEGAS_CONTEO_DIARIO = ('bodega_principal', 'materia_prima', 'planta')
+HORA_CONTEO_DIARIO = int(os.environ.get('HORA_CONTEO_DIARIO', '7'))
+
+
+def programar_conteo_operativo():
+    """Crea la tarea de conteo diario de las bodegas operativas.
+
+    Antes habia que pulsar un boton cada dia y, si nadie se acordaba, esa
+    bodega se quedaba sin contar: Planta estuvo parada del 7 al 19 de agosto
+    por eso.
+
+    Se llama al endpoint del panel en vez de insertar a mano, porque es el que
+    sabe elegir los productos de la semana -los 14 fijos de Bodega Principal o
+    la rotacion de 10 de las otras- y el que evita repetir la seleccion.
+    Domingo no: nadie cuenta.
+    """
+    if os.environ.get('SIN_CONTEO_DIARIO', '0') == '1':
+        return 0
+    ahora = hora_ecuador()
+    if ahora.hour != HORA_CONTEO_DIARIO or ahora.weekday() == 6:
+        return 0
+
+    fecha = ahora.date().isoformat()
+    creadas = 0
+    for bodega in BODEGAS_CONTEO_DIARIO:
+        try:
+            r = requests.post(f'{BACKEND_URL}/api/inventario/generar-conteo-operativo',
+                              json={'bodega': bodega, 'fecha': fecha}, timeout=40)
+            if r.status_code == 409:
+                log(f'  {bodega}: ya estaba generado para {fecha}')
+                continue
+            if r.status_code != 200:
+                log(f'  {bodega}: el panel respondio {r.status_code}: {r.text[:120]}', 'WARN')
+                continue
+            d = r.json()
+            log(f'  {bodega}: conteo #{d.get("id")} con {d.get("productos")} productos '
+                f'(fijos={d.get("fijos")} aleatorios={d.get("aleatorios")})')
+            creadas += 1
+        except Exception as e:
+            log(f'  {bodega}: no se pudo generar el conteo: {str(e)[:120]}', 'ERROR')
+    if creadas:
+        log(f'Conteo diario {ahora:%H:%M} Ecuador: {creadas} bodega(s) encoladas')
+    return creadas
+
+
 # ============ MAIN LOOP ============
 def verificar_entorno():
     """Prueba de humo: Chrome + login + descarga del Excel de saldos + parseo.
@@ -2310,6 +2421,11 @@ def main():
         programar_tomas_fisicas()
     except Exception as e:
         log(f'Fallo al programar tomas fisicas: {str(e)[:150]}', 'ERROR')
+
+    try:
+        programar_conteo_operativo()
+    except Exception as e:
+        log(f'Fallo al programar el conteo diario: {str(e)[:150]}', 'ERROR')
 
     driver = None
     hechas = fallidas = 0
