@@ -378,6 +378,36 @@ def marcar_hecho(api_obj, base_id, table_id, record_id, num_doc, campo_hecho="He
                   f"pendiente: la proxima corrida lo va a DUPLICAR. Marcarlo a mano YA.")
 
 # ============================================================
+# REGLA: SI FALLA, NO SE MARCA HECHO
+# ============================================================
+# Antes, cuando Contifico rechazaba o se caia, se hacia
+#     marcar_hecho(..., "ERROR-VER-LOG")
+# que pone Hecho=True. El registro quedaba cerrado y NUNCA se reintentaba: el
+# movimiento se perdia para siempre. Asi murieron 5 traslados del 15 al 18-ago,
+# y antes decenas con "ERROR_PROCESO" o num_documento vacio.
+#
+# Ahora un fallo deja el registro PENDIENTE para que la siguiente corrida lo
+# reintente. Contifico se cae a ratos (HTTP 500) y las conexiones se cortan;
+# eso no debe costar un movimiento.
+#
+# Los errores de DATOS (producto inexistente, bodega sin mapear) tampoco marcan
+# Hecho, pero se avisan por Telegram y por log para que alguien los corrija:
+# ahi reintentar solo no sirve de nada.
+def avisar_fallo(bot, centro, detalle_tg, motivo):
+    """Falla el movimiento: el registro QUEDA PENDIENTE y se reintenta solo.
+
+    El aviso por Telegram va SOLO en la corrida de la hora en punto. Como ahora
+    el registro se reintenta cada 30 min -y cada minuto en la ventana previa a
+    la carga de inventario-, notificar en cada intento seria una lluvia de
+    mensajes por un mismo movimiento atascado. En el log queda siempre.
+    """
+    log_error_dato(bot, f'{motivo}. Queda PENDIENTE, se reintenta solo.')
+    if datetime.now(timezone.utc).minute == 0:
+        notificar_error(bot, centro, detalle_tg,
+                        f'{motivo}. Queda pendiente, se reintenta solo.')
+
+
+# ============================================================
 # BOT 1: INGRESOS EXTRAORDINARIOS
 # ING — 1 producto por registro
 # ============================================================
@@ -433,9 +463,8 @@ def procesar_ingresos(bodegas):
             detalle_tg = f"📦 {nombre_producto(codigo)} ({codigo}) x {unidades}\n📅 {fecha}"
             notificar_exito("Ingreso Extraordinario", centro, detalle_tg, num_doc)
         else:
-            marcar_hecho(api, AIRTABLE_BASE_A, TABLE_INGRESOS, record_id, "ERROR-VER-LOG")
             detalle_tg = f"📦 {nombre_producto(codigo)} ({codigo}) x {unidades}\n📅 {fecha}"
-            notificar_error("Ingreso Extraordinario", centro, detalle_tg, "Fallo al crear via API - revisar log")
+            avisar_fallo("Ingreso Extraordinario", centro, detalle_tg, "Fallo al crear en Contifico")
 
 
 # ============================================================
@@ -524,9 +553,8 @@ def procesar_traslados(bodegas):
             )
             notificar_exito("Traslado", centro, detalle_tg, num_doc)
         else:
-            marcar_hecho(api, AIRTABLE_BASE_GLOG, TABLE_TRASLADOS, record_id, "ERROR-VER-LOG")
             detalle_tg = f"📦 {codigo} x {cantidad}\n📅 {fecha}\n🔄 {nombre_origen} ➜ {nombre_destino}"
-            notificar_error("Traslado", centro, detalle_tg, "Fallo al crear via API - revisar log")
+            avisar_fallo("Traslado", centro, detalle_tg, "Fallo al crear en Contifico")
 
 
 # ============================================================
@@ -620,10 +648,8 @@ def procesar_bajas(bodegas):
             detalle_tg = f"🏷️ {codigo_baja} - {motivo}\n📅 {fecha}\n{productos_str}"
             notificar_exito("Baja", centro, detalle_tg, num_doc)
         else:
-            marcar_hecho(api, AIRTABLE_BASE_A, TABLE_BAJAS, record_id, "ERROR-VER-LOG",
-                         campo_doc="numero_registro_contable")
             detalle_tg = f"🏷️ {codigo_baja} - {motivo}\n📅 {fecha}\n{productos_str}"
-            notificar_error("Baja", centro, detalle_tg, "Fallo al crear via API - revisar log")
+            avisar_fallo("Baja", centro, detalle_tg, "Fallo al crear en Contifico")
 
 
 # ============================================================
@@ -696,10 +722,9 @@ def procesar_conteo(bodegas):
                           f"📊 {etiqueta_conteo}: {cantidad} uds")
             notificar_exito("Conteo", centro, detalle_tg, num_doc)
         else:
-            marcar_hecho(api, AIRTABLE_BASE_A, TABLE_CONTEO, record_id, "ERROR-VER-LOG")
             detalle_tg = (f"📦 {nombre_producto(codigo)} ({codigo})\n📅 {fecha}\n"
                           f"📊 Sob:{sobrantes} Fal:{faltantes}")
-            notificar_error("Conteo", centro, detalle_tg, "Fallo al crear via API - revisar log")
+            avisar_fallo("Conteo", centro, detalle_tg, "Fallo al crear en Contifico")
 
 
 # ============================================================
