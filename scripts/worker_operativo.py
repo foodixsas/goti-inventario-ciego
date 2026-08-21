@@ -681,9 +681,24 @@ BODEGAS_CARGA = {
 }
 
 def cargar_toma_para_contifico(tabla, fecha, equivs):
-    """Lee la toma fisica y aplica equivalencias para obtener cantidades en unidad Contifico."""
+    """Lee la toma fisica y aplica equivalencias para obtener cantidades en unidad Contifico.
+
+    Entra todo lo que se conto, incluido lo contado en CERO: si alguien miro el
+    estante y escribio 0, Contifico tiene que bajar ese producto a cero. Antes
+    el filtro era 'total > 0' y esos ceros se perdian -unos 36 por semana solo
+    en Materia Prima-, con el agravante de que el cruce si los lee: marcaba la
+    diferencia y la carga no la corregia nunca.
+
+    No entra lo que nadie conto. Se distinguen por el texto que tecleo la
+    persona, guardado en 'cantidades': '+0' lleva un digito y es un conteo; '+'
+    y la cadena vacia no. La diferencia importa mucho: una toma fisica FIJA el
+    saldo, asi que subir en cero un producto que nadie miro seria declararlo
+    agotado. En Planta serian 197 productos de golpe.
+    """
     rows = db_query(
-        f"SELECT codigo, producto, total, unidad FROM {tabla} WHERE fecha = %s AND total > 0",
+        f"SELECT codigo, producto, total, unidad FROM {tabla} "
+        f"WHERE fecha = %s "
+        f"  AND (total > 0 OR (total = 0 AND cantidades ~ '[0-9]'))",
         (fecha,)
     )
     productos = []
