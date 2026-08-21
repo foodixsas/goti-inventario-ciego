@@ -3598,7 +3598,7 @@ async function generarConteoOperativo(bodega, fecha) {
         <div style="text-align:center; padding:30px;">
             <i class="fas fa-spinner fa-spin" style="font-size:28px; color:var(--primary);"></i>
             <p style="margin-top:12px; font-weight:600;" id="conteo-op-msg">Solicitando descarga de Contifico...</p>
-            <p style="font-size:12px; color:var(--text-light);">El worker en PC FINANZAS descargara el stock actual</p>
+            <p style="font-size:12px; color:var(--text-light);">El worker en Render descargara el stock actual</p>
         </div>`;
 
     try {
@@ -8189,7 +8189,7 @@ function cuadrarPollEstado(ejecId) {
             // Timeout 5 min
             if (intentos > 60) {
                 clearInterval(cuadrarPollHandle);
-                progMsg.textContent = 'Tiempo de espera excedido. Verifica que el worker este corriendo en PC FINANZAS.';
+                progMsg.textContent = 'Tiempo de espera excedido. El worker de Render revisa la cola cada 3 minutos; si sigue igual, mira el historial de tareas.';
                 btn.disabled = false;
             }
         } catch (e) {
@@ -8329,7 +8329,7 @@ async function cargaSolicitar() {
             return;
         }
         if (!r.ok) throw new Error(data.error || 'Error solicitando');
-        progMsg.textContent = `Tarea creada (id ${data.id}). Esperando worker en PC FINANZAS...`;
+        progMsg.textContent = `Tarea creada (id ${data.id}). Esperando al worker de Render (revisa la cola cada 3 minutos)...`;
         progBar.style.width = '10%';
         cargaPollEstado(data.id);
     } catch (e) {
@@ -8387,7 +8387,7 @@ function cargaPollEstado(ejecId) {
             // Timeout 15 min (la carga de muchos productos es lenta)
             if (intentos > 180) {
                 clearInterval(cargaPollHandle);
-                progMsg.textContent = 'Tiempo de espera excedido. Verifica que el worker este corriendo en PC FINANZAS.';
+                progMsg.textContent = 'Tiempo de espera excedido. El worker de Render revisa la cola cada 3 minutos; si sigue igual, mira el historial de tareas.';
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fas fa-upload"></i> <span>CARGAR A CONTIFICO</span>';
                 btn.style.opacity = '1';
