@@ -10516,14 +10516,15 @@ const CL_LOCALES_NOMBRES = {
 const CL_ACCIONES = {
     'actualizar_cantidad': 'Actualizar Cant.',
     'toma_fisica': 'Toma Fisica',
-    'cruce_operativo': 'Cruce Operativo'
+    'cruce_operativo': 'Cruce Operativo',
+    'carga_ajuste': 'Carga Ajuste'
 };
 
 // Cada cola se cancela en su propio endpoint.
 function clUrlCancelar(origen, id) {
-    return origen === 'cruce'
-        ? `${CONFIG.API_URL}/api/cruce-op/cancelar/${id}`
-        : `${CONFIG.API_URL}/api/inventario-locales/cancelar/${id}`;
+    if (origen === 'cruce')  return `${CONFIG.API_URL}/api/cruce-op/cancelar/${id}`;
+    if (origen === 'ajuste') return `${CONFIG.API_URL}/api/carga-contifico/cancelar/${id}`;
+    return `${CONFIG.API_URL}/api/inventario-locales/cancelar/${id}`;
 }
 
 let _clPollInterval = null;

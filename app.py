@@ -1617,6 +1617,21 @@ def conteo_op_productos_semana():
         if conn: release_db(conn)
 
 
+# Quien puede coger tareas de las colas. Por defecto solo Render: la PC de
+# Finanzas arranca su worker sola al iniciar sesion y, mientras pudo, se llevo
+# el 100% de las cargas de ajuste y las hizo con el codigo viejo -de uno en uno,
+# mas de una hora por bodega-. Se deja configurable por si hiciera falta
+# reactivarla como respaldo.
+WORKERS_PERMITIDOS = {w.strip().lower()
+                      for w in os.environ.get('WORKERS_PERMITIDOS', 'render').split(',')
+                      if w.strip()}
+
+
+def worker_autorizado(worker_id):
+    """True si ese worker puede llevarse tareas."""
+    return (worker_id or '').strip().lower() in WORKERS_PERMITIDOS
+
+
 @app.route('/api/conteo-op/pendientes', methods=['GET'])
 def conteo_op_pendientes():
     """Worker toma tareas de conteo operativo."""
@@ -1624,6 +1639,10 @@ def conteo_op_pendientes():
     if token != WORKER_TOKEN:
         return jsonify({'error': 'unauthorized'}), 401
     worker_id = request.args.get('worker_id', 'pc-finanzas')
+    if not worker_autorizado(worker_id):
+        # Silencio en vez de error: el worker viejo reintentaria en bucle y
+        # llenaria el log. Con la lista vacia simplemente no hace nada.
+        return jsonify([])
     conn = None
     try:
         conn = get_db()
@@ -4589,6 +4608,10 @@ def cruce_op_pendientes():
         return jsonify({'error': 'unauthorized'}), 401
 
     worker_id = request.args.get('worker_id', 'pc-finanzas')
+    if not worker_autorizado(worker_id):
+        # Silencio en vez de error: el worker viejo reintentaria en bucle y
+        # llenaria el log. Con la lista vacia simplemente no hace nada.
+        return jsonify([])
     conn = None
     try:
         conn = get_db()
@@ -4938,6 +4961,53 @@ def carga_contifico_solicitar():
         if conn: release_db(conn)
 
 
+@app.route('/api/carga-contifico/cancelar/<int:ejec_id>', methods=['POST'])
+def carga_contifico_cancelar(ejec_id):
+    """Cancela una carga de ajuste a Contifico desde el historial de tareas.
+
+    Esta es la que mas falta hacia poder parar: es la mas larga de las tres
+    colas y, mientras corre, el worker no atiende nada mas.
+
+    Si ya estaba en marcha se avisa, porque el navegador que la esta haciendo
+    no se entera de la cancelacion: puede acabar creando el documento igual.
+    """
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT id, estado, bodega, fecha_toma
+                       FROM goti.carga_contifico_ejecuciones WHERE id = %s""", (ejec_id,))
+        t = cur.fetchone()
+        if not t:
+            return jsonify({'error': 'no existe esa carga'}), 404
+        if t['estado'] in ('completado', 'cancelado'):
+            return jsonify({'error': f"la carga ya esta {t['estado']}, "
+                                     f"no hay nada que cancelar"}), 409
+
+        era = t['estado']
+        cur.execute("""UPDATE goti.carga_contifico_ejecuciones
+                       SET estado = 'cancelado',
+                           error_msg = %s,
+                           timestamp_fin = NOW()
+                       WHERE id = %s""",
+                    (f'cancelada desde el panel (estaba en {era})', ejec_id))
+        conn.commit()
+
+        aviso = None
+        if era == 'en_proceso':
+            aviso = ('El worker ya la habia empezado. No se reintentara, pero '
+                     'revisa en Contifico por si alcanzo a crear el documento.')
+        return jsonify({'ok': True, 'id': ejec_id, 'estado_anterior': era,
+                        'aviso': aviso})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 @app.route('/api/carga-contifico/pendientes', methods=['GET'])
 def carga_contifico_pendientes():
     """Llamado por el worker. Devuelve tareas pendientes de carga y las marca en_proceso."""
@@ -4946,6 +5016,10 @@ def carga_contifico_pendientes():
         return jsonify({'error': 'unauthorized'}), 401
 
     worker_id = request.args.get('worker_id', 'pc-finanzas')
+    if not worker_autorizado(worker_id):
+        # Silencio en vez de error: el worker viejo reintentaria en bucle y
+        # llenaria el log. Con la lista vacia simplemente no hace nada.
+        return jsonify([])
     conn = None
     try:
         conn = get_db()
@@ -8391,6 +8465,10 @@ def inventario_locales_pendientes():
     if token != WORKER_TOKEN:
         return jsonify({'error': 'unauthorized'}), 401
     worker_id = request.args.get('worker_id', 'pc-finanzas')
+    if not worker_autorizado(worker_id):
+        # Silencio en vez de error: el worker viejo reintentaria en bucle y
+        # llenaria el log. Con la lista vacia simplemente no hace nada.
+        return jsonify([])
     conn = None
     try:
         conn = get_db()
@@ -8479,6 +8557,16 @@ def inventario_locales_historial():
                    total_productos_toma AS total_productos,
                    NULL AS url_contifico, error_msg
             FROM goti.cruce_operativo_ejecuciones
+
+            UNION ALL
+
+            SELECT 'ajuste' AS origen,
+                   id, bodega, fecha_toma AS fecha, 'carga_ajuste' AS accion,
+                   estado, solicitado_por, solicitado_at,
+                   timestamp_inicio, timestamp_fin,
+                   COALESCE(productos_ok, total_productos) AS total_productos,
+                   NULL AS url_contifico, error_msg
+            FROM goti.carga_contifico_ejecuciones
 
             ORDER BY solicitado_at DESC
             LIMIT 100
