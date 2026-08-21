@@ -41,8 +41,11 @@ function co_fechaISO(d) {
 
 function co_money(v) {
     const n = Number(v) || 0;
+    // Los insumos a granel cuestan centavos por unidad: con 2 decimales
+    // "0.02 -> 0.01" parece ruido de redondeo cuando es una caida del 60%.
+    const dec = Math.abs(n) > 0 && Math.abs(n) < 1 ? 4 : 2;
     return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US',
-        { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
 function co_pct(v) {

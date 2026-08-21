@@ -9593,9 +9593,14 @@ def costos_alertas():
             JOIN patron p ON p.bodega = d.bodega AND p.categoria = d.categoria
             WHERE p.muestras >= 3 AND p.promedio > 20
               AND abs((d.valor_dia - p.promedio) / NULLIF(p.promedio, 0) * 100) >= 30
+              -- ademas del desvio relativo, exigir una diferencia en dolares que
+              -- valga la pena mirar: una categoria chica se dispara con 15 dolares
+              -- de diferencia y solo hace ruido
+              AND abs(d.valor_dia - p.promedio) >= %(mindif)s
             ORDER BY abs(d.valor_dia - p.promedio) DESC
             LIMIT 40
-        """, {'f': fecha, 'sem': CO_SEMANAS_PATRON})
+        """, {'f': fecha, 'sem': CO_SEMANAS_PATRON,
+              'mindif': float(request.args.get('min_dif', 50))})
 
         consumos = [{
             'bodega': r[0], 'categoria': r[1], 'valor_dia': float(r[2] or 0),
