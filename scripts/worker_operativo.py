@@ -2437,6 +2437,10 @@ def programar_tomas_fisicas():
     if creadas:
         log(f'Horario {ahora:%H:%M} Ecuador: {creadas} toma(s) fisica(s) encoladas')
     return creadas
+BODEGAS_CONTEO_DIARIO = ('bodega_principal', 'materia_prima', 'planta')
+HORA_CONTEO_DIARIO = int(os.environ.get('HORA_CONTEO_DIARIO', '7'))
+
+
 def programar_conteo_operativo():
     """Crea la tarea de conteo diario de las bodegas operativas.
 
