@@ -9444,6 +9444,384 @@ def telegram_sincronizar_nombres():
         if conn:
             release_db(conn)
 
+# =====================================================
+# MODULO CONTROL DE COSTOS
+# Lee de costos_resumen_diario: ya viene deduplicado y valorizado
+# como cantidad * costo_promedio (nunca valor_total, que es el total
+# del documento repetido en cada linea).
+# =====================================================
+
+CO_UMBRAL_PRECIO = 8.0      # % de variacion para alertar
+CO_MIN_CONSUMO = 100.0      # $ de consumo en 30 dias para que el producto cuente
+CO_SEMANAS_PATRON = 6       # semanas hacia atras para el patron de consumo
+
+
+def co_dia(valor, por_defecto=None):
+    """Convierte 'YYYY-MM-DD' a date; si viene vacio usa el por_defecto."""
+    if valor:
+        try:
+            return datetime.strptime(valor, '%Y-%m-%d').date()
+        except ValueError:
+            pass
+    return por_defecto
+
+
+CO_DIAS_MADUREZ = 3   # dias que tarda un dia en terminar de cargarse
+
+
+def co_ultimo_dia_completo():
+    """Un dia no queda completo el mismo dia: la sincronizacion sigue trayendo
+    movimientos suyos durante varios dias. Comparar un dia a medias contra dias
+    enteros marcaria caidas de consumo que no existen, por eso el analisis se
+    para sobre el ultimo dia ya maduro."""
+    return datetime.now(TZ_ECUADOR).date() - timedelta(days=CO_DIAS_MADUREZ)
+
+
+def co_completitud(cur, fecha):
+    """Que tan cargado esta un dia respecto a lo tipico de ese dia de semana.
+    Devuelve (porcentaje, lineas_dia, lineas_tipicas) o (None, ...) si no hay base."""
+    cur.execute("""
+        WITH dia AS (
+            SELECT coalesce(sum(lineas), 0) AS n
+            FROM costos_resumen_diario WHERE fecha = %(f)s AND tipo = 'EGR'
+        ),
+        tipico AS (
+            SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY n) AS n
+            FROM (
+                SELECT fecha, sum(lineas) AS n
+                FROM costos_resumen_diario
+                WHERE tipo = 'EGR'
+                  AND fecha < %(f)s - %(mad)s
+                  AND fecha >= %(f)s - 60
+                  AND extract(dow FROM fecha) = extract(dow FROM %(f)s::date)
+                GROUP BY fecha
+            ) t
+        )
+        SELECT dia.n, tipico.n FROM dia, tipico
+    """, {'f': fecha, 'mad': CO_DIAS_MADUREZ})
+    r = cur.fetchone()
+    if not r or not r[1]:
+        return None, (r[0] if r else 0), 0
+    return round(100.0 * float(r[0]) / float(r[1]), 1), int(r[0]), int(float(r[1]))
+
+
+@app.route('/api/costos/alertas', methods=['GET'])
+def costos_alertas():
+    """Alertas del dia: precios que se movieron y consumos fuera de patron."""
+    conn = None
+    try:
+        fecha = co_dia(request.args.get('fecha'), co_ultimo_dia_completo())
+        umbral = float(request.args.get('umbral', CO_UMBRAL_PRECIO))
+        min_consumo = float(request.args.get('min_consumo', CO_MIN_CONSUMO))
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '90s'")
+
+        # --- Alertas de PRECIO: costo del dia vs mediana de los 30 dias previos
+        cur.execute("""
+            WITH hoy AS (
+                SELECT codigo_prod, max(nombre_prod) AS nombre_prod,
+                       max(categoria) AS categoria, max(bodega) AS bodega,
+                       sum(valor) / NULLIF(sum(cantidad), 0) AS costo_hoy,
+                       sum(cantidad) AS cantidad_hoy
+                FROM costos_resumen_diario
+                WHERE fecha = %(f)s AND tipo = 'EGR' AND costo_unitario > 0
+                  -- sin nombre en el catalogo no hay sobre que actuar: se reporta
+                  -- aparte, en el bloque de calidad, no como alerta de precio
+                  AND codigo_prod <> 'SIN_CODIGO' AND nombre_prod <> '(SIN NOMBRE)'
+                GROUP BY codigo_prod
+            ),
+            base AS (
+                SELECT codigo_prod,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY costo_unitario) AS costo_base,
+                       sum(valor)    AS valor_30d,
+                       sum(cantidad) AS cantidad_30d
+                FROM costos_resumen_diario
+                WHERE fecha >= %(f)s - 30 AND fecha < %(f)s
+                  AND tipo = 'EGR' AND costo_unitario > 0
+                GROUP BY codigo_prod
+            )
+            SELECT h.codigo_prod, h.nombre_prod, h.categoria, h.bodega,
+                   h.costo_hoy, b.costo_base,
+                   (h.costo_hoy - b.costo_base) / b.costo_base * 100 AS variacion,
+                   b.cantidad_30d,
+                   (h.costo_hoy - b.costo_base) * b.cantidad_30d AS impacto_mes,
+                   b.valor_30d
+            FROM hoy h
+            JOIN base b ON b.codigo_prod = h.codigo_prod
+            WHERE b.costo_base > 0
+              AND abs((h.costo_hoy - b.costo_base) / b.costo_base * 100) >= %(u)s
+              AND b.valor_30d >= %(m)s
+            ORDER BY abs((h.costo_hoy - b.costo_base) * b.cantidad_30d) DESC
+            LIMIT 60
+        """, {'f': fecha, 'u': umbral, 'm': min_consumo})
+
+        precios = [{
+            'codigo_prod': r[0], 'nombre_prod': r[1], 'categoria': r[2], 'bodega': r[3],
+            'costo_hoy': float(r[4] or 0), 'costo_base': float(r[5] or 0),
+            'variacion': float(r[6] or 0), 'cantidad_30d': float(r[7] or 0),
+            'impacto_mes': float(r[8] or 0), 'valor_30d': float(r[9] or 0),
+        } for r in cur.fetchall()]
+
+        # --- Alertas de CONSUMO: valor del dia vs mismo dia de semana anteriores
+        cur.execute("""
+            WITH dia AS (
+                SELECT bodega, categoria, sum(valor) AS valor_dia
+                FROM costos_resumen_diario
+                WHERE fecha = %(f)s AND tipo = 'EGR'
+                GROUP BY bodega, categoria
+            ),
+            historico AS (
+                SELECT bodega, categoria, fecha, sum(valor) AS valor
+                FROM costos_resumen_diario
+                WHERE tipo = 'EGR'
+                  AND fecha < %(f)s
+                  AND fecha >= %(f)s - (%(sem)s * 7)
+                  AND extract(dow FROM fecha) = extract(dow FROM %(f)s::date)
+                GROUP BY bodega, categoria, fecha
+            ),
+            patron AS (
+                SELECT bodega, categoria, avg(valor) AS promedio,
+                       count(*) AS muestras
+                FROM historico GROUP BY bodega, categoria
+            )
+            SELECT d.bodega, d.categoria, d.valor_dia, p.promedio, p.muestras,
+                   (d.valor_dia - p.promedio) / NULLIF(p.promedio, 0) * 100 AS desvio,
+                   d.valor_dia - p.promedio AS diferencia
+            FROM dia d
+            JOIN patron p ON p.bodega = d.bodega AND p.categoria = d.categoria
+            WHERE p.muestras >= 3 AND p.promedio > 20
+              AND abs((d.valor_dia - p.promedio) / NULLIF(p.promedio, 0) * 100) >= 30
+            ORDER BY abs(d.valor_dia - p.promedio) DESC
+            LIMIT 40
+        """, {'f': fecha, 'sem': CO_SEMANAS_PATRON})
+
+        consumos = [{
+            'bodega': r[0], 'categoria': r[1], 'valor_dia': float(r[2] or 0),
+            'promedio': float(r[3] or 0), 'muestras': r[4],
+            'desvio': float(r[5] or 0), 'diferencia': float(r[6] or 0),
+        } for r in cur.fetchall()]
+
+        # --- Calidad del dato del dia (productos sin costo = puntos ciegos)
+        cur.execute("""
+            SELECT count(*) FILTER (WHERE sin_costo > 0) AS filas_sin_costo,
+                   count(*) AS filas,
+                   coalesce(sum(valor), 0) AS valor_total,
+                   count(*) FILTER (WHERE nombre_prod = '(SIN NOMBRE)') AS sin_catalogo
+            FROM costos_resumen_diario
+            WHERE fecha = %s AND tipo = 'EGR'
+        """, (fecha,))
+        q = cur.fetchone()
+        pct_completo, lineas_dia, lineas_tipicas = co_completitud(cur, fecha)
+
+        return jsonify({
+            'ok': True,
+            'fecha': fecha.isoformat(),
+            'dias_madurez': CO_DIAS_MADUREZ,
+            'umbral': umbral,
+            'precios': precios,
+            'consumos': consumos,
+            'calidad': {
+                'filas_sin_costo': q[0] or 0,
+                'filas': q[1] or 0,
+                'valor_total': float(q[2] or 0),
+                'sin_catalogo': q[3] or 0,
+                'completitud': pct_completo,
+                'lineas_dia': lineas_dia,
+                'lineas_tipicas': lineas_tipicas,
+            },
+        })
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/resumen', methods=['GET'])
+def costos_resumen():
+    """Consumo por categoria o por producto en un rango. nivel=categoria|producto"""
+    conn = None
+    try:
+        hasta = co_dia(request.args.get('hasta'), datetime.now(TZ_ECUADOR).date())
+        desde = co_dia(request.args.get('desde'), hasta - timedelta(days=30))
+        nivel = request.args.get('nivel', 'categoria')
+        bodega = (request.args.get('bodega') or '').strip()
+        categoria = (request.args.get('categoria') or '').strip()
+
+        filtros = ["fecha >= %(d)s", "fecha <= %(h)s", "tipo = 'EGR'"]
+        params = {'d': desde, 'h': hasta}
+        if bodega:
+            filtros.append("bodega = %(b)s"); params['b'] = bodega
+        if categoria:
+            filtros.append("categoria = %(c)s"); params['c'] = categoria
+        where = ' AND '.join(filtros)
+
+        # Periodo anterior de igual duracion, para comparar
+        dias = (hasta - desde).days + 1
+        params['pd'] = desde - timedelta(days=dias)
+        params['ph'] = desde - timedelta(days=1)
+        where_prev = where.replace('%(d)s', '%(pd)s').replace('%(h)s', '%(ph)s')
+
+        if nivel == 'producto':
+            campos = "categoria, codigo_prod, max(nombre_prod) AS nombre_prod"
+            grupo = "categoria, codigo_prod"
+            llave = "categoria || '|' || codigo_prod"
+        else:
+            campos = "categoria"
+            grupo = "categoria"
+            llave = "categoria"
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '90s'")
+        cur.execute(f"""
+            WITH actual AS (
+                SELECT {campos}, sum(valor) AS valor, sum(cantidad) AS cantidad,
+                       sum(sin_costo) AS sin_costo,
+                       {llave} AS llave
+                FROM costos_resumen_diario WHERE {where} GROUP BY {grupo}
+            ),
+            previo AS (
+                SELECT {llave} AS llave, sum(valor) AS valor_prev
+                FROM costos_resumen_diario WHERE {where_prev} GROUP BY {grupo}
+            )
+            SELECT a.*, COALESCE(p.valor_prev, 0) AS valor_prev
+            FROM actual a LEFT JOIN previo p ON p.llave = a.llave
+            ORDER BY a.valor DESC LIMIT 300
+        """, params)
+
+        filas = []
+        for r in cur.fetchall():
+            if nivel == 'producto':
+                cat, cod, nom, valor, cant, sin_c, _llave, prev = r
+                item = {'categoria': cat, 'codigo_prod': cod, 'nombre_prod': nom}
+            else:
+                cat, valor, cant, sin_c, _llave, prev = r
+                item = {'categoria': cat}
+            valor = float(valor or 0); prev = float(prev or 0)
+            item.update({
+                'valor': valor, 'cantidad': float(cant or 0),
+                'sin_costo': int(sin_c or 0), 'valor_prev': prev,
+                'variacion': ((valor - prev) / prev * 100) if prev else None,
+            })
+            filas.append(item)
+
+        return jsonify({'ok': True, 'nivel': nivel, 'desde': desde.isoformat(),
+                        'hasta': hasta.isoformat(), 'filas': filas,
+                        'total': sum(f['valor'] for f in filas)})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/producto', methods=['GET'])
+def costos_producto():
+    """Historia diaria de precio y consumo de un producto."""
+    conn = None
+    try:
+        codigo = (request.args.get('codigo') or '').strip()
+        if not codigo:
+            return jsonify({'error': 'codigo requerido'}), 400
+        dias = min(int(request.args.get('dias', 90)), 365)
+        hasta = datetime.now(TZ_ECUADOR).date()
+        desde = hasta - timedelta(days=dias)
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '60s'")
+        cur.execute("""
+            SELECT fecha,
+                   sum(valor) / NULLIF(sum(cantidad), 0) AS costo,
+                   sum(cantidad) AS cantidad, sum(valor) AS valor
+            FROM costos_resumen_diario
+            WHERE codigo_prod = %s AND tipo = 'EGR'
+              AND fecha >= %s AND fecha <= %s
+            GROUP BY fecha ORDER BY fecha
+        """, (codigo, desde, hasta))
+        serie = [{'fecha': r[0].isoformat(),
+                  'costo': float(r[1]) if r[1] is not None else None,
+                  'cantidad': float(r[2] or 0), 'valor': float(r[3] or 0)}
+                 for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT max(nombre_prod), max(categoria)
+            FROM costos_resumen_diario WHERE codigo_prod = %s
+        """, (codigo,))
+        info = cur.fetchone()
+
+        return jsonify({'ok': True, 'codigo': codigo,
+                        'nombre': info[0] if info else None,
+                        'categoria': info[1] if info else None,
+                        'serie': serie})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/filtros', methods=['GET'])
+def costos_filtros():
+    """Bodegas y categorias disponibles, y hasta que dia hay resumen."""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '60s'")
+        cur.execute("""
+            SELECT DISTINCT bodega FROM costos_resumen_diario
+            WHERE fecha >= CURRENT_DATE - 60 ORDER BY 1
+        """)
+        bodegas = [r[0] for r in cur.fetchall()]
+        cur.execute("""
+            SELECT DISTINCT categoria FROM costos_resumen_diario
+            WHERE fecha >= CURRENT_DATE - 60 ORDER BY 1
+        """)
+        categorias = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT min(fecha), max(fecha), count(*) FROM costos_resumen_diario")
+        rango = cur.fetchone()
+        return jsonify({'ok': True, 'bodegas': bodegas, 'categorias': categorias,
+                        'desde': rango[0].isoformat() if rango[0] else None,
+                        'hasta': rango[1].isoformat() if rango[1] else None,
+                        'filas': rango[2]})
+    except Exception as e:
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/refrescar', methods=['POST'])
+def costos_refrescar():
+    """Recalcula el resumen de los ultimos N dias (por defecto 3)."""
+    conn = None
+    try:
+        dias = min(int((request.get_json(silent=True) or {}).get('dias', 3)), 40)
+        from costos_resumen import asegurar_tabla, refrescar_rango
+        hasta = datetime.now(TZ_ECUADOR).date() + timedelta(days=1)
+        desde = hasta - timedelta(days=dias)
+
+        conn = fc_get_movimientos_db()
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '240s'")
+        asegurar_tabla(cur)
+        filas = refrescar_rango(cur, desde, hasta)
+        return jsonify({'ok': True, 'desde': desde.isoformat(),
+                        'hasta': hasta.isoformat(), 'filas': filas})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn:
+            try: conn.autocommit = False
+            except Exception: pass
+            fc_release_movimientos_db(conn)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)

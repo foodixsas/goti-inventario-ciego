@@ -1281,7 +1281,7 @@ function showMainScreen() {
         const mod = btn.dataset.view;
         if (isAdmin) {
             btn.style.display = '';  // Admin ve todo
-        } else if (mod === 'usuarios' || mod === 'config-productos' || mod === 'flujo-caja') {
+        } else if (mod === 'usuarios' || mod === 'config-productos' || mod === 'flujo-caja' || mod === 'costos') {
             btn.style.display = 'none';  // admin-only views
         } else {
             btn.style.display = userModulos.includes(mod) ? '' : 'none';
@@ -1294,6 +1294,9 @@ function showMainScreen() {
 
     const moduloNomina = document.querySelector('.nav-module[data-module="nomina"]');
     if (moduloNomina) moduloNomina.style.display = isAdmin ? '' : 'none';
+
+    const moduloCostos = document.querySelector('.nav-module[data-module="costos"]');
+    if (moduloCostos) moduloCostos.style.display = isAdmin ? '' : 'none';
 
     // Recargar bodegas filtradas segun usuario
     cargarBodegas();
@@ -1404,6 +1407,11 @@ function cambiarVista(viewName) {
     // Auto-inicializar flujo de caja al entrar
     if (viewName === 'flujo-caja') {
         if (typeof fc_init === 'function') fc_init();
+    }
+
+    // Auto-inicializar control de costos al entrar
+    if (viewName === 'costos') {
+        if (typeof co_init === 'function') co_init();
     }
 
     // Auto-inicializar modulo nomina
