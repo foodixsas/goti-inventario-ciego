@@ -10820,7 +10820,8 @@ const TG_NOMBRE_OP = {
     'Traslado': 'Traslados',
     'Conteo': 'Conteos',
     'Produccion': 'Producciones',
-    'Toma Fisica': 'Tomas fisicas'
+    'Toma Fisica': 'Tomas fisicas',
+    'Cruce Operativo': 'Cruces operativos'
 };
 
 async function tgInit() {

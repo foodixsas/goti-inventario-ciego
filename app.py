@@ -9366,7 +9366,7 @@ BODEGAS_TELEGRAM = [
 ]
 OPERACIONES_TELEGRAM = [
     'TODAS', 'Baja', 'Ingreso Extraordinario', 'Traslado',
-    'Conteo', 'Produccion', 'Toma Fisica',
+    'Conteo', 'Produccion', 'Toma Fisica', 'Cruce Operativo',
 ]
 
 

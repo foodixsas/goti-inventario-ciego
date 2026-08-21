@@ -568,6 +568,51 @@ def calcular_cruce(toma, equivs, contifico):
 
 # ============ PROCESAR UNA TAREA ============
 # Retorna (driver_sigue_vivo_bool, ok_bool)
+def avisar_cruce_operativo(bodega, fecha_toma, resumen, error=None):
+    """Avisa por Telegram del resultado del cruce operativo.
+
+    Con su propio try, igual que el aviso de la toma fisica: que falle el
+    mensaje no puede dar por fallido un cruce que si se calculo y ya quedo
+    guardado.
+
+    El importe se manda con su signo y con su lectura en palabras: un numero
+    suelto no dice si sobra o falta mercaderia, y esa es justo la pregunta que
+    se hace quien lo recibe.
+    """
+    nombre = BODEGA_TELEGRAM.get(bodega, bodega.upper())
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from notificar_telegram import notificar_exito, notificar_error
+
+        try:
+            f = datetime.strptime(str(fecha_toma)[:10], '%Y-%m-%d').strftime('%d/%m/%Y')
+        except Exception:
+            f = str(fecha_toma)
+
+        if error:
+            notificar_error('Cruce Operativo', nombre,
+                            'Toma del {}'.format(f), error[:200])
+            return
+
+        valor = float(resumen.get('valor_total_dif') or 0)
+        if valor > 0:
+            lectura = 'sobra mercaderia frente a Contifico'
+        elif valor < 0:
+            lectura = 'falta mercaderia frente a Contifico'
+        else:
+            lectura = 'sin diferencia de valor'
+
+        partes = [
+            'Toma del {}'.format(f),
+            '{} productos cruzados'.format(resumen.get('total_cruzados') or 0),
+            '{} con diferencia'.format(resumen.get('total_con_diferencia') or 0),
+            'Valor de la diferencia: {:+,.2f} USD ({})'.format(valor, lectura),
+        ]
+        notificar_exito('Cruce Operativo', nombre, chr(10).join(partes), '')
+    except Exception as e:
+        log('  aviso por Telegram fallo: {}'.format(str(e)[:120]), 'WARN')
+
+
 def procesar_tarea(tarea, driver):
     ejec_id = tarea['id']
     bodega = tarea['bodega']
@@ -611,11 +656,13 @@ def procesar_tarea(tarea, driver):
             'resumen': resumen,
         })
         log(f'    upload {"OK" if ok else "FALLO"}')
+        avisar_cruce_operativo(bodega, fecha_toma, resumen)
         return True, ok
     except Exception as e:
         tb = traceback.format_exc()
         log(f'ERROR procesando {ejec_id}: {e}\n{tb}', 'ERROR')
         post_resultado({'id': ejec_id, 'estado': 'error', 'error_msg': str(e)[:500]})
+        avisar_cruce_operativo(bodega, fecha_toma, {}, error=str(e))
         msg = str(e).lower()
         # Si el error es del driver/sesion, marcamos driver como muerto para reiniciar
         if any(k in msg for k in ('invalid session', 'disconnected', 'not connected',
