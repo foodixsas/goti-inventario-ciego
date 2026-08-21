@@ -13,7 +13,7 @@ Ejecutar:
 Tarea programada Windows para arrancar al boot.
 """
 import os, sys, time, glob, json, re, traceback, subprocess, threading
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Forzar UTF-8 en stdout
@@ -702,6 +702,116 @@ def js_set_value_and_trigger(driver, element_id, value):
     """)
 
 
+def registrar_toma_por_archivo(driver, bodega_contifico, productos, fecha_form):
+    """Sube la toma fisica como Excel por la pestana 'Carga Masiva'.
+
+    Mismo formulario que la carga fila a fila, misma URL: lo unico que cambia
+    es que en vez de teclear cada producto se adjunta un archivo. La diferencia
+    de tiempo es de una hora a dos minutos.
+
+    Devuelve (productos_ok, errores) para poder sustituir a registrar_toma_bodega
+    sin tocar a quien la llama. Lanza excepcion si Contifico no devuelve el
+    numero de documento o si el movimiento no queda GENERADO: sin Generar el
+    inventario no se ajusta, y dar por buena una toma que no ajusto seria peor
+    que fallar.
+    """
+    import openpyxl
+    wait = WebDriverWait(driver, 60)
+
+    # 1. Excel con el formato de la plantilla oficial
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    seguro = re.sub(r'[^A-Za-z0-9]+', '_', bodega_contifico).strip('_').lower()
+    ruta = os.path.join(DOWNLOAD_DIR,
+                        'tf_%s_%s.xlsx' % (seguro, fecha_form.replace('/', '-')))
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['Producto (Código)', 'Cantidad'])
+    for p in productos:
+        cant = float(p['cantidad'])
+        # El codigo va como TEXTO: la plantilla lo exige.
+        ws.cell(row=ws.max_row + 1, column=1, value=str(p['codigo'])).number_format = '@'
+        ws.cell(row=ws.max_row, column=2,
+                value=int(cant) if cant == int(cant) else cant)
+    wb.save(ruta)
+    log(f'    Excel generado: {os.path.basename(ruta)} ({len(productos)} productos)')
+
+    # 2. Cabecera
+    log(f'    Navegando a formulario de toma fisica...')
+    driver.get(CONTIFICO_TOMA_URL)
+    wait.until(EC.presence_of_element_located((By.ID, 'id_fecha')))
+    time.sleep(2)
+
+    log(f'    Configurando fecha: {fecha_form}')
+    campo_fecha = driver.find_element(By.ID, 'id_fecha')
+    driver.execute_script("arguments[0].value = '';", campo_fecha)
+    campo_fecha.click()
+    campo_fecha.clear()
+    campo_fecha.send_keys(fecha_form)
+    campo_fecha.send_keys(Keys.ESCAPE)
+    time.sleep(1)
+
+    log(f'    Seleccionando bodega: {bodega_contifico}')
+    campo_bodega = driver.find_element(
+        By.CSS_SELECTOR, 'input.object-description[data_id="id_bodega"]')
+    campo_bodega.click()
+    campo_bodega.clear()
+    campo_bodega.send_keys(bodega_contifico)
+    time.sleep(2)
+    campo_bodega.send_keys(Keys.DOWN)
+    campo_bodega.send_keys(Keys.ENTER)
+    time.sleep(2)
+
+    if not (campo_bodega.get_attribute('value') or '').strip():
+        raise Exception('Bodega NO seleccionada: el autocompletado dejo el campo vacio')
+
+    try:
+        campo_desc = driver.find_element(By.ID, 'id_descripcion')
+        driver.execute_script("arguments[0].focus();", campo_desc)
+        campo_desc.clear()
+        campo_desc.send_keys(f'AJUSTE DE INVENTARIO {bodega_contifico} - {fecha_form}')
+    except Exception:
+        pass      # la descripcion no es obligatoria
+
+    # 3. Adjuntar y registrar
+    inp = driver.find_element(By.ID, 'id_archivo')
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", inp)
+    inp.send_keys(ruta)
+    time.sleep(2)
+    log('    Archivo adjuntado, guardando...')
+    driver.execute_script("registrarMovimiento();")
+    time.sleep(9)
+
+    # 4. Sin numero TFI no hay documento
+    cuerpo = driver.find_element(By.TAG_NAME, 'body').text
+    m = re.search(r'TFI\s+\d+', cuerpo)
+    if not m:
+        resumen = ' | '.join(l.strip() for l in cuerpo.splitlines()[:12] if l.strip())
+        raise Exception(f'Contifico no devolvio numero TFI. Pantalla: {resumen[:300]}')
+    num_doc = m.group(0)
+    url_doc = driver.current_url
+    log(f'    Registrado: {num_doc}  (Pendiente)')
+
+    # 5. Generar: es el paso que ajusta el inventario
+    driver.execute_script("mostrar_generar_movimientos();")
+    time.sleep(3)
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.ID, 'btndlgContinuar'))).click()
+    except Exception:
+        driver.execute_script("generarMovimiento();")
+    time.sleep(8)
+
+    # 6. Confirmar releyendo el documento
+    driver.get(url_doc)
+    time.sleep(3)
+    cuerpo = driver.find_element(By.TAG_NAME, 'body').text
+    if 'Generado' not in cuerpo:
+        raise Exception(f'{num_doc} se registro pero NO quedo Generado '
+                        f'(no ajusta inventario). Revisar en Contifico.')
+    log(f'    {num_doc} GENERADO: el inventario quedo ajustado')
+    return len(productos), []
+
+
 def registrar_toma_bodega(driver, bodega_contifico, productos, fecha_form):
     """Registra la toma fisica de UNA bodega en Contifico via Selenium.
     Retorna (productos_ok, lista_errores)."""
@@ -989,7 +1099,15 @@ def procesar_tarea_carga(tarea, driver):
             return True, False
 
         log(f'  - Registrando en Contifico: {bodega_contifico} ({len(productos)} productos)...')
-        ok, errores = registrar_toma_bodega(driver, bodega_contifico, productos, fecha_form)
+        # Por archivo. Fila a fila tardaba cerca de una hora con 111 productos y
+        # dejaba al worker bloqueado, con el resto de la cola esperando.
+        # CARGA_FILA_A_FILA=1 vuelve al camino viejo si hiciera falta.
+        if os.environ.get('CARGA_FILA_A_FILA', '0') == '1':
+            ok, errores = registrar_toma_bodega(driver, bodega_contifico,
+                                                productos, fecha_form)
+        else:
+            ok, errores = registrar_toma_por_archivo(driver, bodega_contifico,
+                                                     productos, fecha_form)
 
         post_resultado_carga({
             'id': ejec_id,
@@ -2187,6 +2305,12 @@ HORARIO_TOMAS = {
 }
 TZ_ECUADOR = timezone(timedelta(hours=-5))
 
+# Cuantos dias hacia atras se rescatan. Una semana cubre un puente o un fin de
+# semana largo sin arrastrar historia vieja.
+DIAS_ATRASO = int(os.environ.get('DIAS_ATRASO_TOMAS', '7'))
+# Cuantas veces se reintenta un dia que falla antes de darlo por imposible.
+MAX_INTENTOS_TOMA = int(os.environ.get('MAX_INTENTOS_TOMA', '3'))
+
 
 def hora_ecuador():
     """Hora local de Ecuador. Render corre en UTC, asi que no vale datetime.now()
@@ -2195,33 +2319,29 @@ def hora_ecuador():
 
 
 def programar_tomas_fisicas():
-    """Encola las tomas fisicas del DIA ANTERIOR. Devuelve cuantas encolo.
+    """Encola las tomas fisicas que falten, de la mas vieja a la mas nueva.
 
-    Dos cosas aprendidas el 19-ago, el dia que esto se estreno:
+    Tres cosas aprendidas sobre la marcha:
 
-    1. NO encolar si no hay conteos. Ese dia las cinco tareas de las 16:00
-       fallaron con "No hay conteos en BD": el horario habia disparado
-       puntual, pero los locales aun no habian contado. Cinco errores falsos y,
-       con los avisos por Telegram, cinco sustos a las bodegas.
+    1. La toma fisica que se sube hoy es la del DIA ANTERIOR. El local cuenta a
+       lo largo del dia y al dia siguiente se carga a Contifico. La descarga de
+       saldos si es del dia en curso, pero la carga no.
 
-    2. ESPERAR al que cuenta tarde. Antes solo se miraba la hora exacta: si el
-       conteo entraba a las 17:00, ese dia se quedaba sin subir -es justo lo
-       que le venia pasando a Simon Bolon-. Ahora, a partir de su hora, se
-       revisa en cada pasada y se encola en cuanto aparecen los conteos.
+    2. NO encolar si no hay conteos. El 19-ago las cinco tareas de las 16:00
+       fallaron con "No hay conteos en BD": el horario disparo puntual pero los
+       locales aun no habian contado. Cinco errores falsos y cinco sustos por
+       Telegram. Ahora, a partir de su hora, se revisa en cada pasada y se
+       encola en cuanto aparecen los conteos, asi el que cuenta tarde tambien
+       entra.
+
+    3. RECUPERAR lo atrasado. Antes solo se miraba ayer: el dia que se perdia
+       quedaba perdido para siempre. Paso con el 19-ago en cinco bodegas y hubo
+       que subirlo a mano. Ahora se mira una semana hacia atras.
     """
     if os.environ.get('SIN_HORARIO_TOMAS', '0') == '1':
         return 0
 
     ahora = hora_ecuador()
-
-    # La toma fisica que se sube hoy es la del DIA ANTERIOR. El local cuenta a
-    # lo largo del dia y al dia siguiente se carga a Contifico; la descarga de
-    # saldos si es del dia en curso, pero la carga no.
-    #
-    # Estaba puesto con la fecha de hoy y por eso las cinco tareas de las 16:00
-    # fallaron con "No hay conteos": buscaba conteos del 19 cuando lo que habia
-    # que subir era el 18.
-    fecha = (ahora.date() - timedelta(days=1)).isoformat()
 
     # Bodegas cuya hora ya paso hoy. A partir de ahi se sigue mirando hasta
     # que aparezcan los conteos o hasta que acabe el dia.
@@ -2230,44 +2350,77 @@ def programar_tomas_fisicas():
     if not pendientes:
         return 0
 
+    # De ayer hacia atras. Una semana alcanza para cubrir un puente o un fin de
+    # semana largo sin arrastrar meses de historia vieja.
+    fechas = [(ahora.date() - timedelta(days=d)).isoformat()
+              for d in range(DIAS_ATRASO, 0, -1)]
+
     creadas = 0
     con = None
     try:
         con = psycopg2.connect(**DB_CONFIG)
         cur = con.cursor()
         for bodega in pendientes:
-            # Ya atendida hoy? Un 'error' del propio horario NO cuenta: casi
-            # siempre es "aun no hay conteos" y hay que reintentarlo luego.
+            # Si la bodega ya tiene algo en cola o corriendo, no se le añade
+            # nada mas: asi se ponen al dia en orden y de una en una.
+            # Ojo con las zombis: hay tareas en 'en_proceso' desde julio,
+            # de cuando la PC de Finanzas se apagaba a mitad de trabajo. Una
+            # tarea que lleva horas asi no esta corriendo, esta muerta, y no
+            # puede bloquear a su bodega para siempre.
             cur.execute("""
-                SELECT estado, solicitado_por FROM goti.tareas_inventario_locales
-                WHERE bodega = %s AND fecha = %s AND accion = 'toma_fisica'
-                ORDER BY id DESC LIMIT 1
-            """, (bodega, fecha))
-            ya = cur.fetchone()
-            if ya:
-                estado, quien = ya[0], (ya[1] or '')
-                if estado != 'error' or quien != 'horario':
+                SELECT COUNT(*) FROM goti.tareas_inventario_locales
+                WHERE bodega = %s AND accion = 'toma_fisica'
+                  AND (estado = 'pendiente'
+                       OR (estado = 'en_proceso'
+                           AND timestamp_inicio > NOW() - INTERVAL '2 hours'))
+            """, (bodega,))
+            if cur.fetchone()[0]:
+                continue
+
+            for fecha in fechas:
+                cur.execute("""
+                    SELECT estado, COALESCE(solicitado_por, '')
+                    FROM goti.tareas_inventario_locales
+                    WHERE bodega = %s AND fecha = %s AND accion = 'toma_fisica'
+                    ORDER BY id
+                """, (bodega, fecha))
+                intentos = cur.fetchall()
+
+                # Ya subida, o cancelada a proposito: no se toca. Cancelar
+                # desde el panel tiene que significar "no lo hagas", si no el
+                # worker la volveria a encolar a los tres minutos.
+                if any(e in ('completado', 'cancelado') for e, _ in intentos):
                     continue
 
-            # Hay algo que subir?
-            cur.execute("""
-                SELECT COUNT(*) FROM goti.inventario_ciego_conteos
-                WHERE fecha = %s AND local = %s
-                  AND COALESCE(cantidad_contada_2, cantidad_contada) > 0
-            """, (fecha, bodega))
-            n = cur.fetchone()[0]
-            if not n:
-                continue      # aun no han contado; se vuelve a mirar luego
+                # Un error se reintenta, pero no eternamente: si Contifico
+                # rechaza ese dia una y otra vez, se deja constancia y se pasa
+                # al siguiente en vez de atascar la cola.
+                errores = sum(1 for e, _ in intentos if e == 'error')
+                if errores >= MAX_INTENTOS_TOMA:
+                    continue
 
-            cur.execute("""
-                INSERT INTO goti.tareas_inventario_locales
-                    (bodega, fecha, accion, solicitado_por)
-                VALUES (%s, %s, 'toma_fisica', 'horario')
-                RETURNING id
-            """, (bodega, fecha))
-            log(f'  {bodega}: encolada toma fisica #{cur.fetchone()[0]} '
-                f'del {fecha} ({n} productos contados)')
-            creadas += 1
+                # Hay algo que subir?
+                cur.execute("""
+                    SELECT COUNT(*) FROM goti.inventario_ciego_conteos
+                    WHERE fecha = %s AND local = %s
+                      AND COALESCE(cantidad_contada_2, cantidad_contada) > 0
+                """, (fecha, bodega))
+                n = cur.fetchone()[0]
+                if not n:
+                    continue      # aun no han contado; se vuelve a mirar luego
+
+                cur.execute("""
+                    INSERT INTO goti.tareas_inventario_locales
+                        (bodega, fecha, accion, solicitado_por)
+                    VALUES (%s, %s, 'toma_fisica', 'horario')
+                    RETURNING id
+                """, (bodega, fecha))
+                atraso = (ahora.date() - date.fromisoformat(fecha)).days
+                log(f'  {bodega}: encolada toma fisica #{cur.fetchone()[0]} '
+                    f'del {fecha} ({n} productos contados'
+                    + (f', atrasada {atraso} dias' if atraso > 1 else '') + ')')
+                creadas += 1
+                break         # una por bodega y pasada: la mas vieja primero
         con.commit()
     except Exception as e:
         if con:
@@ -2284,12 +2437,6 @@ def programar_tomas_fisicas():
     if creadas:
         log(f'Horario {ahora:%H:%M} Ecuador: {creadas} toma(s) fisica(s) encoladas')
     return creadas
-
-
-BODEGAS_CONTEO_DIARIO = ('bodega_principal', 'materia_prima', 'planta')
-HORA_CONTEO_DIARIO = int(os.environ.get('HORA_CONTEO_DIARIO', '7'))
-
-
 def programar_conteo_operativo():
     """Crea la tarea de conteo diario de las bodegas operativas.
 

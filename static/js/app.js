@@ -10505,8 +10505,26 @@ const CL_LOCALES_NOMBRES = {
     'santo_cachon_real': 'Santo Cachon Real',
     'santo_cachon_portugal': 'Santo Cachon Portugal',
     'simon_bolon': 'Simon Bolon',
-    'TODAS': 'TODAS'
+    'TODAS': 'TODAS',
+    // Bodegas del cruce operativo: sin esto salia el nombre crudo con guiones.
+    'bodega_principal': 'Bodega Principal',
+    'materia_prima': 'Materia Prima',
+    'planta': 'Planta'
 };
+
+// Como se llama cada cosa en pantalla.
+const CL_ACCIONES = {
+    'actualizar_cantidad': 'Actualizar Cant.',
+    'toma_fisica': 'Toma Fisica',
+    'cruce_operativo': 'Cruce Operativo'
+};
+
+// Cada cola se cancela en su propio endpoint.
+function clUrlCancelar(origen, id) {
+    return origen === 'cruce'
+        ? `${CONFIG.API_URL}/api/cruce-op/cancelar/${id}`
+        : `${CONFIG.API_URL}/api/inventario-locales/cancelar/${id}`;
+}
 
 let _clPollInterval = null;
 
@@ -10641,13 +10659,14 @@ function clPintarEnMarcha(tareas) {
     document.getElementById('cl-em-detalle').innerHTML =
         vivas.map(t => {
             const nom = CL_LOCALES_NOMBRES[t.bodega] || t.bodega;
-            const acc = t.accion === 'actualizar_cantidad' ? 'Actualizar cantidad' : 'Toma fisica';
+            const acc = CL_ACCIONES[t.accion] || t.accion;
             const f = clFechaCorta(t.fecha);
             return `#${t.id} ${nom} — ${acc} ${f} <b>(${t.estado})</b>`;
         }).join('<br>')
         + (enCurso ? `<br><br>Las ${enCurso} que ya empezaron pueden alcanzar a `
                    + `crear el documento en Contifico aunque las canceles.` : '');
-    caja.dataset.ids = vivas.map(t => t.id).join(',');
+    // origen:id, porque el numero solo no distingue una carga de un cruce.
+    caja.dataset.ids = vivas.map(t => `${t.origen || 'carga'}:${t.id}`).join(',');
     caja.dataset.esperando = esperando;
     caja.style.display = 'flex';
 }
@@ -10657,12 +10676,12 @@ async function clCancelarTodo() {
     const ids = (caja.dataset.ids || '').split(',').filter(Boolean);
     if (!ids.length) return;
     if (!confirm(`Cancelar ${ids.length} tarea(s)?\n\nLas que ya empezaron pueden `
-               + `alcanzar a crear el documento en Contifico igualmente.`)) return;
+               + `alcanzar a terminar igualmente.`)) return;
     let ok = 0, fallo = 0;
-    for (const id of ids) {
+    for (const clave of ids) {
+        const [origen, id] = clave.split(':');
         try {
-            const r = await fetch(`${CONFIG.API_URL}/api/inventario-locales/cancelar/${id}`,
-                                  { method: 'POST' });
+            const r = await fetch(clUrlCancelar(origen, id), { method: 'POST' });
             (await r.json()).ok ? ok++ : fallo++;
         } catch (e) { fallo++; }
     }
@@ -10671,18 +10690,17 @@ async function clCancelarTodo() {
     clCargarHistorial();
 }
 
-async function clCancelarTarea(id, estado) {
+async function clCancelarTarea(id, estado, origen) {
     // Si el worker ya empezo, el documento puede acabar creandose igual: mas
     // vale decirlo antes que dejar creer que se paro en seco.
     const aviso = estado === 'en_proceso'
         ? `\n\nOJO: el worker YA esta trabajando en esta tarea. Se marcara como `
-          + `cancelada para que no se reintente, pero puede que alcance a crear `
-          + `el documento en Contifico.`
+          + `cancelada para que no se reintente, pero puede que alcance a `
+          + `terminar de todos modos.`
         : '';
     if (!confirm(`Cancelar la tarea #${id}?${aviso}`)) return;
     try {
-        const res = await fetch(`${CONFIG.API_URL}/api/inventario-locales/cancelar/${id}`,
-                                { method: 'POST' });
+        const res = await fetch(clUrlCancelar(origen, id), { method: 'POST' });
         const d = await res.json();
         if (d.ok) {
             showToast(d.aviso || `Tarea #${id} cancelada`, d.aviso ? 'warning' : 'success');
@@ -10724,7 +10742,8 @@ async function clCargarHistorial() {
             // Solo tiene sentido cancelar lo que aun no ha terminado.
             const sePuedeCancelar = t.estado === 'pendiente' || t.estado === 'en_proceso';
 
-            const accionTxt = t.accion === 'actualizar_cantidad' ? 'Actualizar Cant.' : 'Toma Fisica';
+            const accionTxt = CL_ACCIONES[t.accion] || t.accion;
+            const origen = t.origen || 'carga';
             const fechaCorta = clFechaCorta(t.fecha);
             const solicitadoAt = t.solicitado_at ? new Date(t.solicitado_at).toLocaleString('es-EC', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'}) : '-';
 
@@ -10740,7 +10759,8 @@ async function clCargarHistorial() {
                     <td style="text-align:center;">
                         ${sePuedeCancelar
                             ? `<button class="cl-btn-cancelar" data-id="${t.id}"
-                                 data-estado="${t.estado}">Cancelar</button>`
+                                 data-estado="${t.estado}"
+                                 data-origen="${origen}">Cancelar</button>`
                             : '<span style="color:#cbd5e1;">&mdash;</span>'}
                     </td>
                 </tr>
@@ -10749,7 +10769,8 @@ async function clCargarHistorial() {
 
         // data-id + addEventListener: nada de onclick en linea.
         tbody.querySelectorAll('.cl-btn-cancelar').forEach(b =>
-            b.addEventListener('click', () => clCancelarTarea(b.dataset.id, b.dataset.estado)));
+            b.addEventListener('click',
+                () => clCancelarTarea(b.dataset.id, b.dataset.estado, b.dataset.origen)));
 
         clPintarEnMarcha(data);
 

@@ -4531,6 +4531,56 @@ def cruce_op_eliminar(ejec_id):
             release_db(conn)
 
 
+@app.route('/api/cruce-op/cancelar/<int:ejec_id>', methods=['POST'])
+def cruce_op_cancelar(ejec_id):
+    """Cancela un cruce operativo desde el historial de tareas.
+
+    Mismo criterio que en las cargas a locales: lo pendiente se para limpio y
+    lo que el worker ya empezo se marca para que no se reintente, avisando de
+    que puede terminar igual -el navegador que lo esta haciendo no se entera
+    de que lo cancelaron-.
+
+    Un cruce no crea documentos en Contifico, solo lee y compara, asi que
+    cancelarlo a mitad no deja nada a medias alla: como mucho se pierde el
+    resultado y hay que volver a pedirlo.
+    """
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""SELECT id, estado, bodega, fecha_toma
+                       FROM goti.cruce_operativo_ejecuciones WHERE id = %s""", (ejec_id,))
+        t = cur.fetchone()
+        if not t:
+            return jsonify({'error': 'no existe ese cruce'}), 404
+        if t['estado'] in ('completado', 'cancelado'):
+            return jsonify({'error': f"el cruce ya esta {t['estado']}, "
+                                     f"no hay nada que cancelar"}), 409
+
+        era = t['estado']
+        cur.execute("""UPDATE goti.cruce_operativo_ejecuciones
+                       SET estado = 'cancelado',
+                           error_msg = %s,
+                           timestamp_cruce = NOW()
+                       WHERE id = %s""",
+                    (f'cancelado desde el panel (estaba en {era})', ejec_id))
+        conn.commit()
+
+        aviso = None
+        if era == 'en_proceso':
+            aviso = ('El worker ya lo habia empezado. No se reintentara, pero '
+                     'puede que termine de descargar antes de enterarse.')
+        return jsonify({'ok': True, 'id': ejec_id, 'estado_anterior': era,
+                        'aviso': aviso})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 @app.route('/api/cruce-op/pendientes', methods=['GET'])
 def cruce_op_pendientes():
     """Llamado por el worker. Devuelve tareas pendientes y las marca como en_proceso."""
@@ -8409,10 +8459,27 @@ def inventario_locales_historial():
     try:
         conn = get_db()
         cur = conn.cursor()
+        # Las dos colas en una sola lista. 'origen' dice de cual viene cada
+        # fila: hace falta para cancelar, porque los id se repiten entre tablas
+        # (hay una carga #77 y un cruce #77, y no son la misma cosa).
         cur.execute("""
-            SELECT id, bodega, fecha, accion, estado, solicitado_por, solicitado_at,
-                   timestamp_inicio, timestamp_fin, total_productos, url_contifico, error_msg
+            SELECT 'carga' AS origen,
+                   id, bodega, fecha, accion, estado, solicitado_por, solicitado_at,
+                   timestamp_inicio, timestamp_fin, total_productos,
+                   url_contifico, error_msg
             FROM goti.tareas_inventario_locales
+
+            UNION ALL
+
+            SELECT 'cruce' AS origen,
+                   id, bodega, fecha_toma AS fecha, 'cruce_operativo' AS accion,
+                   estado, solicitado_por, solicitado_at,
+                   timestamp_descarga AS timestamp_inicio,
+                   timestamp_cruce   AS timestamp_fin,
+                   total_productos_toma AS total_productos,
+                   NULL AS url_contifico, error_msg
+            FROM goti.cruce_operativo_ejecuciones
+
             ORDER BY solicitado_at DESC
             LIMIT 100
         """)
