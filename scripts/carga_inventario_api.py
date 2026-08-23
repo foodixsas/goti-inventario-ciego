@@ -192,11 +192,28 @@ def main():
         lineas.append(f"| {bod} | {len(filas)} | {con_stock} |")
         print(f"  {bod:<24} {len(filas):>3} filas | con stock {con_stock}")
         if ESCRIBIR:
-            cur.execute("DELETE FROM goti.inventario_ciego_conteos WHERE fecha=%s AND local=%s",
-                        (FECHA, bod))
+            # NUNCA borrar y volver a insertar: se llevaba por delante lo que la
+            # tienda ya habia contado. La fila guarda dos cosas de origen
+            # distinto -el stock que dice Contifico y lo que conto la persona- y
+            # esta descarga solo es duena de la primera.
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO goti.inventario_ciego_conteos
-                    (fecha, local, codigo, nombre, unidad, cantidad) VALUES %s""", filas)
+                    (fecha, local, codigo, nombre, unidad, cantidad) VALUES %s
+                ON CONFLICT (fecha, local, codigo) DO UPDATE SET
+                    cantidad = EXCLUDED.cantidad,
+                    nombre   = EXCLUDED.nombre,
+                    unidad   = EXCLUDED.unidad""", filas)
+
+            # Productos que ya no vienen de Contifico: se quitan para que no
+            # queden colgados, pero solo si nadie los conto. Un conteo no se
+            # borra por una limpieza.
+            cur.execute("""
+                DELETE FROM goti.inventario_ciego_conteos
+                WHERE fecha = %s AND local = %s
+                  AND codigo <> ALL(%s)
+                  AND cantidad_contada   IS NULL
+                  AND cantidad_contada_2 IS NULL
+            """, (FECHA, bod, [f[2] for f in filas]))
     if ESCRIBIR:
         con.commit()
         print("\nESCRITO en la base de datos.")
