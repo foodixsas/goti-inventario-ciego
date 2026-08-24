@@ -614,6 +614,18 @@ def procesar_bajas(bodegas):
         for r in api.table(AIRTABLE_BASE_A, TABLE_BAJAS_MATRIZ).all()
     }
 
+    # Que productos NO son inventariables. La base A no guarda ese dato, asi
+    # que se lee de la Matriz Contifico de GLOG, que es donde se mantiene.
+    log("  Precargando clasificacion inventariable...")
+    api_glog = Api(AIRTABLE_TOKEN_GLOG)
+    no_inventariables = {}
+    for r in api_glog.table(AIRTABLE_BASE_GLOG, TABLE_GLOG_CONTIFICO).all():
+        cod = (r["fields"].get("Código") or "").strip().upper()
+        marca = str(r["fields"].get("Inventariable") or "").strip()
+        if cod and marca.upper().startswith("NO") and marca.upper() != "NO APLICA":
+            no_inventariables[cod] = r["fields"].get("Nombre Producto") or cod
+    log(f"    {len(no_inventariables)} productos marcados como NO inventariables")
+
     records = api.table(AIRTABLE_BASE_A, TABLE_BAJAS).all()
     pendientes = [r for r in records if not r["fields"].get("Hecho", False)]
     log(f"Pendientes: {len(pendientes)}")
@@ -631,6 +643,7 @@ def procesar_bajas(bodegas):
         # Resolver productos P1-P10
         detalles = []
         productos_tg = []
+        rechazados = []
         for i in range(1, 11):
             # P1-P7 tienen lookup directo; P8-P10 pueden no tenerlo
             codigos = f.get(f"Código (from P{i})", [])
@@ -643,6 +656,15 @@ def procesar_bajas(bodegas):
                     codigo = (mat.get("Código") or "").strip()
 
             cantidad = f.get(f"p{i}_cantidad", 0) or 0
+
+            if codigo and cantidad > 0 and codigo.upper() in no_inventariables:
+                # Producto formulado de venta: no tiene existencias propias.
+                # Darle de baja descuadraria un inventario que no existe.
+                rechazados.append((codigo, no_inventariables[codigo.upper()], cantidad))
+                log(f"  [BLOQUEADO] P{i} {codigo} "
+                    f"({no_inventariables[codigo.upper()]}): no es inventariable, "
+                    f"es un producto de venta formulado")
+                continue
 
             if codigo and cantidad > 0:
                 prod_id = buscar_producto_api(codigo)
@@ -665,7 +687,20 @@ def procesar_bajas(bodegas):
             log_error_dato("BOT3", f"Bodega no encontrada en API: '{nombre_bodega}' (tienda_id={tienda_id})")
             continue
         if not detalles:
-            log(f"  [SKIP] Sin productos validos")
+            if rechazados:
+                # Nada que dar de baja: todo lo pedido eran productos de venta
+                # formulados. No se crea documento y NO se marca como hecha,
+                # para que quede a la vista y alguien la corrija.
+                lista = ", ".join(f"{c} ({n})" for c, n, _ in rechazados)
+                log_error_dato("BOT3", f"Baja no ejecutada: ninguno de los productos "
+                                       f"es inventariable -> {lista}")
+                avisar_fallo("Baja", MAPEO_CENTROS_A.get(tienda_id, nombre_bodega),
+                             f"📅 {fecha}\n" + "\n".join(
+                                 f"  • {n} ({c}) x {q}" for c, n, q in rechazados),
+                             "No se puede dar de baja: son productos de venta "
+                             "formulados, no tienen inventario propio")
+            else:
+                log(f"  [SKIP] Sin productos validos")
             continue
 
         descripcion = f"BAJA DE INVENTARIO - {nombre_bodega} - {motivo}"
@@ -678,6 +713,11 @@ def procesar_bajas(bodegas):
         productos_str = "\n".join(
             f"  • {nombre_producto(c)} ({c}) x {cant}" for c, cant in productos_tg
         )
+        # Los bloqueados van en el mismo mensaje: si se omitieran, la tienda
+        # daria por dada de baja una linea que no se movio.
+        if rechazados:
+            productos_str += "\n\nNO se dieron de baja (productos de venta, sin inventario propio):\n"
+            productos_str += "\n".join(f"  • {n} ({c}) x {q}" for c, n, q in rechazados)
 
         num_doc = post_movimiento("EGR", bodega_id, detalles, fecha, descripcion)
 
