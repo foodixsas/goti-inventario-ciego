@@ -247,12 +247,16 @@ def buscar_producto_api(codigo):
     """
     codigo_upper = codigo.strip().upper()
     if codigo_upper in _cache_productos:
-        return _cache_productos[codigo_upper]
+        pid = _cache_productos[codigo_upper]
+        if pid:
+            _id_a_codigo[pid] = codigo_upper
+        return pid
 
     def con_respaldo_v2():
         pid = catalogo_v2().get(codigo_upper)
         if pid:
             log(f"  Producto '{codigo_upper}' resuelto por catalogo v2 (no es de POS)")
+            _id_a_codigo[pid] = codigo_upper
         _cache_productos[codigo_upper] = pid
         return pid
 
@@ -275,6 +279,7 @@ def buscar_producto_api(codigo):
             if not prod_id:
                 return con_respaldo_v2()
             _cache_productos[codigo_upper] = prod_id
+            _id_a_codigo[prod_id] = codigo_upper
             return prod_id
         else:
             return con_respaldo_v2()
@@ -286,6 +291,67 @@ def buscar_producto_api(codigo):
 # ============================================================
 # POST MOVIMIENTO A CONTIFICO API
 # ============================================================
+# ============================================================
+# INVENTARIABLE: la regla que vale para TODOS los movimientos
+# ============================================================
+_no_inventariables = None      # codigo -> nombre
+_id_a_codigo = {}              # id de Contifico -> codigo, para el cerrojo final
+
+
+def cargar_no_inventariables():
+    """Que productos NO se pueden mover. Se lee una vez por ejecucion.
+
+    La fuente es el campo 'Inventariable' de la Matriz Contifico de GLOG, que se
+    mantiene a mano. Se descartaron dos alternativas midiendolas:
+
+      - 'tipo_producto' de la API de Contifico marca COP a 605 productos, pero
+        seis de ellos SI son inventariables -las limonadas y los jugos-, asi que
+        bloquearia movimientos buenos.
+      - 'Tipo de Producto' de la base A tampoco separa: "Venta en menu" tiene
+        521 no inventariables y 14 que si lo son.
+
+    Bloquean 'No' y 'No aplica'. Solo pasa el campo VACIO, que si significa
+    "sin clasificar": parar un movimiento legitimo por falta de un dato seria
+    peor que el problema que se quiere evitar.
+    """
+    global _no_inventariables
+    if _no_inventariables is not None:
+        return _no_inventariables
+
+    _no_inventariables = {}
+    try:
+        api_glog = Api(AIRTABLE_TOKEN_GLOG)
+        for r in api_glog.table(AIRTABLE_BASE_GLOG, TABLE_GLOG_CONTIFICO).all():
+            cod = (r["fields"].get("Código") or "").strip().upper()
+            marca = str(r["fields"].get("Inventariable") or "").strip().upper()
+            # 'No' y 'No aplica' bloquean los dos. 'No aplica' no significa
+            # "no se sabe": los 30 productos que lo tienen son 'Proceso
+            # productivo' -PORCIONADO, LIMPIEZA, MEZCLADO- y no son productos,
+            # son pasos de un proceso. Su stock lo demuestra: PORCIONADO en
+            # -166.106. Lo unico que pasa es el campo vacio, que si es
+            # desconocido de verdad.
+            if cod and marca.startswith("NO"):
+                _no_inventariables[cod] = r["fields"].get("Nombre Producto") or cod
+        log(f"  {len(_no_inventariables)} productos marcados como NO inventariables")
+    except Exception as e:
+        # Si no se puede leer la clasificacion se deja el diccionario vacio y se
+        # avisa fuerte. Bloquear todos los movimientos porque AirTable no
+        # responde seria peor; pero que no pase en silencio.
+        log(f"  [AVISO] No se pudo leer la clasificacion de inventariables: "
+            f"{str(e)[:120]}. Los movimientos saldran SIN esa comprobacion.", )
+    return _no_inventariables
+
+
+def es_inventariable(codigo):
+    """(True, None) si se puede mover; (False, nombre) si no.
+
+    Vale para ingresos, egresos y traslados por igual: si un producto no tiene
+    inventario propio, no hay nada que meter ni que sacar.
+    """
+    nombre = cargar_no_inventariables().get((codigo or "").strip().upper())
+    return (nombre is None), nombre
+
+
 def post_movimiento(tipo, bodega_id, detalles, fecha, descripcion, bodega_destino_id=None,
                     centro_costo_id=None):
     """
@@ -300,6 +366,23 @@ def post_movimiento(tipo, bodega_id, detalles, fecha, descripcion, bodega_destin
 
     Retorna el codigo del movimiento (ej: "ING 202512009138") o None si falla.
     """
+    # CERROJO. Ultimo punto por el que pasan los cuatro bots antes de tocar
+    # Contifico. Da igual quien llame ni si se olvido de filtrar: si alguna
+    # linea es de un producto sin inventario propio, el movimiento no sale.
+    bloqueados = []
+    for d in (detalles or []):
+        cod = _id_a_codigo.get(d.get("producto_id"))
+        if not cod:
+            continue                     # producto que no paso por la busqueda
+        permitido, nombre = es_inventariable(cod)
+        if not permitido:
+            bloqueados.append("%s (%s)" % (cod, nombre))
+    if bloqueados:
+        log("  [BLOQUEADO] %s no se crea: %s no tiene inventario propio. "
+            "Es un producto de venta formulado."
+            % (tipo, ", ".join(bloqueados)))
+        return None
+
     payload = {
         "tipo": tipo,
         "fecha": fecha,
@@ -451,6 +534,14 @@ def procesar_ingresos(bodegas):
         if not producto_id:
             log_error_dato("BOT1", f"Producto no encontrado en API: '{codigo}'")
             continue
+        permitido, nombre_ni = es_inventariable(codigo)
+        if not permitido:
+            # Un producto de venta formulado no tiene existencias propias: no
+            # hay nada que ingresar.
+            log_error_dato("BOT1", f"Ingreso no ejecutado: '{codigo}' ({nombre_ni}) "
+                                   f"no es inventariable, es un producto de venta "
+                                   f"formulado")
+            continue
         if not unidades:
             log(f"  [SKIP] Sin unidades")
             continue
@@ -573,6 +664,13 @@ def procesar_traslados(bodegas):
         if not producto_id:
             log_error_dato("BOT2", f"Producto no encontrado en API: '{codigo}'")
             continue
+        permitido, nombre_ni = es_inventariable(codigo)
+        if not permitido:
+            # No hay nada que sacar de una bodega ni que meter en otra.
+            log_error_dato("BOT2", f"Traslado no ejecutado: '{codigo}' ({nombre_ni}) "
+                                   f"no es inventariable, es un producto de venta "
+                                   f"formulado")
+            continue
         if not cantidad:
             log(f"  [SKIP] Sin cantidad")
             continue
@@ -614,17 +712,10 @@ def procesar_bajas(bodegas):
         for r in api.table(AIRTABLE_BASE_A, TABLE_BAJAS_MATRIZ).all()
     }
 
-    # Que productos NO son inventariables. La base A no guarda ese dato, asi
-    # que se lee de la Matriz Contifico de GLOG, que es donde se mantiene.
+    # La misma clasificacion que usan los otros bots. Una sola definicion de
+    # la regla: si algun dia cambia, cambia para todos a la vez.
     log("  Precargando clasificacion inventariable...")
-    api_glog = Api(AIRTABLE_TOKEN_GLOG)
-    no_inventariables = {}
-    for r in api_glog.table(AIRTABLE_BASE_GLOG, TABLE_GLOG_CONTIFICO).all():
-        cod = (r["fields"].get("Código") or "").strip().upper()
-        marca = str(r["fields"].get("Inventariable") or "").strip()
-        if cod and marca.upper().startswith("NO") and marca.upper() != "NO APLICA":
-            no_inventariables[cod] = r["fields"].get("Nombre Producto") or cod
-    log(f"    {len(no_inventariables)} productos marcados como NO inventariables")
+    no_inventariables = cargar_no_inventariables()
 
     records = api.table(AIRTABLE_BASE_A, TABLE_BAJAS).all()
     pendientes = [r for r in records if not r["fields"].get("Hecho", False)]
@@ -772,6 +863,14 @@ def procesar_conteo(bodegas):
             continue
         if not producto_id:
             log_error_dato("BOT4", f"Producto no encontrado en API: '{codigo}'")
+            continue
+        permitido, nombre_ni = es_inventariable(codigo)
+        if not permitido:
+            # Un sobrante o faltante de algo que no se almacena no significa
+            # nada: no habia existencias que cuadrar.
+            log_error_dato("BOT4", f"Ajuste de conteo no ejecutado: '{codigo}' "
+                                   f"({nombre_ni}) no es inventariable, es un "
+                                   f"producto de venta formulado")
             continue
 
         if sobrantes > 0:

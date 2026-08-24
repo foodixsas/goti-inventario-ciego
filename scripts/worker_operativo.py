@@ -1973,6 +1973,36 @@ def _norma_nombre(texto):
     return ' '.join((texto or '').upper().split())
 
 
+def _sin_inventario_propio(codigo, contifico):
+    """Devuelve el nombre si ese codigo NO tiene inventario propio; None si si.
+
+    Un producto de venta formulado -una picana de menu, una hamburguesa, un
+    combo de delivery- no se almacena: lo que se descuenta al venderlo son sus
+    ingredientes. Trasladarlo mueve existencias que no existen, y la huella
+    queda en Contifico como stock negativo enorme.
+
+    Se mira el campo 'Inventariable' de la Matriz Contifico, que es el que se
+    mantiene a mano. Bloquean 'No' y 'No aplica'; solo pasa el campo vacio, que
+    si significa "sin clasificar": parar un traslado legitimo por falta de un
+    dato seria peor que el problema que se quiere evitar.
+    """
+    cod = (codigo or '').strip().upper()
+    if not cod:
+        return None
+    for ct in contifico:
+        if (ct.get('Código') or '').strip().upper() != cod:
+            continue
+        marca = str(ct.get('Inventariable') or '').strip().upper()
+        # 'No' y 'No aplica' bloquean los dos. Los 30 productos con 'No aplica'
+        # son 'Proceso productivo' -PORCIONADO, LIMPIEZA, MEZCLADO-: no son
+        # productos, son pasos de un proceso, y su stock negativo enorme es
+        # justo la huella de haberlos movido.
+        if marca.startswith('NO'):
+            return ct.get('Nombre Producto') or cod
+        return None
+    return None      # no esta en la matriz: no se bloquea, no se sabe
+
+
 def _codigo_contifico(producto_rec_id):
     """record_id de Matriz General -> codigo de Contifico. Solo coincidencia EXACTA.
 
@@ -2002,6 +2032,11 @@ def _codigo_contifico(producto_rec_id):
     # deducir. Comparar nombres es lo que mando PAN DE PAPA como PAPA.
     codigo = (fila.get(AT_CAMPO_CODIGO) or '').strip()
     if codigo:
+        ni = _sin_inventario_propio(codigo, contifico)
+        if ni:
+            return None, nombre, (f'"{ni}" ({codigo}) no es inventariable: es un '
+                                  f'producto de venta formulado y no tiene '
+                                  f'existencias propias que trasladar')
         return codigo, nombre, None
 
     # Respaldo para un producto recien creado al que aun no le llenaron el
@@ -2021,6 +2056,11 @@ def _codigo_contifico(producto_rec_id):
     codigo = (exactos[0].get('Código') or '').strip()
     if not codigo:
         return None, nombre, f'"{nombre}" esta en la matriz pero sin codigo'
+    ni = _sin_inventario_propio(codigo, contifico)
+    if ni:
+        return None, nombre, (f'"{ni}" ({codigo}) no es inventariable: es un '
+                              f'producto de venta formulado y no tiene '
+                              f'existencias propias que trasladar')
     return codigo, nombre, None
 
 
