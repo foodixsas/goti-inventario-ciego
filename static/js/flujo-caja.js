@@ -15,16 +15,33 @@ let fc_eliminados_data = []; // [{grupo, nombre, eliminado_desde}] items dados d
 // semana, no se arrastran de la anterior. Lo unico que viaja entre semanas es la
 // proyeccion y los pagos recurrentes ya parametrizados.
 const FC_GRUPO_PROV = 'prov-principales';
+// Los eventuales van aparte pero se comportan igual: salen de la cartera de la
+// semana. El id de principales NO se toca: lo guardado y las bajas dependen de el.
+const FC_GRUPO_PROV_EVENT = 'prov-eventuales';
+const FC_GRUPOS_PROV = new Set([FC_GRUPO_PROV, FC_GRUPO_PROV_EVENT]);
+
+// A que grupo pertenece un proveedor segun el catalogo. Solo EVENTUAL se separa;
+// lo que esta sin clasificar se queda en principales para que no se pierda de vista.
+function fc_grupoDeProveedor(nombre) {
+    const ficha = fc_buscarProveedorBD(nombre);
+    return (ficha && (ficha.tipo_proveedor || '').trim().toUpperCase() === 'EVENTUAL')
+        ? FC_GRUPO_PROV_EVENT : FC_GRUPO_PROV;
+}
 // Grupos que se rearman semana a semana desde su propia cartera. El resto
 // (arriendos, cajas, servicios, debitos, tarjetas, nomina, IESS...) es estructura
 // fija que persiste entre semanas y NO se filtra.
-const FC_GRUPOS_POR_SEMANA = new Set([FC_GRUPO_PROV]);
+const FC_GRUPOS_POR_SEMANA = new Set([FC_GRUPO_PROV, FC_GRUPO_PROV_EVENT]);
 const FC_GRUPO_ANEFI = 'inversiones';
 let fc_cartera_semanas = {}; // {"2026-08-17": [{proveedor, ruc, saldo, facturas}]}
 
 function fc_getEliminadoDesde(grupo, nombre) {
     const n = (nombre || '').trim().toUpperCase();
-    const e = fc_eliminados_data.find(x => x.grupo === grupo && (x.nombre || '').trim().toUpperCase() === n);
+    // Un proveedor puede pasar de principales a eventuales al reclasificarlo en el
+    // catalogo. La baja se guardo con el grupo viejo, asi que se busca en los dos:
+    // si no, reclasificarlo revivia a un proveedor dado de baja.
+    const grupos = FC_GRUPOS_PROV.has(grupo) ? [...FC_GRUPOS_PROV] : [grupo];
+    const e = fc_eliminados_data.find(x => grupos.includes(x.grupo)
+        && (x.nombre || '').trim().toUpperCase() === n);
     return e ? e.eliminado_desde : null;
 }
 
@@ -547,6 +564,7 @@ function fc_renderEgresos() {
     html += '</tr>';
 
     html += fc_renderSubgrupoEgreso({ id: 'prov-principales', nombre: 'PROVEEDORES PRINCIPALES', items: ['Proveedor 1'], esProveedor: true });
+    html += fc_renderSubgrupoEgreso({ id: 'prov-eventuales', nombre: 'PROVEEDORES EVENTUALES', items: ['Proveedor 1'], esProveedor: true });
     html += fc_renderTotalEgreso('Total Pago Proveedores', 'proveedores', '#ffcdd2');
     html += fc_renderTotalEgreso('TOTAL EGRESOS', 'egresos', '#ef9a9a');
 
@@ -2109,7 +2127,7 @@ async function fc_cargarDatosGuardados() {
                         // Proveedores: la semana se guia por SU propia cartera. Si el
                         // proveedor no viene en el archivo de esa semana, sus valores de
                         // esa semana no se arrastran (cada semana es unica).
-                        if (grupo === FC_GRUPO_PROV && hayCartera) {
+                        if (FC_GRUPOS_PROV.has(grupo) && hayCartera) {
                             const setSem = carteraSet[fechaSemana];
                             if (setSem && !setSem.has(fc_normalizarNombre(item.nombre))) return;
                         }
@@ -2139,7 +2157,7 @@ async function fc_cargarDatosGuardados() {
                         // OJO: la cartera de cada semana es UNICA y no afecta a las otras.
                         // Para proveedores se toma SOLO la foto de la semana que se esta
                         // viendo; nunca se arrastra la lista de otra semana.
-                        if (grupo === FC_GRUPO_PROV) {
+                        if (FC_GRUPOS_PROV.has(grupo)) {
                             if (fechaSemana === primeraSemana && (item.facturas || []).length) {
                                 existente.facturas = item.facturas;
                             }
@@ -2273,8 +2291,9 @@ async function fc_cargarDatosGuardados() {
         // tienen nada guardado: la semana se rearma sola, sin volver a subir el XLS.
         if (hayCartera) {
             await fc_cargarProveedoresBD();
-            const yaEsta = new Set((egresosConsolidados[FC_GRUPO_PROV] || [])
-                .map(e => fc_normalizarNombre(e.nombre)));
+            const yaEsta = new Set();
+            FC_GRUPOS_PROV.forEach(g => (egresosConsolidados[g] || [])
+                .forEach(e => yaEsta.add(fc_normalizarNombre(e.nombre))));
             const nuevos = [];
             semanas.forEach(sem => {
                 (fc_cartera_semanas[sem.inicio] || [])
@@ -2294,10 +2313,28 @@ async function fc_cargarDatosGuardados() {
                     });
             });
             if (nuevos.length) {
-                egresosConsolidados[FC_GRUPO_PROV] =
-                    (egresosConsolidados[FC_GRUPO_PROV] || []).concat(nuevos);
+                nuevos.forEach(it => {
+                    const g = fc_grupoDeProveedor(it.nombre);
+                    (egresosConsolidados[g] = egresosConsolidados[g] || []).push(it);
+                });
                 console.log(`Cartera: ${nuevos.length} proveedor(es) reconstruidos desde la cartera guardada`);
             }
+
+            // Reclasificar en el catalogo tiene que mover la fila de grupo sola, si no
+            // habria que volver a armar la semana a mano cada vez.
+            const porGrupo = {};
+            FC_GRUPOS_PROV.forEach(g => { porGrupo[g] = []; });
+            FC_GRUPOS_PROV.forEach(g => (egresosConsolidados[g] || []).forEach(it => {
+                porGrupo[fc_grupoDeProveedor(it.nombre)].push(it);
+            }));
+            let movidos = 0;
+            FC_GRUPOS_PROV.forEach(g => {
+                const antes = (egresosConsolidados[g] || []).map(x => x.nombre).join('|');
+                egresosConsolidados[g] = porGrupo[g];
+                if (antes !== porGrupo[g].map(x => x.nombre).join('|')) movidos++;
+                if (!egresosConsolidados[g].length) delete egresosConsolidados[g];
+            });
+            if (movidos) console.log('Proveedores repartidos entre principales y eventuales por tipo_proveedor');
 
             // El detalle de facturas vive en la cartera de la semana (una sola copia).
             // Es la fuente buena: si esta ahi, manda sobre lo que hubiera en egresos.
@@ -2310,7 +2347,9 @@ async function fc_cargarDatosGuardados() {
                 detallePorProv[fc_normalizarNombre(p.proveedor)] = { semana: primeraSemana, detalle: det };
             });
             let conDetalle = 0;
-            (egresosConsolidados[FC_GRUPO_PROV] || []).forEach(it => {
+            const todosProv = [];
+            FC_GRUPOS_PROV.forEach(g => (egresosConsolidados[g] || []).forEach(it => todosProv.push(it)));
+            todosProv.forEach(it => {
                 const d = detallePorProv[fc_normalizarNombre(it.nombre)];
                 if (!d) return;
                 it.carteraSemana = d.semana;
@@ -2390,7 +2429,7 @@ async function fc_cargarDatosGuardados() {
 
                     // Cada semana es unica: en las semanas cuya cartera NO trae a este
                     // proveedor sus dias quedan bloqueados (no hay nada que pagarle ahi).
-                    if (grupo === FC_GRUPO_PROV && hayCartera) {
+                    if (FC_GRUPOS_PROV.has(grupo) && hayCartera) {
                         const nk = fc_normalizarNombre(item.nombre);
                         semanas.forEach(sem => {
                             const setSem = carteraSet[sem.inicio];
@@ -2535,7 +2574,7 @@ async function fc_guardarDatos() {
                 // todavia no tiene egresos guardados.
                 const facturas = facturasFila;
                 const itemData = { nombre, banco, deuda, saldo, dias, valores: {}, pagados: {}, facturas };
-                const semCart = (grupo === FC_GRUPO_PROV) ? (row.dataset.carteraSemana || '') : '';
+                const semCart = FC_GRUPOS_PROV.has(grupo) ? (row.dataset.carteraSemana || '') : '';
                 if (semCart && facturasFila.length) {
                     (detalleCartera[semCart] = detalleCartera[semCart] || []).push(
                         { proveedor: nombre, detalle: facturasFila });
@@ -2555,7 +2594,7 @@ async function fc_guardarDatos() {
                 // recargar volvia "guardado" en todas y ya no habia como sacarlo.
                 // Los pagos fijos no dependen de esto: viven en fc_pagos_recurrentes
                 // y los reproyecta fc_proyectarRecurrentes.
-                const esSuCartera = grupo === FC_GRUPO_PROV
+                const esSuCartera = FC_GRUPOS_PROV.has(grupo)
                                  && (row.dataset.carteraSemana || '') === fechaSemana;
                 if (FC_GRUPOS_POR_SEMANA.has(grupo)
                     && !Object.keys(itemData.valores).length && !esSuCartera) return;

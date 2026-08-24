@@ -8,7 +8,9 @@ primer intento de arreglo (que borraba arriendos, cajas y demas pagos fijos).
 import sys, json, datetime, psycopg2
 
 PROV = 'prov-principales'
-GRUPOS_POR_SEMANA = {PROV}   # debe reflejar FC_GRUPOS_POR_SEMANA en flujo-caja.js
+PROV_EVENT = 'prov-eventuales'
+GRUPOS_PROV = {PROV, PROV_EVENT}
+GRUPOS_POR_SEMANA = set(GRUPOS_PROV)   # refleja FC_GRUPOS_POR_SEMANA en flujo-caja.js
 
 
 def cargar_cartera():
@@ -73,7 +75,7 @@ def main():
     fallos = []
 
     # 1. Ningun proveedor puede sobrevivir sin motivo (ni cartera ni plan)
-    sin_motivo = [k for k, m in filas.items() if k[0] == PROV and m == 'estructura fija']
+    sin_motivo = [k for k, m in filas.items() if k[0] in GRUPOS_PROV and m == 'estructura fija']
     if sin_motivo:
         fallos.append(f'{len(sin_motivo)} proveedor(es) sin cartera ni plan siguen dibujandose')
 
@@ -90,14 +92,14 @@ def main():
     # 4. LA CARTERA MANDA: nadie se dibuja sin estar en la cartera de una semana
     #    visible, salvo que tenga pago ya planificado.
     intrusos = [n for (g, n), m in filas.items()
-                if g == PROV and m != 'ya planificado'
+                if g in GRUPOS_PROV and m != 'ya planificado'
                 and n.upper().strip() not in en_cartera]
     if intrusos:
         fallos.append(f'{len(intrusos)} proveedor(es) dibujados sin estar en cartera '
                       f'ni tener pago planificado: {intrusos[:3]}')
 
     # 5. ...y al reves: todo el que esta en la cartera visible DEBE dibujarse
-    dibujados = {n.upper().strip() for (g, n) in filas if g == PROV}
+    dibujados = {n.upper().strip() for (g, n) in filas if g in GRUPOS_PROV}
     faltantes = en_cartera - dibujados
     if faltantes:
         fallos.append(f'{len(faltantes)} proveedor(es) de la cartera no se dibujan: '
