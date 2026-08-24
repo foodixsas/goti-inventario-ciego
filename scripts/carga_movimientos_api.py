@@ -67,6 +67,9 @@ TABLE_BAJAS          = "tbl6Y8ZfViG8sepGi"   # Registro De Bajas Tiendas
 TABLE_CONTEO         = "tblWBbKhBk4Pz9bNz"   # Conteo Inventario
 TABLE_GLOG_PRODUCTOS = "tblOCyYpGJDFcGVvr"   # Matriz General de Productos (GLOG)
 TABLE_GLOG_CONTIFICO = "tblxC58veM7i1UnYc"   # Matriz Contifico (GLOG)
+# Campo de la Matriz General con el codigo real de Contifico: la fuente de
+# verdad para cualquier movimiento, traslado, egreso o ingreso.
+CAMPO_CODIGO_GLOG = "Codigo Contifico"
 TABLE_BAJAS_MATRIZ   = "tblTUHpdmQgULTY1y"   # Matriz Contifico Base A (para P8-P10)
 
 # ============================================================
@@ -506,18 +509,38 @@ def procesar_traslados(bodegas):
     }
 
     def resolver_codigo_glog(producto_record_id):
-        """
-        Dado un record_id de Matriz General → busca nombre →
-        busca en Matriz Contifico por nombre → retorna el Código
+        """record_id de Matriz General -> codigo de Contifico.
+
+        Lee el codigo que ya viene escrito en AirTable. Antes se deducia
+        comparando nombres y aceptando coincidencias parciales, y de ahi salio
+        el desastre: PAN DE PAPA devolvia el codigo de PAPA, y CHAMPINONES
+        SALTEADOS el de SAL, porque SAL esta dentro de saLTEADOS. 69 de 208
+        traslados acabaron sobre el producto equivocado.
+
+        Si no hay codigo, devuelve None y el movimiento no se crea. Sin codigo
+        seguro es preferible no hacer nada: un movimiento sobre otro producto
+        descuadra dos inventarios y hay que ir a borrarlo a mano.
         """
         prod = matriz_general.get(producto_record_id, {})
-        nombre = (prod.get("Productos") or "").upper()
+        codigo = (prod.get(CAMPO_CODIGO_GLOG) or "").strip()
+        if codigo:
+            return codigo
+
+        # Respaldo para un producto recien creado al que aun no le llenaron el
+        # campo. Coincidencia EXACTA: la parcial no vuelve.
+        nombre = " ".join((prod.get("Productos") or "").upper().split())
         if not nombre:
             return None
-        for ct_fields in matriz_contifico.values():
-            ct_nombre = (ct_fields.get("Nombre Producto") or "").upper()
-            if ct_nombre == nombre or nombre in ct_nombre or ct_nombre in nombre:
-                return ct_fields.get("Código", "")
+        exactos = [ct for ct in matriz_contifico.values()
+                   if " ".join((ct.get("Nombre Producto") or "").upper().split()) == nombre]
+        if len(exactos) == 1:
+            return (exactos[0].get("Código") or "").strip() or None
+        if len(exactos) > 1:
+            log(f"  [DATO] '{nombre}' aparece {len(exactos)} veces en la Matriz "
+                f"Contifico: no se puede saber cual es")
+        else:
+            log(f"  [DATO] '{nombre}' no tiene codigo. Llenar el campo "
+                f"'{CAMPO_CODIGO_GLOG}' en la Matriz General de AirTable")
         return None
 
     records = api.table(AIRTABLE_BASE_GLOG, TABLE_TRASLADOS).all()

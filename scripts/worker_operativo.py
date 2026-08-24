@@ -1904,7 +1904,10 @@ AIRTABLE_TOKEN_GLOG = os.environ.get('AIRTABLE_TOKEN_GLOG', '')
 AT_BASE_GLOG = 'appETTeYKD0DQpuN7'
 AT_TABLA_TRASLADOS = 'tblpeKmVHSsMopxBQ'   # Egresos Emergentes Tiendas
 AT_TABLA_GLOG_PRODUCTOS = 'tblOCyYpGJDFcGVvr'   # Matriz General de Productos
-AT_TABLA_GLOG_CONTIFICO = 'tblxC58veM7i1UnYc'   # Matriz Contifico
+AT_TABLA_GLOG_CONTIFICO = 'tblxC58veM7i1UnYc'
+# Campo de la Matriz General con el codigo real de Contifico. Es la fuente
+# de verdad para cualquier movimiento: traslado, egreso o ingreso.
+AT_CAMPO_CODIGO = 'Codigo Contifico'   # Matriz Contifico
 
 CONTIFICO_MOVIMIENTOS_URL = ('https://1793168604001.contifico.com'
                              '/sistema/inventario/movimiento/registrar/')
@@ -1960,8 +1963,28 @@ def _at_glog(tabla, params=None):
 _catalogo_glog = None
 
 
+def _norma_nombre(texto):
+    """Normaliza para comparar: mayusculas y espacios de sobra fuera.
+
+    NO se tocan los acentos ni se recorta nada mas. Los dos lados salen de la
+    misma base de AirTable, asi que tienen que coincidir tal cual; cualquier
+    "limpieza" adicional solo sirve para volver a juntar productos distintos.
+    """
+    return ' '.join((texto or '').upper().split())
+
+
 def _codigo_contifico(producto_rec_id):
-    """record_id de Matriz General -> codigo de Contifico, cruzando por nombre."""
+    """record_id de Matriz General -> codigo de Contifico. Solo coincidencia EXACTA.
+
+    Antes se aceptaba coincidencia parcial y de ahi salio el desastre: pedir
+    PAN DE PAPA devolvia el codigo de PAPA, y CHAMPINONES SALTEADOS devolvia el
+    de SAL, porque SAL esta dentro de saLTEADOS. 69 de 208 traslados acabaron
+    con el producto equivocado.
+
+    Devuelve (codigo, nombre, motivo_del_fallo). Si no hay coincidencia exacta,
+    o si hay mas de una, NO se elige nada: es preferible que el traslado falle y
+    alguien lo mire, a que se cree un movimiento sobre otro producto.
+    """
     global _catalogo_glog
     if _catalogo_glog is None:
         general = {r['id']: r['fields'] for r in _at_glog(AT_TABLA_GLOG_PRODUCTOS)}
@@ -1970,14 +1993,35 @@ def _codigo_contifico(producto_rec_id):
         log(f'  catalogo GLOG: {len(general)} productos, {len(contifico)} en matriz Contifico')
     general, contifico = _catalogo_glog
 
-    nombre = (general.get(producto_rec_id, {}).get('Productos') or '').upper()
+    fila = general.get(producto_rec_id, {})
+    nombre = (fila.get('Productos') or '')
     if not nombre:
-        return None, ''
-    for ct in contifico:
-        ct_nombre = (ct.get('Nombre Producto') or '').upper()
-        if ct_nombre and (ct_nombre == nombre or nombre in ct_nombre or ct_nombre in nombre):
-            return ct.get('Código', ''), nombre
-    return None, nombre
+        return None, '', 'el registro de AirTable no tiene producto'
+
+    # Lo normal: el codigo viene escrito en la Matriz General y no hay nada que
+    # deducir. Comparar nombres es lo que mando PAN DE PAPA como PAPA.
+    codigo = (fila.get(AT_CAMPO_CODIGO) or '').strip()
+    if codigo:
+        return codigo, nombre, None
+
+    # Respaldo para un producto recien creado al que aun no le llenaron el
+    # campo. Coincidencia EXACTA: la parcial no vuelve.
+    buscado = _norma_nombre(nombre)
+    exactos = [ct for ct in contifico
+               if _norma_nombre(ct.get('Nombre Producto')) == buscado]
+
+    if not exactos:
+        return None, nombre, (f'"{nombre}" no tiene codigo. Llenar el campo '
+                              f'"{AT_CAMPO_CODIGO}" en la Matriz General de AirTable')
+    if len(exactos) > 1:
+        codigos = ', '.join(str(ct.get('Código') or '?') for ct in exactos[:5])
+        return None, nombre, (f'"{nombre}" aparece {len(exactos)} veces en la Matriz '
+                              f'Contifico ({codigos}): no se puede saber cual es')
+
+    codigo = (exactos[0].get('Código') or '').strip()
+    if not codigo:
+        return None, nombre, f'"{nombre}" esta en la matriz pero sin codigo'
+    return codigo, nombre, None
 
 
 def traslados_pendientes():
@@ -2014,6 +2058,52 @@ def _marcar_traslado_hecho(record_id, num_doc):
         log(f'  [AT] Marcado solo Hecho (sin numero) para no duplicar', 'WARN')
         return True
     log(f'  [AT] NO se pudo marcar Hecho: {r2.text[:150]}', 'ERROR')
+    return False
+
+
+def _elegir_por_codigo(driver, elemento, codigo):
+    """Escribe el codigo y escoge la sugerencia de ESE codigo, no la primera.
+
+    El autocompletado normal acepta la primera opcion a ciegas. Con codigos eso
+    no vale: si uno es el principio de otro -CONG001 y CONG0015- la primera que
+    sale no tiene por que ser la que se pidio.
+
+    Devuelve True si se pudo elegir la exacta. Si no, deja el trabajo hecho a
+    medias a proposito y que lo resuelva la comprobacion posterior.
+    """
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", elemento)
+    time.sleep(0.4)
+    elemento.click()
+    time.sleep(0.3)
+    elemento.clear()
+    elemento.send_keys(codigo)
+    time.sleep(2.5)
+
+    try:
+        opciones = [li for li in driver.find_elements(
+            By.CSS_SELECTOR, 'ul.ui-autocomplete li') if li.is_displayed()]
+        patron = re.compile(r'(^|[^A-Za-z0-9])' + re.escape(codigo) + r'([^A-Za-z0-9]|$)',
+                            re.IGNORECASE)
+        for li in opciones:
+            if patron.search(li.text or ''):
+                li.click()
+                time.sleep(0.8)
+                _cerrar_sugerencias(driver, elemento)
+                return True
+        if opciones:
+            log(f'  ninguna sugerencia coincide con el codigo {codigo}; '
+                f'se ofrecian: ' + ' | '.join((li.text or '')[:40] for li in opciones[:4]),
+                'WARN')
+    except Exception as e:
+        log(f'  no se pudo leer la lista de sugerencias: {str(e)[:80]}', 'WARN')
+
+    # Camino de siempre, por si la lista no se pudo leer. Lo que valida de
+    # verdad es la comprobacion de despues.
+    elemento.send_keys(Keys.DOWN)
+    time.sleep(0.5)
+    elemento.send_keys(Keys.ENTER)
+    time.sleep(0.8)
+    _cerrar_sugerencias(driver, elemento)
     return False
 
 
@@ -2080,7 +2170,7 @@ def procesar_traslado(reg, driver):
     except Exception:
         fecha = datetime.now().strftime('%d/%m/%Y')
 
-    codigo, nombre_prod = _codigo_contifico(prod_rec)
+    codigo, nombre_prod, motivo = _codigo_contifico(prod_rec)
 
     log(f'>>> TRASLADO {rid} | {codigo or "?"} x{cantidad} | '
         f'{bod_origen} -> {bod_destino} ({fecha})')
@@ -2094,7 +2184,9 @@ def procesar_traslado(reg, driver):
         log('  [DATO] origen y destino son la misma bodega', 'ERROR')
         return True, False
     if not codigo:
-        log(f'  [DATO] producto sin codigo de Contifico: {nombre_prod!r}', 'ERROR')
+        # Se deja el registro pendiente a proposito: sin codigo seguro, crear el
+        # movimiento seria repetir el fallo que mando PAN DE PAPA como PAPA.
+        log(f'  [DATO] no se puede resolver el producto: {motivo}', 'ERROR')
         return True, False
     if not cantidad:
         log('  [DATO] sin cantidad', 'ERROR')
@@ -2208,11 +2300,15 @@ def _fila_producto(driver, codigo, cantidad):
 
     # Por si el desplegable de la bodega destino sigue abierto sobre esta fila.
     _cerrar_sugerencias(driver)
-    _autocompletar(driver, inp, codigo)
+    _elegir_por_codigo(driver, inp, codigo)
 
-    # Comprobar que de verdad quedo un producto elegido y no solo el texto.
+    # Que el codigo aparezca ENTERO, no como un trozo de otro: buscando VER02
+    # dentro de "VER020 PAPA" la comprobacion daria por bueno el producto
+    # equivocado, que es justo lo que hay que evitar aqui.
     valor = (inp.get_attribute('value') or '').strip()
-    if codigo.upper() not in valor.upper():
+    entero = re.compile(r'(^|[^A-Za-z0-9])' + re.escape(codigo) + r'([^A-Za-z0-9]|$)',
+                        re.IGNORECASE)
+    if not entero.search(valor):
         # 'no-results' significa que el buscador de Contifico no ofrece ese
         # codigo. Casi siempre es que el producto esta INACTIVO (estado I): el
         # formulario solo lista los activos. Lo arregla alguien en Contifico o
