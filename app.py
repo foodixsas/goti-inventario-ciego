@@ -7203,8 +7203,15 @@ def carga_inicial_productos():
             }
             tabla = TABLAS_TOMA.get(marca)
             if tabla:
-                # Primero borrar datos incorrectos si existen
-                cur.execute("DELETE FROM goti.productos_por_marca WHERE marca = %s", (marca,))
+                # NO se borra nada. Antes habia aqui un DELETE de toda la marca
+                # y despues este INSERT rehacia las equivalencias con la regla
+                # "1000 si dice kg, 1 para el resto". Un clic destruia meses de
+                # correcciones: asi es como HERR005 paso de 30 a 1.
+                #
+                # El ON CONFLICT de abajo hace lo correcto: refresca nombre y
+                # unidad -lo unico que esta carga sabe- y deja la equivalencia
+                # como este. La regla por defecto solo se aplica a productos
+                # NUEVOS, que es para lo que sirve.
 
                 # INSERT directo desde la tabla de toma (evita problemas de fetch)
                 # Usamos subquery con ROW_NUMBER para deduplicar por codigo
@@ -7229,6 +7236,13 @@ def carga_inicial_productos():
                     SET nombre = EXCLUDED.nombre, unidad = EXCLUDED.unidad
                 """, (marca,))
                 total = cur.rowcount
+                # Cuantas equivalencias se respetaron, para que la respuesta lo
+                # diga y nadie se quede con la duda de si se perdio algo.
+                cur.execute("""
+                    SELECT COUNT(*) AS n FROM goti.productos_por_marca
+                    WHERE marca = %s AND COALESCE(equivalencia, 1) NOT IN (1, 1000)
+                """, (marca,))
+                respetadas = cur.fetchone()['n']
         else:
             # Cargar desde lista hardcodeada para locales
             marcas_cargar = [marca] if marca else list(PRODUCTOS_LOCALES.keys())
@@ -7244,7 +7258,13 @@ def carga_inicial_productos():
                     total += 1
 
         conn.commit()
-        return jsonify({'ok': True, 'insertados': total})
+        salida = {'ok': True, 'insertados': total}
+        if marca in BODEGAS_OPERATIVAS_MAP:
+            salida['equivalencias_respetadas'] = respetadas
+            salida['aviso'] = (f'{respetadas} equivalencias corregidas a mano se '
+                               f'conservaron. Esta carga solo actualiza nombre y '
+                               f'unidad, y agrega productos nuevos.')
+        return jsonify(salida)
     except Exception as e:
         if conn: conn.rollback()
         return jsonify({'error': str(e)}), 500
@@ -7254,23 +7274,43 @@ def carga_inicial_productos():
 
 @app.route('/api/admin/productos-marca/fix-equivalencias-kg', methods=['POST'])
 def fix_equivalencias_kg():
-    """Pone equivalencia=1000 a todos los productos con unidad Kg, excepto DETERGENTE y JACK DANIELS"""
+    """Pone equivalencia=1000 a los productos en Kg que AUN no tengan factor propio.
+
+    Ya no pisa lo corregido a mano. La regla "kilos a gramos son 1000" parece
+    obvia pero no siempre es cierta: la propia lista de excepciones escritas en
+    el codigo -DETERGENTE, JACK DANIEL- se descubrio a base de encontrar
+    productos que no encajaban, y hubo mas despues. Un factor que alguien puso
+    mirando el producto vale mas que una regla general.
+
+    Por eso solo toca los que estan en el valor por defecto (1 o sin dato), y
+    exige confirmar: ?confirmar=si.
+    """
+    if request.args.get('confirmar') != 'si':
+        return jsonify({
+            'error': 'Hace falta confirmar. Esta accion cambia equivalencias en '
+                     'las tres bodegas operativas.',
+            'como': 'repetir la llamada con ?confirmar=si',
+        }), 400
     conn = None
     try:
         conn = get_db()
         cur = conn.cursor()
-        # Actualizar equivalencia a 1000 para productos en Kg/Kilogramos SOLO en bodegas operativas
+        # Solo los que siguen en el valor por defecto. Lo que alguien ya
+        # corrigio se queda como esta.
         cur.execute("""
             UPDATE goti.productos_por_marca
             SET equivalencia = 1000
             WHERE marca IN ('BODEGA_PRINCIPAL', 'MATERIA_PRIMA', 'PLANTA')
               AND (LOWER(unidad) LIKE '%kg%' OR LOWER(unidad) LIKE '%kilogramo%')
+              AND COALESCE(equivalencia, 1) = 1
               AND UPPER(nombre) NOT LIKE '%DETERGENTE%'
               AND UPPER(nombre) NOT LIKE '%JACK DANIEL%'
         """)
         actualizados = cur.rowcount
         conn.commit()
-        return jsonify({'ok': True, 'actualizados': actualizados})
+        return jsonify({'ok': True, 'actualizados': actualizados,
+                        'aviso': 'Solo se tocaron los que estaban en el valor por '
+                                 'defecto. Lo corregido a mano no se modifico.'})
     except Exception as e:
         if conn: conn.rollback()
         return jsonify({'error': str(e)}), 500
@@ -7786,10 +7826,15 @@ def flujo_caja_proveedores_listar():
             ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT '',
             ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '',
             ADD COLUMN IF NOT EXISTS tipo_proveedor TEXT DEFAULT '',
-            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT ''""")
+            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS credito_mixto_monto NUMERIC(14,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS credito_mixto_dias INTEGER DEFAULT 0""")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_fc_proveedores_ruc ON fc_proveedores(ruc) WHERE ruc <> ''")
         conn.commit()
-        cur.execute('SELECT id, nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura FROM fc_proveedores ORDER BY nombre')
+        cur.execute('''SELECT id, nombre, nombre_comercial, criticidad, dias_credito, dia_despacho,
+                              productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura,
+                              COALESCE(credito_mixto_monto, 0), COALESCE(credito_mixto_dias, 0)
+                       FROM fc_proveedores ORDER BY nombre''')
         proveedores = []
         for r in cur.fetchall():
             proveedores.append({
@@ -7797,7 +7842,8 @@ def flujo_caja_proveedores_listar():
                 'criticidad': r[3] or 'BAJO', 'dias_credito': r[4] or 0,
                 'dia_despacho': r[5] or '', 'productos_servicios': r[6] or '',
                 'observaciones': r[7] or '', 'ruc': r[8] or '',
-                'telefono': r[9] or '', 'tipo_proveedor': r[10] or '', 'apertura': r[11] or ''
+                'telefono': r[9] or '', 'tipo_proveedor': r[10] or '', 'apertura': r[11] or '',
+                'credito_mixto_monto': float(r[12] or 0), 'credito_mixto_dias': r[13] or 0
             })
         return jsonify({'ok': True, 'proveedores': proveedores})
     except Exception as e:
@@ -7822,10 +7868,12 @@ def flujo_caja_proveedores_guardar():
             ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT '',
             ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '',
             ADD COLUMN IF NOT EXISTS tipo_proveedor TEXT DEFAULT '',
-            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT ''""")
+            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS credito_mixto_monto NUMERIC(14,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS credito_mixto_dias INTEGER DEFAULT 0""")
         cur.execute('''
-            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura, credito_mixto_monto, credito_mixto_dias)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (nombre) DO UPDATE SET
                 nombre_comercial = EXCLUDED.nombre_comercial,
                 criticidad = EXCLUDED.criticidad,
@@ -7837,6 +7885,8 @@ def flujo_caja_proveedores_guardar():
                 telefono = EXCLUDED.telefono,
                 tipo_proveedor = EXCLUDED.tipo_proveedor,
                 apertura = EXCLUDED.apertura,
+                credito_mixto_monto = EXCLUDED.credito_mixto_monto,
+                credito_mixto_dias = EXCLUDED.credito_mixto_dias,
                 updated_at = NOW()
             RETURNING id
         ''', (nombre, (data.get('nombre_comercial') or '').strip() or nombre, data.get('criticidad', 'BAJO'),
@@ -7845,7 +7895,9 @@ def flujo_caja_proveedores_guardar():
               re.sub(r'[^0-9]', '', str(data.get('ruc') or '')),
               (data.get('telefono') or '').strip(),
               (data.get('tipo_proveedor') or '').strip().upper(),
-              (data.get('apertura') or '').strip().upper()))
+              (data.get('apertura') or '').strip().upper(),
+              _fc_num(data.get('credito_mixto_monto')),
+              int(_fc_num(data.get('credito_mixto_dias')))))
         prov_id = cur.fetchone()[0]
         conn.commit()
         return jsonify({'ok': True, 'id': prov_id})
@@ -7878,7 +7930,9 @@ def flujo_caja_proveedores_bulk():
             ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT '',
             ADD COLUMN IF NOT EXISTS telefono TEXT DEFAULT '',
             ADD COLUMN IF NOT EXISTS tipo_proveedor TEXT DEFAULT '',
-            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT ''""")
+            ADD COLUMN IF NOT EXISTS apertura TEXT DEFAULT '',
+            ADD COLUMN IF NOT EXISTS credito_mixto_monto NUMERIC(14,2) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS credito_mixto_dias INTEGER DEFAULT 0""")
         # Un solo INSERT con todas las filas. Antes era un execute() por proveedor
         # dentro del loop: con 217 proveedores eran 217 viajes a Azure y se sentia.
         filas = []
@@ -7905,11 +7959,13 @@ def flujo_caja_proveedores_bulk():
                 (p.get('telefono') or '').strip(),
                 (p.get('tipo_proveedor') or '').strip().upper(),
                 (p.get('apertura') or '').strip().upper(),
+                _fc_num(p.get('credito_mixto_monto')),
+                int(_fc_num(p.get('credito_mixto_dias'))),
             ))
         if not filas:
             return jsonify({'error': 'Sin proveedores con nombre valido'}), 400
         execute_values(cur, '''
-            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura)
+            INSERT INTO fc_proveedores (nombre, nombre_comercial, criticidad, dias_credito, dia_despacho, productos_servicios, observaciones, ruc, telefono, tipo_proveedor, apertura, credito_mixto_monto, credito_mixto_dias)
             VALUES %s
             ON CONFLICT (nombre) DO UPDATE SET
                 nombre_comercial = COALESCE(NULLIF(EXCLUDED.nombre_comercial, ''), fc_proveedores.nombre_comercial),
@@ -7922,6 +7978,8 @@ def flujo_caja_proveedores_bulk():
                 telefono = COALESCE(NULLIF(EXCLUDED.telefono, ''), fc_proveedores.telefono),
                 tipo_proveedor = COALESCE(NULLIF(EXCLUDED.tipo_proveedor, ''), fc_proveedores.tipo_proveedor),
                 apertura = COALESCE(NULLIF(EXCLUDED.apertura, ''), fc_proveedores.apertura),
+                credito_mixto_monto = CASE WHEN EXCLUDED.credito_mixto_monto > 0 THEN EXCLUDED.credito_mixto_monto ELSE fc_proveedores.credito_mixto_monto END,
+                credito_mixto_dias = CASE WHEN EXCLUDED.credito_mixto_dias > 0 THEN EXCLUDED.credito_mixto_dias ELSE fc_proveedores.credito_mixto_dias END,
                 updated_at = NOW()
         ''', filas, page_size=250)
         guardados = len(filas)
@@ -7951,6 +8009,26 @@ def flujo_caja_proveedores_eliminar(prov_id):
         return jsonify({'error': str(e)}), 500
     finally:
         if conn: fc_release_movimientos_db(conn)
+
+
+def _fc_num(valor):
+    """Numero tolerante: el front manda strings, vacios y hasta '1.200,00'."""
+    if valor is None:
+        return 0
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    limpio = str(valor).strip().replace('$', '').replace(' ', '')
+    if not limpio:
+        return 0
+    # Si trae los dos separadores, la coma es de miles; si solo trae coma, es decimal
+    if ',' in limpio and '.' in limpio:
+        limpio = limpio.replace(',', '')
+    elif ',' in limpio:
+        limpio = limpio.replace(',', '.')
+    try:
+        return float(limpio)
+    except ValueError:
+        return 0
 
 
 def _fc_crear_tabla_recurrentes(cur):
