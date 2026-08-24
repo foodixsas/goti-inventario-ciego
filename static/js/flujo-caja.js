@@ -15,6 +15,10 @@ let fc_eliminados_data = []; // [{grupo, nombre, eliminado_desde}] items dados d
 // semana, no se arrastran de la anterior. Lo unico que viaja entre semanas es la
 // proyeccion y los pagos recurrentes ya parametrizados.
 const FC_GRUPO_PROV = 'prov-principales';
+// Grupos que se rearman semana a semana desde su propia cartera. El resto
+// (arriendos, cajas, servicios, debitos, tarjetas, nomina, IESS...) es estructura
+// fija que persiste entre semanas y NO se filtra.
+const FC_GRUPOS_POR_SEMANA = new Set([FC_GRUPO_PROV]);
 let fc_cartera_semanas = {}; // {"2026-08-17": [{proveedor, ruc, saldo, facturas}]}
 
 function fc_getEliminadoDesde(grupo, nombre) {
@@ -1253,6 +1257,18 @@ function fc_renderBarraSaldos() {
             <span><span class="fc-bs-et">PICH</span> <b style="color:${color(cierre.pich, fc_liq_config.minimo_pichincha, comprometido(iCierre, 'egPich'))};">${entero(cierre.pich)}</b></span>
         </span>` : '';
 
+    // Total efectivo a pagar: lo comprometido hoy y en toda la semana enfocada.
+    // Va pegado al saldo para responder "¿me alcanza?" sin abrir nada mas.
+    const hayHoy = !!porFecha[hoyISO];
+    const egresoHoy = hayHoy ? (porFecha[hoyISO].egresos || 0) : 0;
+    const egresoSem = sem.dias.reduce((t, f) => t + ((porFecha[f] || {}).egresos || 0), 0);
+    const pagarHtml = `
+        <span class="fc-bs-chip fc-bs-pagar" title="Egresos programados&#10;${hayHoy ? `Hoy: ${monto(egresoHoy)}&#10;` : ''}Semana ${sem.num}: ${monto(egresoSem)}">
+            <span class="fc-bs-et">A PAGAR</span>
+            ${hayHoy ? `<span><span class="fc-bs-et">HOY</span> <b>${entero(egresoHoy)}</b></span>` : ''}
+            <span><span class="fc-bs-et">SEM</span> <b>${entero(egresoSem)}</b></span>
+        </span>`;
+
     barra.innerHTML = `
         <span class="fc-bs-nav">
             <button onclick="fc_barraMoverSemana(-1)" title="Semana anterior">&#9664;</button>
@@ -1261,6 +1277,8 @@ function fc_renderBarraSaldos() {
         </span>
         <span class="fc-bs-sep"></span>
         <span class="fc-bs-dias">${chipsDia}</span>
+        <span class="fc-bs-sep"></span>
+        ${pagarHtml}
         <span class="fc-bs-sep"></span>
         ${cierreHtml}
         <button class="fc-bs-x" onclick="fc_toggleFijarTotales()" title="Ocultar">&times;</button>`;
@@ -1881,6 +1899,38 @@ async function fc_cargarDatosGuardados() {
             }
         }
 
+        // ---- CADA SEMANA ES UNICA (limpieza de lo ya ensuciado) ----
+        // Aunque el guardado ya no siembra nombres en semanas ajenas, en la base
+        // quedaron los que se sembraron antes. Una fila solo se dibuja si tiene algo
+        // que pagar DENTRO de las semanas visibles, o si trae la cartera de una de
+        // ellas. Lo demas es un nombre heredado de una semana que ya no se ve.
+        // No se pierde nada por esto: los pagos fijos los vuelve a poner
+        // fc_proyectarRecurrentes y los proveedores de la cartera se rearman abajo
+        // desde fc_cartera_semanas.
+        const enVista = new Set(fc_todasFechas || []);
+        if (enVista.size) {
+            let descartados = 0;
+            for (const grupo of Object.keys(egresosConsolidados)) {
+                // OJO: esto aplica SOLO a los grupos por semana (proveedores).
+                // Arriendos, cajas, servicios, tarjetas, IESS y demas son el
+                // esqueleto de pagos fijos: hoy viven unicamente como nombres
+                // guardados (fc_pagos_recurrentes esta vacia), asi que filtrarlos
+                // por "no tiene valor en la vista" los borraria de raiz.
+                if (!FC_GRUPOS_POR_SEMANA.has(grupo)) continue;
+                egresosConsolidados[grupo] = egresosConsolidados[grupo].filter(it => {
+                    const tieneValor = Object.entries(it.valores || {})
+                        .some(([dia, val]) => val && enVista.has(dia));
+                    const tieneCartera = (it.facturas || []).length > 0;
+                    if (!tieneValor && !tieneCartera) { descartados++; return false; }
+                    return true;
+                });
+                if (!egresosConsolidados[grupo].length) delete egresosConsolidados[grupo];
+            }
+            if (descartados) {
+                console.log(`Cada semana es unica: ${descartados} proveedor(es) heredado(s) de otras semanas no se dibujan`);
+            }
+        }
+
         // Aplicar datos guardados
         for (const [fechaSemana, guardado] of Object.entries(data.guardados)) {
             // Aplicar saldos iniciales por banco (solo primera semana)
@@ -2230,6 +2280,19 @@ async function fc_guardarDatos() {
                         if (input.dataset.pagado === '1') itemData.pagados[dia] = true;
                     }
                 });
+
+                // CADA SEMANA ES UNICA. Un item pertenece a ESTA semana solo si tiene
+                // algo que pagar en sus dias, o si es un proveedor cuya cartera es la
+                // de esta semana. Guardarlo igual en todas (que es lo que se hacia)
+                // sembraba el nombre en las semanas siguientes con valores vacios: al
+                // recargar volvia "guardado" en todas y ya no habia como sacarlo.
+                // Los pagos fijos no dependen de esto: viven en fc_pagos_recurrentes
+                // y los reproyecta fc_proyectarRecurrentes.
+                const esSuCartera = grupo === FC_GRUPO_PROV
+                                 && (row.dataset.carteraSemana || '') === fechaSemana;
+                if (FC_GRUPOS_POR_SEMANA.has(grupo)
+                    && !Object.keys(itemData.valores).length && !esSuCartera) return;
+
                 egresos[grupo].push(itemData);
             });
 
@@ -3138,7 +3201,8 @@ async function fc_abrirFacturas(row) {
 
     const ap = (provFicha?.apertura || '').toUpperCase();
     const apInfo = { A:['A - Muy abierto','#16a34a'], B:['B - Flexible','#65a30d'],
-                     C:['C - Condicionado','#ca8a04'], D:['D - Rigido','#dc2626'] }[ap];
+                     C:['C - Condicionado','#ca8a04'], D:['D - Rigido','#dc2626'],
+                     E:['E - Critico no negociable: no cede y no se puede reemplazar','#7e22ce'] }[ap];
     const apBadge = apInfo
         ? `<span title="Apertura a negociar: ${fc_esc(apInfo[0])}" style="background:${apInfo[1]};color:#fff;padding:2px 7px;border-radius:10px;font-size:9px;font-weight:700;">${fc_esc(ap)}</span>`
         : '';
@@ -3163,9 +3227,20 @@ async function fc_abrirFacturas(row) {
         ? `<span>${etiqueta}: <b>${fc_esc(valor)}</b></span>`
         : `<span style="opacity:.55;">${etiqueta}: ${vacio}</span>`;
 
+    // Credito mixto: si una parte del saldo tiene otras condiciones, tiene que verse
+    // al momento de programar el pago, no solo en el catalogo.
+    const cmM = parseFloat(provFicha?.credito_mixto_monto) || 0;
+    const cmD = parseInt(provFicha?.credito_mixto_dias) || 0;
+    const mixtoChip = (cmM > 0 || cmD > 0)
+        ? `<span title="Tramo con condiciones distintas al plazo normal de ${provFicha.dias_credito || 0} dias"
+                 style="background:#1d4ed8;color:#fff;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;">
+               CREDITO MIXTO: $${cmM.toLocaleString('en-US')} a ${cmD}d</span>`
+        : '';
+
     const fichaHtml = provFicha
-        ? `<div style="display:flex;gap:12px;margin-top:3px;font-size:10px;opacity:.9;flex-wrap:wrap;">
+        ? `<div style="display:flex;gap:12px;margin-top:3px;font-size:10px;opacity:.9;flex-wrap:wrap;align-items:center;">
                ${telHtml}
+               ${mixtoChip}
                ${dato('Despacha', provFicha.dia_despacho, 'sin definir')}
                ${provFicha.nombre_comercial && fc_normalizarNombre(provFicha.nombre_comercial) !== fc_normalizarNombre(provFicha.nombre)
                    ? `<span>Marca: <b>${fc_esc(provFicha.nombre_comercial)}</b></span>` : ''}
@@ -3386,17 +3461,48 @@ function fc_actualizarBadgeFacturas(row) {
     const diasCred = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
     const hoyChip = new Date();
     hoyChip.setHours(0, 0, 0, 0);
-    let montoVencido = 0, maxDias = 0;
+    const nombreProv = row.querySelector('.fc-input-nombre')?.value || '';
+    const ficha = fc_buscarProveedorBD(nombreProv);
+    let montoVencido = 0, maxDias = 0, pendienteRow = 0;
     facturas.forEach(f => {
         if (f.fecha_pago) return;
+        const resta = (f.monto || 0) - (f.abono || 0);
+        if (resta > 0.005) pendienteRow += resta;
         const v = fc_vencimientoReal(f, diasCred);
         if (!v) return;
         const d = Math.round((hoyChip - new Date(v + 'T12:00:00')) / 86400000);
         if (d > 0) {
-            montoVencido += (f.monto || 0) - (f.abono || 0);
+            montoVencido += resta;
             if (d > maxDias) maxDias = d;
         }
     });
+
+    // Nota bajo el nombre, SOLO si hay cartera vencida: que hacer con el proveedor
+    // y lo que este anotado de el. En los que estan al dia no aparece nada, para no
+    // tener que abrirlos uno por uno solo para descubrir que no habia que pagarles.
+    const celdaNombre = row.querySelector('.fc-input-nombre')?.closest('td');
+    let nota = row.querySelector('.fc-nota-vencido');
+    if (montoVencido > 0.005 && celdaNombre) {
+        if (!nota) {
+            nota = document.createElement('div');
+            nota.className = 'fc-nota-vencido';
+            nota.style.cssText = 'margin-top:2px;font-size:9px;line-height:1.35;'
+                               + 'display:flex;gap:4px;align-items:center;max-width:250px;';
+            celdaNombre.appendChild(nota);
+        }
+        const dec = fc_decisionPago(ficha || {}, { pendiente: pendienteRow, vencido: montoVencido, maxDias });
+        const obs = (ficha?.observaciones || '').trim();
+        const texto = !ficha
+            ? { t: 'no esta en el catalogo de proveedores', c: '#b45309' }
+            : (obs ? { t: obs, c: '#475569' } : { t: 'sin observaciones', c: '#94a3b8' });
+        nota.innerHTML =
+            `<span title="${fc_esc(dec.nota)}" style="background:${dec.bg};color:${dec.color};`
+          + `padding:0 5px;border-radius:7px;font-weight:700;letter-spacing:.2px;white-space:nowrap;flex:none;">${dec.txt}</span>`
+          + `<span title="${fc_esc(texto.t)}" style="color:${texto.c};min-width:0;overflow:hidden;text-overflow:ellipsis;`
+          + `white-space:nowrap;${obs ? '' : 'font-style:italic;'}">${fc_esc(texto.t)}</span>`;
+    } else if (nota) {
+        nota.remove();
+    }
 
     let chip = row.querySelector('.fc-chip-vencido');
     if (montoVencido > 0.005) {
@@ -3415,6 +3521,31 @@ function fc_actualizarBadgeFacturas(row) {
                            + `background:${color};padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:middle;`;
     } else if (chip) {
         chip.remove();
+    }
+
+    // Celular a la mano: al decidir un pago muchas veces hay que escribirle al
+    // proveedor en ese momento. El WhatsApp ya estaba en el modal; aqui queda en la
+    // fila para no tener que abrirlo.
+    const waNum = fc_celularWa(ficha?.telefono);
+    let wa = row.querySelector('.fc-chip-wa');
+    if (waNum) {
+        if (!wa) {
+            const btn = badge.closest('button');
+            if (!btn) return;
+            wa = document.createElement('a');
+            wa.className = 'fc-chip-wa';
+            wa.target = '_blank';
+            wa.rel = 'noopener';
+            wa.innerHTML = '<i class="fab fa-whatsapp"></i>';
+            wa.style.cssText = 'margin-left:5px;color:#16a34a;font-size:12px;text-decoration:none;vertical-align:middle;';
+            // Sin esto el clic abre tambien el modal de facturas de la fila
+            wa.addEventListener('click', e => e.stopPropagation());
+            btn.insertAdjacentElement('afterend', wa);
+        }
+        wa.href = `https://wa.me/${waNum}`;
+        wa.title = `Escribir por WhatsApp a ${nombreProv}`;
+    } else if (wa) {
+        wa.remove();
     }
 }
 
@@ -4163,13 +4294,150 @@ let fc_proveedores_bd = []; // Cache del catalogo
 
 // Apertura a negociar: que tan facil es hablar con el proveedor. NO se mezcla con
 // la criticidad del producto: son dos ejes y juntos deciden a quien pagar primero.
+// A-D miden que tanto cede el proveedor. E es aparte: no cede Y ademas no se puede
+// reemplazar, asi que aunque no haya nada que negociar hay que pagarle primero.
 const FC_APERTURAS = [
-    {v:'',  t:'- sin evaluar -',  c:'#fff'},
-    {v:'A', t:'A - Muy abierto',  c:'#dcfce7'},
-    {v:'B', t:'B - Flexible',     c:'#ecfccb'},
-    {v:'C', t:'C - Condicionado', c:'#fef3c7'},
-    {v:'D', t:'D - Rigido',       c:'#fecaca'},
+    {v:'',  t:'- sin evaluar -',        c:'#fff'},
+    {v:'A', t:'A - Muy abierto',        c:'#dcfce7'},
+    {v:'B', t:'B - Flexible',           c:'#ecfccb'},
+    {v:'C', t:'C - Condicionado',       c:'#fef3c7'},
+    {v:'D', t:'D - Rigido',             c:'#fecaca'},
+    {v:'E', t:'E - Critico no negociable', c:'#e9d5ff'},
 ];
+
+// ============ MATRIZ DE DECISION: A QUIEN PAGAR ============
+// Tres ejes que no se deben mezclar:
+//   1. Apertura     - que tanto cede el proveedor si le pedimos plazo
+//   2. Criticidad   - que pasa con la operacion si deja de despachar
+//   3. Saldo        - cuanto pesa hoy sobre la caja, y si ya esta vencido
+// El cruce da resultados contraintuitivos a proposito: al proveedor MAS flexible
+// suele convenir diferirle, y al rigido-critico hay que pagarle primero aunque no
+// haya nada que negociar con el.
+const FC_CRIT_PESO = { CRITICO: 4, ALTO: 3, MEDIO: 2, BAJO: 1 };
+const FC_AP_PESO   = { A: 4, B: 3, C: 2, D: 1, E: 0 };
+
+// Saldo pendiente y vencido por proveedor, tomados de las facturas que ya estan
+// cargadas en la grilla (misma fuente que los chips de la fila).
+function fc_saldosPorProveedor() {
+    const mapa = {};
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
+        const rowId = row.dataset.fcRowId;
+        if (!rowId) return;
+        const facturas = fc_facturas_data[rowId] || [];
+        if (!facturas.length) return;
+        const clave = fc_normalizarNombre(row.querySelector('.fc-input-nombre')?.value || '');
+        if (!clave) return;
+        const diasCred = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
+        const acc = mapa[clave] || (mapa[clave] = { pendiente: 0, vencido: 0, maxDias: 0 });
+        facturas.forEach(f => {
+            const resta = (f.monto || 0) - (f.abono || 0);
+            if (resta <= 0.005) return;
+            acc.pendiente += resta;
+            const v = fc_vencimientoReal(f, diasCred);
+            if (!v) return;
+            const d = Math.round((hoy - new Date(v + 'T12:00:00')) / 86400000);
+            if (d > 0) {
+                acc.vencido += resta;
+                if (d > acc.maxDias) acc.maxDias = d;
+            }
+        });
+    });
+    return mapa;
+}
+
+// Devuelve la recomendacion para un proveedor. `saldo` puede venir vacio.
+function fc_decisionPago(prov, saldo) {
+    const ap = (prov.apertura || '').toUpperCase();
+    const crit = (prov.criticidad || '').toUpperCase();
+    const pendiente = saldo ? saldo.pendiente : 0;
+    const vencido = saldo ? saldo.vencido : 0;
+    const dias = saldo ? saldo.maxDias : 0;
+
+    if (!ap) {
+        return { txt: 'SIN EVALUAR', bg: '#f1f5f9', color: '#64748b', orden: 5,
+                 nota: 'Falta calificar la apertura a negociar de este proveedor' };
+    }
+    if (pendiente <= 0.005) {
+        return { txt: 'AL DIA', bg: '#f1f5f9', color: '#64748b', orden: 4,
+                 nota: 'No tiene saldo pendiente en la cartera cargada' };
+    }
+
+    const pesoCrit = FC_CRIT_PESO[crit] || 1;
+    const pesoAp = FC_AP_PESO[ap];
+
+    // E no se negocia y ademas no se reemplaza: va primero, sin importar lo demas.
+    if (ap === 'E') {
+        return { txt: 'PAGAR PRIMERO', bg: '#7e22ce', color: '#fff', orden: 0,
+                 nota: 'Critico no negociable: no cede y no hay con quien reemplazarlo' };
+    }
+    // Rigido y ademas importante para la operacion: tampoco hay margen.
+    if (pesoAp <= 1 && pesoCrit >= 3) {
+        return { txt: 'PAGAR PRIMERO', bg: '#dc2626', color: '#fff', orden: 1,
+                 nota: 'Rigido y critico: bloquea despacho antes que ceder plazo' };
+    }
+    // Importante pero con quien se puede hablar: aqui esta el margen real.
+    if (pesoCrit >= 3) {
+        return { txt: 'NEGOCIAR', bg: '#ea580c', color: '#fff', orden: 2,
+                 nota: 'Critico pero con apertura: pedir plazo antes de sacrificar caja' };
+    }
+    // Flexible y reemplazable: es justo al que conviene diferirle...
+    if (pesoAp >= 3) {
+        // ...salvo que ya se le estire demasiado la cuerda.
+        if (dias > 60) {
+            return { txt: 'NEGOCIAR', bg: '#ea580c', color: '#fff', orden: 2,
+                     nota: `Flexible, pero ya lleva ${dias} dias vencido: formalizar un acuerdo` };
+        }
+        return { txt: 'DIFERIR', bg: '#16a34a', color: '#fff', orden: 3,
+                 nota: 'Flexible y reemplazable: es de los primeros a los que conviene aplazar' };
+    }
+    // Ni critico ni flexible: entra en la cola normal.
+    return { txt: 'PROGRAMAR', bg: '#0284c7', color: '#fff', orden: 3,
+             nota: 'Sin margen de negociacion pero sin riesgo operativo: pago en su turno' };
+}
+
+// Badge de la decision + el saldo que la sustenta.
+function fc_decisionHtml(prov, saldo) {
+    const dec = fc_decisionPago(prov, saldo);
+    const pend = saldo ? saldo.pendiente : 0;
+    const detalle = pend > 0.005
+        ? `$${pend.toLocaleString('en-US', {maximumFractionDigits: 0})}`
+          + (saldo.vencido > 0.005 ? ` &middot; ${saldo.maxDias}d venc.` : '')
+        : '';
+    return `<span title="${fc_esc(dec.nota)}"
+              style="background:${dec.bg};color:${dec.color};padding:2px 7px;border-radius:9px;
+                     font-size:9px;font-weight:700;letter-spacing:.3px;white-space:nowrap;">${dec.txt}</span>`
+        + (detalle ? `<div style="font-size:9px;color:${saldo.vencido > 0.005 ? '#dc2626' : '#64748b'};margin-top:2px;font-family:monospace;">${detalle}</div>` : '');
+}
+
+// Saldos de la ultima vez que se dibujo la tabla, para recalcular sin recorrer
+// toda la grilla de egresos en cada cambio de un select.
+let fc_prov_saldos_cache = {};
+
+// La decision depende de dos selects editables: si no se recalcula al vuelo habria
+// que guardar y recargar para ver el efecto de calificar un proveedor.
+function fc_provRecalcularDecision(el) {
+    const row = el.closest('.fc-prov-row');
+    if (!row) return;
+    const celda = row.querySelector('.fc-prov-decision');
+    if (!celda) return;
+    const nombre = row.querySelector('[data-field="nombre"]')?.value || '';
+    const comercial = row.querySelector('[data-field="nombre_comercial"]')?.value || '';
+    const saldo = fc_prov_saldos_cache[fc_normalizarNombre(nombre)]
+               || fc_prov_saldos_cache[fc_normalizarNombre(comercial)];
+    celda.innerHTML = fc_decisionHtml({
+        apertura: row.querySelector('[data-field="apertura"]')?.value || '',
+        criticidad: row.querySelector('[data-field="criticidad"]')?.value || ''
+    }, saldo);
+}
+
+// Orden por urgencia de la decision; se alterna con clic en la cabecera.
+let fc_prov_orden_decision = false;
+function fc_provOrdenarPorDecision() {
+    fc_prov_orden_decision = !fc_prov_orden_decision;
+    fc_provRender();
+}
 
 async function fc_abrirProveedores() {
     let modal = document.getElementById('fc-modal-proveedores');
@@ -4208,14 +4476,17 @@ async function fc_abrirProveedores() {
                             <th style="width:95px;" title="Regular = llega siempre. Eventual = compra suelta">Tipo</th>
                             <th style="min-width:80px;" title="Que tan critico es el producto para la operacion">Criticidad</th>
                             <th style="width:120px;" title="Que tan facil es hablar/negociar con el proveedor">Apertura</th>
-                            <th style="width:55px;">Dias Cr.</th>
+                            <th style="width:110px;cursor:pointer;user-select:none;" onclick="fc_provOrdenarPorDecision()"
+                                title="Cruce de apertura x criticidad x saldo pendiente. Clic para ordenar por urgencia">Decision &updownarrow;</th>
+                            <th style="width:55px;" title="Plazo normal con el que se calcula el vencimiento">Dias Cr.</th>
+                            <th style="width:120px;" title="Credito mixto: el tramo con condiciones distintas (ej. DINADEC). Monto y dias de ese tramo">Cr. mixto</th>
                             <th style="width:80px;">Despacho</th>
                             <th style="min-width:120px;">Productos/Serv.</th>
                             <th style="min-width:120px;">Observaciones</th>
                             <th style="width:30px;"></th>
                         </tr>
                     </thead>
-                    <tbody id="fc-prov-body"><tr><td colspan="12" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
+                    <tbody id="fc-prov-body"><tr><td colspan="14" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
                 </table>
             </div>
             <div class="fc-fac-footer">
@@ -4246,7 +4517,7 @@ async function fc_provCargar() {
         fc_provRender();
     } catch (e) {
         console.error('Error cargando proveedores:', e);
-        document.getElementById('fc-prov-body').innerHTML = `<tr><td colspan="12" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
+        document.getElementById('fc-prov-body').innerHTML = `<tr><td colspan="14" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
     }
 }
 
@@ -4255,13 +4526,32 @@ function fc_provRender() {
     if (!tbody) return;
 
     if (fc_proveedores_bd.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:30px;color:#94a3b8;">No hay proveedores. Agregue manualmente o sincronice desde la Cartera.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:30px;color:#94a3b8;">No hay proveedores. Agregue manualmente o sincronice desde la Cartera.</td></tr>';
         document.getElementById('fc-prov-count').textContent = '0 proveedores';
         return;
     }
 
+    // Tercer eje de la matriz: lo que cada proveedor pesa hoy sobre la caja.
+    const saldos = fc_saldosPorProveedor();
+    fc_prov_saldos_cache = saldos;   // lo reusa el recalculo en vivo de la decision
+    const decisionDe = pr => fc_decisionPago(pr, saldos[fc_normalizarNombre(pr.nombre)]
+                                                 || saldos[fc_normalizarNombre(pr.nombre_comercial || '')]);
+
+    // El indice real del arreglo viaja en data-idx: la vista puede ir ordenada por
+    // urgencia sin que se desalineen guardar/eliminar.
+    let lista = fc_proveedores_bd.map((p, idx) => ({ p, idx }));
+    if (fc_prov_orden_decision) {
+        lista.sort((a, b) => {
+            const da = decisionDe(a.p), db = decisionDe(b.p);
+            if (da.orden !== db.orden) return da.orden - db.orden;
+            const sa = saldos[fc_normalizarNombre(a.p.nombre)] || {};
+            const sb = saldos[fc_normalizarNombre(b.p.nombre)] || {};
+            return (sb.pendiente || 0) - (sa.pendiente || 0);
+        });
+    }
+
     let html = '';
-    fc_proveedores_bd.forEach((p, idx) => {
+    lista.forEach(({ p, idx }) => {
         const critOpts = ['BAJO','MEDIO','ALTO','CRITICO'].map(c =>
             `<option value="${c}" ${p.criticidad===c?'selected':''}>${c}</option>`
         ).join('');
@@ -4276,6 +4566,27 @@ function fc_provRender() {
             .map(a => `<option value="${a.v}" ${(p.apertura||'')===a.v?'selected':''}>${a.t}</option>`).join('');
         const apColor = (FC_APERTURAS.find(a => a.v === (p.apertura||'')) || {}).c || '#fff';
 
+        // La decision es calculada, no editable: sale de apertura + criticidad + saldo.
+        const sal = saldos[fc_normalizarNombre(p.nombre)]
+                 || saldos[fc_normalizarNombre(p.nombre_comercial || '')];
+        const decHtml = fc_decisionHtml(p, sal);
+
+        // Credito mixto: un tramo del saldo con condiciones propias (DINADEC negocia
+        // asi). Se guarda como especificacion; el vencimiento se sigue calculando con
+        // los dias de credito normales.
+        const cmMonto = parseFloat(p.credito_mixto_monto) || 0;
+        const cmDias = parseInt(p.credito_mixto_dias) || 0;
+        const cmActivo = cmMonto > 0 || cmDias > 0;
+        const mixtoHtml = `<span title="${cmActivo
+                ? `Tramo mixto: $${cmMonto.toLocaleString('en-US')} a ${cmDias} dias (el resto va a ${p.dias_credito || 0} dias)`
+                : 'Sin credito mixto: todo el saldo va al plazo normal'}"
+              style="display:inline-flex;gap:2px;align-items:center;${cmActivo ? 'background:#eff6ff;border-radius:4px;padding:1px 2px;' : ''}">
+            <input type="text" class="fc-fac-input fc-prov-field" value="${cmMonto || ''}" data-field="credito_mixto_monto"
+                   placeholder="$" inputmode="decimal" style="width:52px;text-align:right;font-size:10px;">
+            <input type="number" class="fc-fac-input fc-prov-field" value="${cmDias || ''}" data-field="credito_mixto_dias"
+                   placeholder="d" min="0" style="width:34px;text-align:center;font-size:10px;">
+        </span>`;
+
         html += `<tr class="fc-prov-row" data-idx="${idx}">
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.nombre}" data-field="nombre" style="font-weight:600;"></td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.ruc || ''}" data-field="ruc" inputmode="numeric"
@@ -4285,9 +4596,12 @@ function fc_provRender() {
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.telefono || ''}" data-field="telefono"
                        placeholder="celular" style="font-size:10px;"></td>
             <td><select class="fc-fac-select-fecha fc-prov-field" data-field="tipo_proveedor" style="font-size:10px;${p.tipo_proveedor === 'EVENTUAL' ? 'background:#fef3c7;' : (p.tipo_proveedor === 'RECURRENTE' ? 'background:#dcfce7;' : '')}">${tipoOpts}</select></td>
-            <td><select class="fc-fac-select-fecha fc-prov-field" data-field="criticidad" style="background:${critColor};font-weight:600;font-size:10px;" onchange="this.style.background={'BAJO':'#e2e8f0','MEDIO':'#fef3c7','ALTO':'#fed7aa','CRITICO':'#fecaca'}[this.value]">${critOpts}</select></td>
-            <td><select class="fc-fac-select-fecha fc-prov-field" data-field="apertura" style="font-size:10px;background:${apColor};">${apOpts}</select></td>
+            <td><select class="fc-fac-select-fecha fc-prov-field" data-field="criticidad" style="background:${critColor};font-weight:600;font-size:10px;" onchange="this.style.background={'BAJO':'#e2e8f0','MEDIO':'#fef3c7','ALTO':'#fed7aa','CRITICO':'#fecaca'}[this.value];fc_provRecalcularDecision(this)">${critOpts}</select></td>
+            <td><select class="fc-fac-select-fecha fc-prov-field" data-field="apertura" style="font-size:10px;background:${apColor};"
+                    onchange="this.style.background=(FC_APERTURAS.find(a=>a.v===this.value)||{}).c||'#fff';fc_provRecalcularDecision(this)">${apOpts}</select></td>
+            <td class="fc-prov-decision" style="text-align:center;">${decHtml}</td>
             <td><input type="number" class="fc-fac-input fc-prov-field" value="${p.dias_credito}" data-field="dias_credito" style="width:45px;text-align:center;"></td>
+            <td style="white-space:nowrap;">${mixtoHtml}</td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.dia_despacho}" data-field="dia_despacho" style="font-size:10px;"></td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.productos_servicios}" data-field="productos_servicios" style="font-size:10px;"></td>
             <td><input type="text" class="fc-fac-input fc-prov-field" value="${p.observaciones}" data-field="observaciones" style="font-size:10px;"></td>
@@ -4318,7 +4632,8 @@ function fc_provAgregar() {
     fc_proveedores_bd.push({
         id: 0, nombre: '', nombre_comercial: '', criticidad: 'BAJO',
         dias_credito: 0, dia_despacho: '', productos_servicios: '', observaciones: '', ruc: '',
-        telefono: '', tipo_proveedor: '', apertura: ''
+        telefono: '', tipo_proveedor: '', apertura: '',
+        credito_mixto_monto: 0, credito_mixto_dias: 0
     });
     fc_provRender();
     // Enfocar el ultimo
@@ -4344,7 +4659,8 @@ async function fc_provGuardarTodos() {
         const p = {};
         row.querySelectorAll('.fc-prov-field').forEach(input => {
             const field = input.dataset.field;
-            if (field === 'dias_credito') p[field] = parseInt(input.value) || 0;
+            if (field === 'dias_credito' || field === 'credito_mixto_dias') p[field] = parseInt(input.value) || 0;
+            else if (field === 'credito_mixto_monto') p[field] = parseFloat(String(input.value).replace(/[^0-9.]/g, '')) || 0;
             else if (input.tagName === 'SELECT') p[field] = input.value;
             else p[field] = input.value;
         });
@@ -4609,6 +4925,7 @@ async function fc_abrirRecurrentes() {
                     <thead>
                         <tr>
                             <th style="min-width:150px;">Nombre</th>
+                            <th style="width:115px;" title="RUC del beneficiario: valida contra el catalogo de proveedores">RUC</th>
                             <th style="min-width:100px;">Grupo</th>
                             <th style="width:80px;">Monto</th>
                             <th style="min-width:100px;">Frecuencia</th>
@@ -4624,7 +4941,7 @@ async function fc_abrirRecurrentes() {
                             <th style="width:30px;"></th>
                         </tr>
                     </thead>
-                    <tbody id="fc-rec-body"><tr><td colspan="14" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
+                    <tbody id="fc-rec-body"><tr><td colspan="15" style="text-align:center;padding:20px;color:#94a3b8;">Cargando...</td></tr></tbody>
                 </table>
             </div>
             <div class="fc-fac-footer">
@@ -4638,6 +4955,8 @@ async function fc_abrirRecurrentes() {
 
     modal.classList.add('active');
     fc_inyectarEstilosFacturas();
+    // El catalogo hace falta para validar el RUC de cada pago fijo
+    if (!fc_proveedores_bd.length) await fc_cargarProveedoresBD();
     await fc_recCargar();
 }
 
@@ -4654,8 +4973,25 @@ async function fc_recCargar() {
         fc_recurrentes_bd = data.pagos;
         fc_recRender();
     } catch (e) {
-        document.getElementById('fc-rec-body').innerHTML = `<tr><td colspan="10" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
+        document.getElementById('fc-rec-body').innerHTML = `<tr><td colspan="15" style="text-align:center;padding:20px;color:#dc2626;">Error: ${e.message}</td></tr>`;
     }
+}
+
+// Recolorea el campo RUC de un pago fijo sin volver a dibujar la tabla (un
+// re-render se llevaria por delante lo que se este editando en las otras filas).
+function fc_recValidarRuc(input) {
+    const ruc = (input.value || '').replace(/[^0-9]/g, '');
+    input.value = ruc;
+    if (!ruc) {
+        input.style.background = '#fff7ed';
+        input.title = 'Sin RUC: el pago no esta amarrado a ninguna ficha de proveedor';
+        return;
+    }
+    const ficha = fc_proveedores_bd.find(pr => (pr.ruc || '').trim() === ruc);
+    input.style.background = ficha ? '#dcfce7' : '#fecaca';
+    input.title = ficha
+        ? `Coincide con ${ficha.nombre}`
+        : 'Este RUC no existe en el catalogo de proveedores';
 }
 
 function fc_recRender() {
@@ -4674,7 +5010,7 @@ function fc_recRender() {
         .map((d,i) => `<option value="${i}" ${i===sel?'selected':''}>${d}</option>`).join('');
 
     if (fc_recurrentes_bd.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:30px;color:#94a3b8;">No hay pagos recurrentes configurados.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:30px;color:#94a3b8;">No hay pagos recurrentes configurados.</td></tr>';
         document.getElementById('fc-rec-count').textContent = '0 pagos';
         return;
     }
@@ -4682,8 +5018,20 @@ function fc_recRender() {
     let html = '';
     fc_recurrentes_bd.forEach((p, idx) => {
         const vig = fc_recResumenVigencia(p);
+        // Un pago fijo a nombre de una persona (Karina Mancero, un arriendo) no se
+        // puede validar por el nombre. El RUC lo amarra a la ficha del proveedor.
+        const rucRec = (p.ruc || '').trim();
+        const fichaRuc = rucRec ? fc_proveedores_bd.find(pr => (pr.ruc || '').trim() === rucRec) : null;
+        const rucEstado = !rucRec
+            ? { bg: '#fff7ed', tit: 'Sin RUC: el pago no esta amarrado a ninguna ficha de proveedor' }
+            : (fichaRuc
+                ? { bg: '#dcfce7', tit: `Coincide con ${fichaRuc.nombre}` }
+                : { bg: '#fecaca', tit: 'Este RUC no existe en el catalogo de proveedores' });
         html += `<tr class="fc-rec-row" data-idx="${idx}" data-id="${p.id}" style="${!p.activo?'opacity:.5':''}">
             <td><input type="text" class="fc-fac-input fc-rec-field" value="${p.nombre}" data-field="nombre" style="font-weight:600;"></td>
+            <td><input type="text" class="fc-fac-input fc-rec-field" value="${rucRec}" data-field="ruc" inputmode="numeric"
+                       placeholder="sin RUC" title="${fc_esc(rucEstado.tit)}" onblur="fc_recValidarRuc(this)"
+                       style="font-family:monospace;font-size:10px;text-align:center;background:${rucEstado.bg};"></td>
             <td><select class="fc-fac-select-fecha fc-rec-field" data-field="grupo">${grupoOpts(p.grupo)}</select></td>
             <td><input type="text" class="fc-fac-input fc-rec-field" value="${p.monto}" data-field="monto" style="text-align:right;font-weight:600;width:70px;"></td>
             <td><select class="fc-fac-select-fecha fc-rec-field" data-field="frecuencia">${frecOpts(p.frecuencia)}</select></td>
@@ -4711,7 +5059,7 @@ function fc_recAgregar() {
     fc_recurrentes_bd.push({
         id: 0, nombre: '', grupo: 'servicios', monto: 0, frecuencia: 'mensual',
         dia_mes: 1, dia_semana: 1, banco: 'produbanco', activo: true, observaciones: '',
-        fecha_inicio: fc_recISO(new Date()), fecha_fin: '', total_cuotas: 0
+        fecha_inicio: fc_recISO(new Date()), fecha_fin: '', total_cuotas: 0, ruc: ''
     });
     fc_recRender();
     const rows = document.querySelectorAll('.fc-rec-row');
@@ -4814,6 +5162,10 @@ async function fc_proyectarRecurrentes() {
             }
             if (!targetRow) return;
             targetRow.dataset.recurrenteId = pago.id;
+            // Sellar la baja en la fila. Sin esto el guardado la ve como "fila
+            // recreada a mano" y llama a /egresos-eliminados/reactivar: guardar
+            // deshacia la baja del pago fijo y volvia a aparecer.
+            if (bajaDesde) targetRow.dataset.eliminadoDesde = bajaDesde;
 
             fechas.forEach(fecha => {
                 const input = targetRow.querySelector(`.fc-input[data-fecha="${fecha}"]`);
