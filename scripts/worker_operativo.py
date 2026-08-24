@@ -2340,27 +2340,51 @@ def _fila_producto(driver, codigo, cantidad):
 
     # Por si el desplegable de la bodega destino sigue abierto sobre esta fila.
     _cerrar_sugerencias(driver)
-    _elegir_por_codigo(driver, inp, codigo)
-
-    # Que el codigo aparezca ENTERO, no como un trozo de otro: buscando VER02
-    # dentro de "VER020 PAPA" la comprobacion daria por bueno el producto
-    # equivocado, que es justo lo que hay que evitar aqui.
+    exacto = _elegir_por_codigo(driver, inp, codigo)
     valor = (inp.get_attribute('value') or '').strip()
-    entero = re.compile(r'(^|[^A-Za-z0-9])' + re.escape(codigo) + r'([^A-Za-z0-9]|$)',
-                        re.IGNORECASE)
-    if not entero.search(valor):
-        # 'no-results' significa que el buscador de Contifico no ofrece ese
-        # codigo. Casi siempre es que el producto esta INACTIVO (estado I): el
-        # formulario solo lista los activos. Lo arregla alguien en Contifico o
-        # corrigiendo el producto en AirTable, no el worker.
-        if 'no-results' in valor.lower():
-            log(f'  [DATO] Contifico no encuentra el codigo {codigo}: '
-                f'lo normal es que este INACTIVO. Hay que activarlo o corregir '
-                f'el producto en AirTable.', 'ERROR')
-        else:
-            log(f'  el producto no quedo seleccionado (campo dice {valor[:60]!r})', 'ERROR')
-        return False
-    log(f'  producto: {valor[:60]}')
+
+    if exacto:
+        # Se hizo clic en la sugerencia cuyo codigo coincide entero, asi que el
+        # producto es el correcto. Solo falta confirmar que quedo SELECCIONADO y
+        # no simplemente escrito, y eso lo dice el campo oculto con el id: el
+        # texto visible muestra lo que Contifico quiera, normalmente solo el
+        # nombre.
+        oculto = ''
+        for selector in (f"#id_detalle_{fila}-producto_id",
+                         f"input[name='detalle_{fila}-producto_id']"):
+            try:
+                oculto = (driver.find_element(
+                    By.CSS_SELECTOR, selector).get_attribute('value') or '').strip()
+            except Exception:
+                continue
+            if oculto:
+                break
+        if not oculto:
+            log(f'  el producto no quedo seleccionado: el campo oculto esta '
+                f'vacio (texto {valor[:40]!r})', 'ERROR')
+            return False
+        log(f'  producto: {codigo} - {valor[:50]}')
+    else:
+        # No se pudo elegir por codigo y se cayo al camino de siempre, que acepta
+        # la primera sugerencia. Ahi no se sabe cual quedo, asi que se exige ver
+        # el codigo ENTERO en el texto: buscando "VER02" dentro de "VER020 PAPA"
+        # se daria por bueno el producto equivocado.
+        entero = re.compile(r'(^|[^A-Za-z0-9])' + re.escape(codigo) + r'([^A-Za-z0-9]|$)',
+                            re.IGNORECASE)
+        if not entero.search(valor):
+            # 'no-results' significa que el buscador de Contifico no ofrece ese
+            # codigo. Casi siempre es que el producto esta INACTIVO (estado I):
+            # el formulario solo lista los activos. Lo arregla alguien en
+            # Contifico o corrigiendo el producto en AirTable, no el worker.
+            if 'no-results' in valor.lower():
+                log(f'  [DATO] Contifico no encuentra el codigo {codigo}: '
+                    f'lo normal es que este INACTIVO. Hay que activarlo o corregir '
+                    f'el producto en AirTable.', 'ERROR')
+            else:
+                log(f'  el producto no quedo seleccionado (campo dice {valor[:60]!r})',
+                    'ERROR')
+            return False
+        log(f'  producto: {valor[:60]}')
 
     # 2. Cantidad, por id exacto de la misma fila.
     cid = f'id_detalle_{fila}-cantidad'
