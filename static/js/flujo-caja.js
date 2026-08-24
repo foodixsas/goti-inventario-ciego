@@ -19,6 +19,7 @@ const FC_GRUPO_PROV = 'prov-principales';
 // (arriendos, cajas, servicios, debitos, tarjetas, nomina, IESS...) es estructura
 // fija que persiste entre semanas y NO se filtra.
 const FC_GRUPOS_POR_SEMANA = new Set([FC_GRUPO_PROV]);
+const FC_GRUPO_ANEFI = 'inversiones';
 let fc_cartera_semanas = {}; // {"2026-08-17": [{proveedor, ruc, saldo, facturas}]}
 
 function fc_getEliminadoDesde(grupo, nombre) {
@@ -32,6 +33,8 @@ async function fc_init() {
     // Los minimos por banco se necesitan ANTES del primer recalculo, si no las
     // celdas se pintan sin piso y el panel de alertas sale vacio
     await fc_liqCargarConfig();
+    // Los intereses del fondo se muestran en la tarjeta, no solo dentro del modal
+    await fc_anefiCargarMovs();
 
     // Establecer fecha de corte por defecto (lunes de esta semana)
     const fechaInput = document.getElementById('fc-fecha-corte');
@@ -521,7 +524,11 @@ function fc_renderEgresos() {
         { id: 'liquidaciones', nombre: 'FONDOS LIQUIDACIONES EMPLEADOS', items: ['Item 1'] },
         { id: 'agasajo', nombre: 'FONDO AGASAJO EMPLEADOS', items: ['Item 1'] },
         { id: 'legales', nombre: 'FONDOS DE GASTOS LEGALES', items: ['Item 1'] },
-        { id: 'fortuitos', nombre: 'FONDOS EVENTOS FORTUITOS', items: ['Item 1'] }
+        { id: 'fortuitos', nombre: 'FONDOS EVENTOS FORTUITOS', items: ['Item 1'] },
+        // El aporte SI sale de la caja (por eso es egreso), pero el acumulado del
+        // fondo NO es caja disponible y se muestra aparte, en alertas de liquidez.
+        // Un rescate se escribe en negativo: devuelve la plata al banco.
+        { id: 'inversiones', nombre: 'FONDO DE INVERSION ANEFI', items: ['ANEFI'] }
     ];
 
     subgrupos.forEach(sg => {
@@ -1349,7 +1356,9 @@ async function fc_liqCargarConfig() {
             fc_liq_config = {
                 minimo_produbanco: data.minimo_produbanco || 0,
                 minimo_pichincha: data.minimo_pichincha || 0,
-                semanas_cobertura: data.semanas_cobertura || 2
+                semanas_cobertura: data.semanas_cobertura || 2,
+                saldo_anefi: data.saldo_anefi || 0,
+                saldo_anefi_fecha: data.saldo_anefi_fecha || ''
             };
             fc_liq_config_cargada = true;
         }
@@ -1360,17 +1369,22 @@ async function fc_liqGuardarConfig() {
     const pro = parseFloat(document.getElementById('fc-liq-min-pro')?.value) || 0;
     const pich = parseFloat(document.getElementById('fc-liq-min-pich')?.value) || 0;
     const sem = parseFloat(document.getElementById('fc-liq-cobertura')?.value) || 2;
+    const anefi = parseFloat(document.getElementById('fc-liq-anefi')?.value) || 0;
     try {
         const res = await fetch('/api/flujo-caja/config-liquidez', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ minimo_produbanco: pro, minimo_pichincha: pich, semanas_cobertura: sem })
+            body: JSON.stringify({ minimo_produbanco: pro, minimo_pichincha: pich,
+                                   semanas_cobertura: sem, saldo_anefi: anefi,
+                                   saldo_anefi_fecha: fc_liq_config.saldo_anefi_fecha || '' })
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error);
-        fc_liq_config = { minimo_produbanco: pro, minimo_pichincha: pich, semanas_cobertura: sem };
+        fc_liq_config = { minimo_produbanco: pro, minimo_pichincha: pich,
+                          semanas_cobertura: sem, saldo_anefi: anefi,
+                          saldo_anefi_fecha: fc_liq_config.saldo_anefi_fecha || '' };
         fc_recalcularTodo(); // repinta celdas y panel con los pisos nuevos
-        alert('Minimos guardados:\nProdubanco $' + fc_formatMonto(pro) + '\nPichincha $' + fc_formatMonto(pich));
+        alert(['Guardado:', 'Produbanco $' + fc_formatMonto(pro), 'Pichincha $' + fc_formatMonto(pich), 'Acumulado ANEFI $' + fc_formatMonto(anefi)].join(String.fromCharCode(10)));
     } catch (e) {
         alert('Error al guardar: ' + e.message);
     }
@@ -1452,7 +1466,23 @@ function fc_renderAlertasLiquidez() {
         </div>`;
     };
 
+    const tarjetaAnefi = fc_tarjetaAnefiHtml;
     const hayRiesgo = pro.primera || pich.primera || coberturaBaja;
+
+    // Este panel se redibuja entero en cada recalculo (24 sitios llaman a
+    // fc_recalcularTodo). Sin esto, lo que se este escribiendo en los campos de
+    // configuracion se pierde sin aviso al primer recalculo, y encima se pierde el
+    // foco a media escritura. Se conserva lo tipeado y donde estaba el cursor.
+    const FC_LIQ_INPUTS = ['fc-liq-min-pro', 'fc-liq-min-pich', 'fc-liq-cobertura', 'fc-liq-anefi'];
+    const enEdicion = {};
+    FC_LIQ_INPUTS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) enEdicion[id] = el.value;
+    });
+    const activo = document.activeElement;
+    const idActivo = activo && FC_LIQ_INPUTS.includes(activo.id) ? activo.id : null;
+    const selIni = idActivo ? activo.selectionStart : null;
+    const selFin = idActivo ? activo.selectionEnd : null;
 
     cont.style.display = 'block';
     cont.innerHTML = `
@@ -1469,6 +1499,9 @@ function fc_renderAlertasLiquidez() {
                 <label style="font-size:10px;color:#475569;font-weight:600;" title="Semanas de egreso que el saldo deberia cubrir">Cobertura min. (sem)</label>
                 <input type="number" id="fc-liq-cobertura" step="0.5" value="${fc_liq_config.semanas_cobertura || ''}" placeholder="2"
                        style="width:60px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:right;">
+                <label style="font-size:10px;color:#475569;font-weight:600;" title="Lo que hay acumulado hoy en el fondo ANEFI. No es caja disponible.">Acumulado ANEFI $</label>
+                <input type="number" id="fc-liq-anefi" value="${fc_liq_config.saldo_anefi || ''}" placeholder="0"
+                       style="width:100px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:right;">
                 <button class="fc-btn" style="background:#2e7d32;font-size:10px;" onclick="fc_liqGuardarConfig()"><i class="fas fa-save"></i> Guardar</button>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -1483,8 +1516,232 @@ function fc_renderAlertasLiquidez() {
                         Saldo hoy $${fc_formatMonto(saldoHoy)} &middot; egreso prom. $${fc_formatMonto(egresoSemanal)}/sem
                     </div>
                 </div>
+                ${tarjetaAnefi()}
             </div>
         </div>`;
+
+    Object.entries(enEdicion).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (el) el.value = val;
+    });
+    if (idActivo) {
+        const el = document.getElementById(idActivo);
+        if (el) {
+            el.focus();
+            // Los input[type=number] no siempre aceptan selectionStart
+            try { el.setSelectionRange(selIni, selFin); } catch (e) { /* da igual */ }
+        }
+    }
+}
+
+// Fondo ANEFI: acumulado + lo que se mueve en las semanas a la vista.
+// Va aparte a proposito. Este saldo NO se suma al flujo: es plata apartada para
+// generar intereses, no caja con la que se pueda pagar. Por eso no entra en los
+// saldos por banco, ni en la cobertura, ni dispara alertas.
+function fc_tarjetaAnefiHtml() {
+    const base = parseFloat(fc_liq_config.saldo_anefi) || 0;
+    const corte = fc_liq_config.saldo_anefi_fecha || '';
+    const mov = fc_anefiMovimiento();
+    const int = fc_anefiIntereses();
+    const resultante = base + mov + int;
+    const partes = [];
+    if (Math.abs(mov) > 0.005) partes.push(`${mov > 0 ? 'Aporte' : 'Rescate'} $${fc_formatMonto(Math.abs(mov))}`);
+    if (Math.abs(int) > 0.005) partes.push(`Intereses $${fc_formatMonto(int)}`);
+    const desde = corte
+        ? `Saldo al ${fc_liqFechaCorta(corte)} $${fc_formatMonto(base)}`
+        : `Acumulado $${fc_formatMonto(base)}`;
+    const aviso = corte ? '' :
+        `<div style="font-size:9px;color:#b45309;margin-top:2px;">
+            <i class="fas fa-exclamation-triangle"></i> Sin fecha de corte: todo lo registrado se suma al saldo</div>`;
+    return `<div style="flex:1;min-width:230px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:8px 12px;"
+                 title="El acumulado de ANEFI no entra en los saldos ni en la cobertura: no es caja disponible.">
+        <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:10px;color:#6d28d9;font-weight:700;">FONDO ANEFI &middot; fuera del flujo</span>
+            <button onclick="fc_anefiAbrir()" title="Registrar intereses o ajustes del fondo"
+                    style="margin-left:auto;background:#6d28d9;color:#fff;border:none;border-radius:4px;
+                           font-size:9px;font-weight:700;padding:2px 7px;cursor:pointer;">+ Ajuste</button>
+        </div>
+        <div style="font-size:13px;font-weight:700;color:#4c1d95;margin-top:2px;">$${fc_formatMonto(resultante)}</div>
+        <div style="font-size:10px;color:#64748b;margin-top:2px;">
+            ${desde}${partes.length ? ' &middot; ' + partes.join(' &middot; ') : ''}
+        </div>
+        ${aviso}
+    </div>`;
+}
+
+// Movimiento del fondo dentro de las semanas visibles. Positivo = aporte (sale del
+// banco hacia ANEFI); negativo = rescate (vuelve al banco).
+function fc_anefiMovimiento() {
+    // Solo lo POSTERIOR al corte del saldo: lo anterior ya venia dentro de la cartola
+    // y contarlo otra vez inflaria el fondo.
+    const corte = fc_liq_config.saldo_anefi_fecha || '';
+    let total = 0;
+    document.querySelectorAll(`.fc-egreso-item-${FC_GRUPO_ANEFI}`).forEach(row => {
+        row.querySelectorAll('.fc-input[data-fecha]').forEach(inp => {
+            if (!inp.value) return;
+            if (corte && inp.dataset.fecha <= corte) return;
+            total += parseFloat(String(inp.value).replace(/,/g, '')) || 0;
+        });
+    });
+    return total;
+}
+
+// Intereses y ajustes registrados del fondo, posteriores al corte del saldo.
+let fc_anefi_movs = [];
+function fc_anefiIntereses() {
+    const corte = fc_liq_config.saldo_anefi_fecha || '';
+    return fc_anefi_movs
+        .filter(m => !corte || m.fecha > corte)
+        .reduce((t, m) => t + (parseFloat(m.monto) || 0), 0);
+}
+
+async function fc_anefiCargarMovs() {
+    try {
+        const res = await fetch('/api/flujo-caja/anefi-movimientos');
+        const d = await res.json();
+        if (d.ok) fc_anefi_movs = d.movimientos || [];
+    } catch (e) { console.error('Error cargando movimientos ANEFI:', e); }
+}
+
+// ---- Modal de intereses y ajustes del fondo ----
+async function fc_anefiAbrir() {
+    let modal = document.getElementById('fc-modal-anefi');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'fc-modal-anefi';
+        modal.className = 'fc-modal';
+        document.body.appendChild(modal);
+    }
+    await fc_anefiCargarMovs();
+    fc_anefiRender(modal);
+    modal.classList.add('active');
+    fc_inyectarEstilosFacturas();
+}
+
+function fc_anefiCerrar() {
+    document.getElementById('fc-modal-anefi')?.classList.remove('active');
+    fc_renderAlertasLiquidez();
+}
+
+function fc_anefiRender(modal) {
+    if (!modal) return;
+    const corte = fc_liq_config.saldo_anefi_fecha || '';
+    const hoy = new Date().toISOString().split('T')[0];
+    const filas = fc_anefi_movs.length
+        ? fc_anefi_movs.map(m => {
+            const previo = corte && m.fecha <= corte;
+            return `<tr${previo ? ' style="opacity:.45;"' : ''}>
+                <td style="font-family:monospace;">${fc_liqFechaCorta(m.fecha)}</td>
+                <td style="text-align:right;font-family:monospace;font-weight:700;color:${m.monto < 0 ? '#dc2626' : '#15803d'};">${m.monto < 0 ? '-' : '+'}$${fc_formatMonto(Math.abs(m.monto))}</td>
+                <td style="font-size:10px;">${fc_esc(m.concepto) || '<i style="color:#94a3b8;">sin concepto</i>'}</td>
+                <td style="font-size:9px;color:#b45309;">${previo ? 'ya incluido en el saldo' : ''}</td>
+                <td><button class="fc-btn-del-fac" onclick="fc_anefiEliminar(${m.id})">x</button></td>
+            </tr>`;
+        }).join('')
+        : '<tr><td colspan="5" style="text-align:center;padding:24px;color:#94a3b8;">Todavia no hay intereses registrados.</td></tr>';
+
+    modal.innerHTML = `
+        <div class="fc-modal-overlay" onclick="fc_anefiCerrar()"></div>
+        <div class="fc-modal-facturas-content" style="width:640px;max-height:88vh;">
+            <div class="fc-modal-header" style="background:#4c1d95;">
+                <span class="fc-modal-icon" style="background:rgba(255,255,255,.1);"><i class="fas fa-piggy-bank"></i></span>
+                <div style="flex:1;">
+                    <h3 style="margin:0;font-size:14px;">Fondo ANEFI &mdash; intereses y ajustes</h3>
+                    <p style="margin:2px 0 0;font-size:10px;opacity:.85;">No son movimientos de caja: no salen de ningun banco, solo suman al fondo</p>
+                </div>
+                <button class="fc-modal-close" onclick="fc_anefiCerrar()">&times;</button>
+            </div>
+            <div style="padding:10px 14px;background:#faf5ff;border-bottom:1px solid #e9d5ff;">
+                <div style="font-size:10px;color:#6d28d9;font-weight:700;margin-bottom:5px;">SALDO SEGUN CARTOLA &mdash; lo anterior a esta fecha ya viene incluido aqui</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <input type="number" id="fc-anefi-saldo" value="${fc_liq_config.saldo_anefi || ''}" placeholder="0.00" style="width:120px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:right;">
+                    <span style="font-size:10px;color:#475569;">al</span>
+                    <input type="date" id="fc-anefi-corte" value="${corte}" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;">
+                    <button class="fc-btn" style="background:#4c1d95;font-size:10px;" onclick="fc_anefiGuardarSaldo()"><i class="fas fa-save"></i> Actualizar saldo</button>
+                </div>
+                <div style="font-size:9px;color:#64748b;margin-top:4px;">Cuando tengas la cartola pon el total y su fecha: lo registrado antes deja de sumarse y no se cuenta dos veces.</div>
+            </div>
+            <div class="fc-fac-toolbar">
+                <input type="date" id="fc-anefi-fecha" value="${hoy}" style="border:1px solid #e2e8f0;border-radius:6px;padding:5px 8px;font-size:11px;">
+                <input type="number" id="fc-anefi-monto" placeholder="Monto" style="border:1px solid #e2e8f0;border-radius:6px;padding:5px 8px;font-size:11px;width:100px;text-align:right;">
+                <input type="text" id="fc-anefi-concepto" placeholder="Concepto (ej. Interes agosto)" style="border:1px solid #e2e8f0;border-radius:6px;padding:5px 8px;font-size:11px;flex:1;min-width:150px;">
+                <button onclick="fc_anefiAgregar()" class="fc-btn-add-fac" style="border-color:#4c1d95;color:#4c1d95;">+ Registrar</button>
+            </div>
+            <div class="fc-fac-body" style="max-height:44vh;">
+                <table class="fc-tabla-facturas">
+                    <thead><tr>
+                        <th style="width:90px;">Fecha</th>
+                        <th style="width:100px;text-align:right;">Monto</th>
+                        <th>Concepto</th>
+                        <th style="width:130px;"></th>
+                        <th style="width:30px;"></th>
+                    </tr></thead>
+                    <tbody>${filas}</tbody>
+                </table>
+            </div>
+            <div class="fc-fac-footer">
+                <div class="fc-fac-totales"><span class="fc-fac-t-total">Suma despues del corte: $${fc_formatMonto(fc_anefiIntereses())}</span></div>
+                <div class="fc-fac-btns"><button onclick="fc_anefiCerrar()" class="fc-btn-cancelar">Cerrar</button></div>
+            </div>
+        </div>`;
+}
+
+async function fc_anefiGuardarSaldo() {
+    const saldo = parseFloat(document.getElementById('fc-anefi-saldo')?.value) || 0;
+    const fecha = document.getElementById('fc-anefi-corte')?.value || '';
+    try {
+        const res = await fetch('/api/flujo-caja/config-liquidez', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                minimo_produbanco: fc_liq_config.minimo_produbanco || 0,
+                minimo_pichincha: fc_liq_config.minimo_pichincha || 0,
+                semanas_cobertura: fc_liq_config.semanas_cobertura || 2,
+                saldo_anefi: saldo,
+                saldo_anefi_fecha: fecha
+            })
+        });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error);
+        fc_liq_config.saldo_anefi = saldo;
+        fc_liq_config.saldo_anefi_fecha = fecha;
+        fc_anefiRender(document.getElementById('fc-modal-anefi'));
+        fc_renderAlertasLiquidez();
+    } catch (e) { alert('Error al guardar: ' + e.message); }
+}
+
+async function fc_anefiAgregar() {
+    const fecha = document.getElementById('fc-anefi-fecha')?.value || '';
+    const monto = parseFloat(document.getElementById('fc-anefi-monto')?.value) || 0;
+    const concepto = document.getElementById('fc-anefi-concepto')?.value || '';
+    if (!fecha) { alert('Ponga la fecha del interes'); return; }
+    if (!monto) { alert('Ponga el monto (en negativo si es un ajuste a la baja)'); return; }
+    try {
+        const res = await fetch('/api/flujo-caja/anefi-movimientos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fecha, monto, concepto })
+        });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error);
+        document.getElementById('fc-anefi-monto').value = '';
+        document.getElementById('fc-anefi-concepto').value = '';
+        await fc_anefiCargarMovs();
+        fc_anefiRender(document.getElementById('fc-modal-anefi'));
+        fc_renderAlertasLiquidez();
+    } catch (e) { alert('Error al registrar: ' + e.message); }
+}
+
+async function fc_anefiEliminar(id) {
+    if (!confirm('Borrar este registro del fondo?')) return;
+    try {
+        const res = await fetch(`/api/flujo-caja/anefi-movimientos/${id}`, { method: 'DELETE' });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error);
+        await fc_anefiCargarMovs();
+        fc_anefiRender(document.getElementById('fc-modal-anefi'));
+        fc_renderAlertasLiquidez();
+    } catch (e) { alert('Error al borrar: ' + e.message); }
 }
 
 // ============ TOGGLE SEMANAS ============
@@ -1908,6 +2165,9 @@ async function fc_cargarDatosGuardados() {
         // fc_proyectarRecurrentes y los proveedores de la cartera se rearman abajo
         // desde fc_cartera_semanas.
         const enVista = new Set(fc_todasFechas || []);
+        // Todos los proveedores que alguna semana visible tiene en su cartera
+        const carteraTodas = new Set();
+        Object.values(carteraSet).forEach(set => set.forEach(n => carteraTodas.add(n)));
         if (enVista.size) {
             let descartados = 0;
             for (const grupo of Object.keys(egresosConsolidados)) {
@@ -1920,8 +2180,12 @@ async function fc_cargarDatosGuardados() {
                 egresosConsolidados[grupo] = egresosConsolidados[grupo].filter(it => {
                     const tieneValor = Object.entries(it.valores || {})
                         .some(([dia, val]) => val && enVista.has(dia));
-                    const tieneCartera = (it.facturas || []).length > 0;
-                    if (!tieneValor && !tieneCartera) { descartados++; return false; }
+                    // EN PROVEEDORES MANDA LA CARTERA. La autoridad es
+                    // fc_cartera_semana de alguna semana visible, NO las facturas que
+                    // hayan quedado guardadas en egresos: esas venian propagadas de
+                    // otra semana y eran justo las que arrastraban proveedores viejos.
+                    const enCartera = carteraTodas.has(fc_normalizarNombre(it.nombre));
+                    if (!tieneValor && !enCartera) { descartados++; return false; }
                     return true;
                 });
                 if (!egresosConsolidados[grupo].length) delete egresosConsolidados[grupo];
@@ -1929,6 +2193,9 @@ async function fc_cargarDatosGuardados() {
             if (descartados) {
                 console.log(`Cada semana es unica: ${descartados} proveedor(es) heredado(s) de otras semanas no se dibujan`);
             }
+            // Sin cartera cargada, proveedores queda vacio a proposito. Hay que
+            // decirlo: si no, parece que se perdio la informacion.
+            fc_avisarSinCartera(carteraTodas.size === 0);
         }
 
         // Aplicar datos guardados
@@ -5116,6 +5383,28 @@ async function fc_recGuardarTodos() {
     }
 }
 
+// Aviso bajo la cabecera de Proveedores cuando la semana no tiene cartera cargada.
+// En proveedores manda la cartera: sin ella no hay a quien pagarle esa semana, y el
+// grupo vacio tiene que leerse como "falta cargar el XLS", no como un dato perdido.
+function fc_avisarSinCartera(mostrar) {
+    const header = document.getElementById(`fc-grupo-${FC_GRUPO_PROV}`);
+    let aviso = document.getElementById('fc-aviso-sin-cartera');
+    if (!mostrar || !header) { if (aviso) aviso.remove(); return; }
+    if (!aviso) {
+        aviso = document.createElement('tr');
+        aviso.id = 'fc-aviso-sin-cartera';
+        aviso.dataset.grupo = `eg-${FC_GRUPO_PROV}`;
+        const cols = header.children.length;
+        aviso.innerHTML = `<td class="col-concepto indent-3" colspan="${cols}"
+            style="background:#fff7ed;color:#b45309;font-size:10px;font-style:italic;padding:6px 10px;">
+            <i class="fas fa-exclamation-triangle"></i>
+            Esta semana todavia no tiene cartera cargada. En proveedores manda la cartera:
+            cargue el <b>XLS de la semana</b> para armarla.
+        </td>`;
+        header.insertAdjacentElement('afterend', aviso);
+    }
+}
+
 // Proyectar pagos recurrentes en las celdas del flujo
 async function fc_proyectarRecurrentes() {
     try {
@@ -5547,6 +5836,8 @@ function fc_proyectarAhorroDeuda() {
 const fc_origCargarDatos = fc_cargarDatos;
 fc_cargarDatos = async function(reintentos) {
     await fc_liqCargarConfig();
+    // Los intereses del fondo se muestran en la tarjeta, no solo dentro del modal
+    await fc_anefiCargarMovs();
     await fc_origCargarDatos(reintentos);
     await fc_proyectarRecurrentes();
 };

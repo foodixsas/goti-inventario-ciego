@@ -8436,6 +8436,25 @@ def _fc_crear_tabla_liquidez(cur):
         minimo_pichincha NUMERIC(14,2) DEFAULT 0,
         semanas_cobertura NUMERIC(5,2) DEFAULT 2,
         updated_at TIMESTAMP DEFAULT NOW())''')
+    # Acumulado del fondo ANEFI. NO es caja disponible: es plata apartada que genera
+    # intereses, asi que no entra en saldos, cobertura ni alertas. Vive aqui para
+    # poder mostrarla al lado de los bancos sin contaminar el flujo.
+    cur.execute("ALTER TABLE fc_config_liquidez ADD COLUMN IF NOT EXISTS saldo_anefi NUMERIC(14,2) DEFAULT 0")
+    # Fecha a la que corresponde ese saldo (el corte de la cartola). Sin esto no se
+    # puede saber si un interes ya venia incluido en el saldo o hay que sumarlo.
+    cur.execute("ALTER TABLE fc_config_liquidez ADD COLUMN IF NOT EXISTS saldo_anefi_fecha DATE")
+
+
+def _fc_crear_tabla_anefi(cur):
+    """Intereses y ajustes del fondo. NO son movimientos de caja: no salen de ningun
+    banco, son ganancia dentro del fondo. Solo suman al acumulado."""
+    cur.execute('''CREATE TABLE IF NOT EXISTS fc_anefi_movimientos (
+        id SERIAL PRIMARY KEY,
+        fecha DATE NOT NULL,
+        monto NUMERIC(14,2) NOT NULL,
+        concepto TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT NOW())''')
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fc_anefi_fecha ON fc_anefi_movimientos(fecha)")
 
 
 @app.route('/api/flujo-caja/config-liquidez', methods=['GET'])
@@ -8447,13 +8466,18 @@ def flujo_caja_config_liquidez_get():
         cur = conn.cursor()
         _fc_crear_tabla_liquidez(cur)
         conn.commit()
-        cur.execute('SELECT minimo_produbanco, minimo_pichincha, semanas_cobertura FROM fc_config_liquidez WHERE id = 1')
+        cur.execute('''SELECT minimo_produbanco, minimo_pichincha, semanas_cobertura,
+                              COALESCE(saldo_anefi, 0), saldo_anefi_fecha
+                       FROM fc_config_liquidez WHERE id = 1''')
         row = cur.fetchone()
         if row:
             return jsonify({'ok': True, 'minimo_produbanco': float(row[0] or 0),
                             'minimo_pichincha': float(row[1] or 0),
-                            'semanas_cobertura': float(row[2] or 2)})
-        return jsonify({'ok': True, 'minimo_produbanco': 0, 'minimo_pichincha': 0, 'semanas_cobertura': 2})
+                            'semanas_cobertura': float(row[2] or 2),
+                            'saldo_anefi': float(row[3] or 0),
+                            'saldo_anefi_fecha': row[4].isoformat() if row[4] else ''})
+        return jsonify({'ok': True, 'minimo_produbanco': 0, 'minimo_pichincha': 0,
+                        'semanas_cobertura': 2, 'saldo_anefi': 0, 'saldo_anefi_fecha': ''})
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -8470,19 +8494,94 @@ def flujo_caja_config_liquidez_guardar():
         min_pro = float(data.get('minimo_produbanco', 0) or 0)
         min_pich = float(data.get('minimo_pichincha', 0) or 0)
         semanas = float(data.get('semanas_cobertura', 2) or 2)
+        anefi = _fc_num(data.get('saldo_anefi', 0))
+        anefi_fecha = (data.get('saldo_anefi_fecha') or '').strip() or None
         if min_pro < 0 or min_pich < 0 or semanas < 0:
             return jsonify({'error': 'Los valores no pueden ser negativos'}), 400
+        if anefi < 0:
+            return jsonify({'error': 'El acumulado de ANEFI no puede ser negativo'}), 400
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
         _fc_crear_tabla_liquidez(cur)
-        cur.execute('''INSERT INTO fc_config_liquidez (id, minimo_produbanco, minimo_pichincha, semanas_cobertura)
-            VALUES (1, %s, %s, %s) ON CONFLICT (id) DO UPDATE SET
+        cur.execute('''INSERT INTO fc_config_liquidez (id, minimo_produbanco, minimo_pichincha, semanas_cobertura, saldo_anefi, saldo_anefi_fecha)
+            VALUES (1, %s, %s, %s, %s, %s) ON CONFLICT (id) DO UPDATE SET
             minimo_produbanco = EXCLUDED.minimo_produbanco,
             minimo_pichincha = EXCLUDED.minimo_pichincha,
             semanas_cobertura = EXCLUDED.semanas_cobertura,
-            updated_at = NOW()''', (min_pro, min_pich, semanas))
+            saldo_anefi = EXCLUDED.saldo_anefi,
+            saldo_anefi_fecha = EXCLUDED.saldo_anefi_fecha,
+            updated_at = NOW()''', (min_pro, min_pich, semanas, anefi, anefi_fecha))
         conn.commit()
         return jsonify({'ok': True})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/anefi-movimientos', methods=['GET'])
+def flujo_caja_anefi_listar():
+    """Intereses y ajustes registrados del fondo ANEFI"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_anefi(cur)
+        conn.commit()
+        cur.execute('''SELECT id, fecha, monto, concepto FROM fc_anefi_movimientos
+                       ORDER BY fecha DESC, id DESC''')
+        movs = [{'id': r[0], 'fecha': r[1].isoformat(), 'monto': float(r[2] or 0),
+                 'concepto': r[3] or ''} for r in cur.fetchall()]
+        return jsonify({'ok': True, 'movimientos': movs})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/anefi-movimientos', methods=['POST'])
+def flujo_caja_anefi_guardar():
+    """Registrar un interes o ajuste del fondo"""
+    conn = None
+    try:
+        data = request.get_json()
+        fecha = (data.get('fecha') or '').strip()
+        if not fecha:
+            return jsonify({'error': 'La fecha es obligatoria'}), 400
+        monto = _fc_num(data.get('monto'))
+        if abs(monto) < 0.005:
+            return jsonify({'error': 'El monto no puede ser cero'}), 400
+        concepto = (data.get('concepto') or '').strip()[:200]
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_anefi(cur)
+        cur.execute('''INSERT INTO fc_anefi_movimientos (fecha, monto, concepto)
+                       VALUES (%s, %s, %s) RETURNING id''', (fecha, monto, concepto))
+        mov_id = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({'ok': True, 'id': mov_id})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/flujo-caja/anefi-movimientos/<int:mov_id>', methods=['DELETE'])
+def flujo_caja_anefi_eliminar(mov_id):
+    """Borrar un interes o ajuste mal registrado"""
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute('DELETE FROM fc_anefi_movimientos WHERE id = %s RETURNING concepto', (mov_id,))
+        row = cur.fetchone()
+        conn.commit()
+        if row:
+            return jsonify({'ok': True})
+        return jsonify({'error': 'No encontrado'}), 404
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500

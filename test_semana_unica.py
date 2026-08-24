@@ -11,6 +11,20 @@ PROV = 'prov-principales'
 GRUPOS_POR_SEMANA = {PROV}   # debe reflejar FC_GRUPOS_POR_SEMANA en flujo-caja.js
 
 
+def cargar_cartera():
+    c = psycopg2.connect(host='chiosburguer.postgres.database.azure.com',
+                         database='movimientos', user='adminChios',
+                         password='Burger2023', port='5432',
+                         sslmode='require', connect_timeout=25)
+    cur = c.cursor()
+    cur.execute("SELECT semana_inicio, proveedor FROM fc_cartera_semana")
+    cartera = {}
+    for sem, prov in cur.fetchall():
+        cartera.setdefault(str(sem), set()).add((prov or '').upper().strip())
+    c.close()
+    return cartera
+
+
 def cargar():
     c = psycopg2.connect(host='chiosburguer.postgres.database.azure.com',
                          database='movimientos', user='adminChios',
@@ -25,30 +39,37 @@ def cargar():
     return datos
 
 
-def consolidar(guardados, inicio, n_semanas=4):
+def consolidar(guardados, cartera, inicio, n_semanas=4):
     """Replica la regla de fc_cargarGuardado: que filas se dibujan."""
     semanas = [inicio + datetime.timedelta(days=7 * i) for i in range(n_semanas)]
     en_vista = {str(inicio + datetime.timedelta(days=d)) for d in range(7 * n_semanas)}
+    # En proveedores MANDA LA CARTERA: la autoridad es fc_cartera_semana de alguna
+    # semana visible, no las facturas que hayan quedado guardadas en egresos.
+    en_cartera = set()
+    for sem in semanas:
+        en_cartera |= cartera.get(str(sem), set())
     filas = {}
     for sem in semanas:
         for grupo, lista in (guardados.get(str(sem)) or {}).items():
             for it in lista:
-                clave = (grupo, it.get('nombre', ''))
+                nombre = it.get('nombre', '')
+                clave = (grupo, nombre)
                 if grupo not in GRUPOS_POR_SEMANA:
                     filas[clave] = 'estructura fija'
                     continue
                 if any(v for d, v in (it.get('valores') or {}).items() if d in en_vista):
                     filas[clave] = 'ya planificado'
-                elif it.get('facturas'):
+                elif nombre.upper().strip() in en_cartera:
                     filas[clave] = 'cartera de la semana'
-    return filas
+    return filas, en_cartera
 
 
 def main():
     inicio = (datetime.date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1
               else datetime.date.today() - datetime.timedelta(days=datetime.date.today().weekday()))
     guardados = cargar()
-    filas = consolidar(guardados, inicio)
+    cartera = cargar_cartera()
+    filas, en_cartera = consolidar(guardados, cartera, inicio)
     fallos = []
 
     # 1. Ningun proveedor puede sobrevivir sin motivo (ni cartera ni plan)
@@ -66,11 +87,28 @@ def main():
     # 3. Un proveedor con pago planificado a futuro SI debe sobrevivir
     planificados = [k for k, m in filas.items() if m == 'ya planificado']
 
+    # 4. LA CARTERA MANDA: nadie se dibuja sin estar en la cartera de una semana
+    #    visible, salvo que tenga pago ya planificado.
+    intrusos = [n for (g, n), m in filas.items()
+                if g == PROV and m != 'ya planificado'
+                and n.upper().strip() not in en_cartera]
+    if intrusos:
+        fallos.append(f'{len(intrusos)} proveedor(es) dibujados sin estar en cartera '
+                      f'ni tener pago planificado: {intrusos[:3]}')
+
+    # 5. ...y al reves: todo el que esta en la cartera visible DEBE dibujarse
+    dibujados = {n.upper().strip() for (g, n) in filas if g == PROV}
+    faltantes = en_cartera - dibujados
+    if faltantes:
+        fallos.append(f'{len(faltantes)} proveedor(es) de la cartera no se dibujan: '
+                      f'{sorted(faltantes)[:3]}')
+
     print(f'Semana inicial: {inicio}   filas dibujadas: {len(filas)}')
     for motivo in ('cartera de la semana', 'ya planificado', 'estructura fija'):
         print(f'  {sum(1 for m in filas.values() if m == motivo):>4}  {motivo}')
     print(f'  grupos de pagos fijos presentes: {len(fijos)}')
     print(f'  proveedores con pago ya planificado: {len(planificados)}')
+    print(f'  proveedores en la cartera de las semanas visibles: {len(en_cartera)}')
     print()
     if fallos:
         for f in fallos:
