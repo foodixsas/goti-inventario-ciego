@@ -20,6 +20,16 @@ const FC_GRUPO_PROV = 'prov-principales';
 const FC_GRUPO_PROV_EVENT = 'prov-eventuales';
 const FC_GRUPOS_PROV = new Set([FC_GRUPO_PROV, FC_GRUPO_PROV_EVENT]);
 
+// Lo que se le debe a un proveedor, para ordenarlo. El campo saldo es lo que se ve
+// en la columna SALDO; si viene en cero se cae a la suma de facturas pendientes, que
+// es el caso de los que se acaban de cargar desde la cartera.
+function fc_deudaProveedor(it) {
+    const saldo = parseFloat(it.saldo) || 0;
+    if (saldo > 0.005) return saldo;
+    return (it.facturas || []).reduce(
+        (t, f) => t + ((parseFloat(f.monto) || 0) - (parseFloat(f.abono) || 0)), 0);
+}
+
 // A que grupo pertenece un proveedor segun el catalogo. Solo EVENTUAL se separa;
 // lo que esta sin clasificar se queda en principales para que no se pierda de vista.
 function fc_grupoDeProveedor(nombre) {
@@ -2360,6 +2370,16 @@ async function fc_cargarDatosGuardados() {
             if (conDetalle) console.log(`Cartera: facturas restauradas para ${conDetalle} proveedor(es)`);
         }
 
+        // Los proveedores van SIEMPRE del que mas se le debe al que menos. Antes solo
+        // se ordenaban los que se reconstruian desde la cartera; los que venian de lo
+        // guardado entraban en el orden en que se habian guardado, o sea sin orden.
+        // Se ordena aqui, despues de repartir por grupo y de restaurar las facturas,
+        // que es cuando ya se conoce la deuda real de cada uno.
+        FC_GRUPOS_PROV.forEach(g => {
+            if (!egresosConsolidados[g]) return;
+            egresosConsolidados[g].sort((a, b) => fc_deudaProveedor(b) - fc_deudaProveedor(a));
+        });
+
         // Aplicar egresos consolidados (fuera del loop para evitar duplicados)
         for (const [grupo, items] of Object.entries(egresosConsolidados)) {
             // Crear items faltantes (con tope de intentos para evitar bucle infinito
@@ -4339,11 +4359,14 @@ function fc_procesarCarteraXLS(input) {
             // devolverselo a los proveedores que siguen viniendo en el archivo nuevo.
             // El que no viene en el archivo simplemente no se recrea.
             const previoProv = {};
-            document.querySelectorAll('.fc-egreso-item-prov-principales').forEach(row => {
+            const filasProv = [];
+            FC_GRUPOS_PROV.forEach(g => document.querySelectorAll(`.fc-egreso-item-${g}`)
+                .forEach(r => filasProv.push(r)));
+            filasProv.forEach(row => {
                 const nombreFila = (row.querySelector('.fc-input-nombre')?.value || '').trim();
                 if (!nombreFila) return;
                 const celdasPrev = {};
-                row.querySelectorAll('.fc-input-egreso-prov-principales').forEach(inp => {
+                row.querySelectorAll('.fc-input[data-fecha]').forEach(inp => {
                     const v = (inp.value || '').trim();
                     if (v && parseFloat(v.replace(/,/g, '')) ) celdasPrev[inp.dataset.fecha] = inp.value;
                 });
@@ -4366,10 +4389,11 @@ function fc_procesarCarteraXLS(input) {
                 Object.values(fc_cartera_cargada).map(v => v.nombre)
             );
 
-            document.querySelectorAll('.fc-egreso-item-prov-principales').forEach(row => row.remove());
+            filasProv.forEach(row => row.remove());
 
-            // Crear un item por cada proveedor de la cartera
-            const grupoId = 'prov-principales';
+            // Crear un item por cada proveedor de la cartera. Cada uno entra al grupo
+            // que le toca segun tipo_proveedor, con su propio punto de insercion.
+            const grupoId = FC_GRUPO_PROV;   // sigue siendo el grupo por defecto
             const headerRow = document.getElementById(`fc-grupo-${grupoId}`);
             if (!headerRow) {
                 alert('No se encontro el grupo PROVEEDORES PRINCIPALES en egresos');
@@ -4388,8 +4412,11 @@ function fc_procesarCarteraXLS(input) {
                 return;
             }
 
-            // Referencia para insertar despues del header
-            let insertAfter = headerRow;
+            // Referencia para insertar despues del header, una por grupo
+            const insertAfterPorGrupo = {};
+            FC_GRUPOS_PROV.forEach(g => {
+                insertAfterPorGrupo[g] = document.getElementById(`fc-grupo-${g}`);
+            });
 
             // Cargar catalogo de proveedores de BD antes de crear items
             await fc_cargarProveedoresBD();
@@ -4408,11 +4435,17 @@ function fc_procesarCarteraXLS(input) {
                 const prev = previoProv[prov.key] || null;
                 if (prev) conservados++; else nuevos++;
                 const bancoPrev = prev ? prev.banco : 'produbanco';
-                const diasFinal = (prev && prev.dias !== '') ? prev.dias : diasCred;
+                // La ficha del proveedor MANDA en los dias de credito. Antes ganaba lo
+                // que ya estaba en la fila, asi que cambiar los dias en el catalogo no
+                // servia de nada: al cargar la cartera volvia el valor viejo.
+                const diasFinal = (parseInt(diasCred) > 0)
+                    ? diasCred
+                    : ((prev && prev.dias !== '') ? prev.dias : (diasCred || 0));
 
+                const gId = fc_grupoDeProveedor(prov.nombre);
                 const newRow = document.createElement('tr');
-                newRow.className = `row-banco-item fc-egreso-item-${grupoId}`;
-                newRow.dataset.grupo = `eg-${grupoId}`;
+                newRow.className = `row-banco-item fc-egreso-item-${gId}`;
+                newRow.dataset.grupo = `eg-${gId}`;
                 newRow.dataset.banco = bancoPrev;
                 newRow.dataset.fcRowId = dynRowId;
 
@@ -4437,7 +4470,7 @@ function fc_procesarCarteraXLS(input) {
                     sem.dias.forEach((dia, i) => {
                         const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
                         celdas += `<td class="dia-col sem-${sem.num}${sab} monto fc-celda-egreso">
-                            <input type="text" class="fc-input fc-input-egreso-${grupoId}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()" onfocus="fc_onFocusEgreso(this)">
+                            <input type="text" class="fc-input fc-input-egreso-${gId}" data-fecha="${dia}" data-semana="${sem.num}" placeholder="0" onchange="fc_recalcularTodo()" onfocus="fc_onFocusEgreso(this)">
                             <button class="fc-btn-rep" onclick="fc_abrirRecurrencia(this)" title="Repetir desde aqui">&#x21bb;</button>
                         </td>`;
                     });
@@ -4445,8 +4478,9 @@ function fc_procesarCarteraXLS(input) {
                 });
 
                 newRow.innerHTML = celdas;
-                insertAfter.parentNode.insertBefore(newRow, insertAfter.nextSibling);
-                insertAfter = newRow;
+                const ref = insertAfterPorGrupo[gId] || headerRow;
+                ref.parentNode.insertBefore(newRow, ref.nextSibling);
+                insertAfterPorGrupo[gId] = newRow;
 
                 // Cargar facturas del archivo nuevo, pero rescatando la fecha de pago
                 // que ya se le habia asignado a la misma factura (mismo # documento)
@@ -4460,7 +4494,7 @@ function fc_procesarCarteraXLS(input) {
 
                 // Devolver los montos que ya estaban digitados dia por dia
                 if (prev) {
-                    newRow.querySelectorAll(`.fc-input-egreso-${grupoId}`).forEach(inp => {
+                    newRow.querySelectorAll('.fc-input[data-fecha]').forEach(inp => {
                         const v = prev.celdas[inp.dataset.fecha];
                         if (v !== undefined) inp.value = v;
                     });
