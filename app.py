@@ -866,6 +866,79 @@ def reporte_motivos():
         """)
         conn.commit()
 
+        # Historico de versiones del cruce operativo. Cada vez que se vuelve
+        # a cruzar, la version anterior se guarda aqui antes de pisarla.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS goti.cruce_operativo_versiones (
+                id SERIAL PRIMARY KEY,
+                ejecucion_id INTEGER NOT NULL,
+                version INTEGER NOT NULL,
+                bodega VARCHAR(50) NOT NULL,
+                fecha_toma DATE NOT NULL,
+                fecha_corte_contifico DATE,
+                solicitado_por VARCHAR(150),
+                solicitado_at TIMESTAMP,
+                timestamp_cruce TIMESTAMP,
+                total_productos_toma INTEGER,
+                total_productos_contifico INTEGER,
+                total_cruzados INTEGER,
+                -- filas que tenia el detalle completo, del que solo se guardan
+                -- las que descuadran
+                total_filas_detalle INTEGER,
+                total_con_diferencia INTEGER,
+                valor_total_dif NUMERIC(18,4),
+                archivado_at TIMESTAMP DEFAULT NOW(),
+                archivado_por VARCHAR(150)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cruce_ver_bod_fecha
+            ON goti.cruce_operativo_versiones (bodega, fecha_toma, version)
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS goti.cruce_operativo_versiones_detalle (
+                id SERIAL PRIMARY KEY,
+                version_id INTEGER NOT NULL
+                    REFERENCES goti.cruce_operativo_versiones(id) ON DELETE CASCADE,
+                codigo VARCHAR(50),
+                cantidad_toma NUMERIC(18,4),
+                cantidad_sistema NUMERIC(18,4),
+                diferencia NUMERIC(18,4),
+                costo_unitario NUMERIC(18,4),
+                valor_diferencia NUMERIC(18,4),
+                factor NUMERIC(14,4)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cruce_verdet_version
+            ON goti.cruce_operativo_versiones_detalle (version_id)
+        """)
+        # CREATE TABLE IF NOT EXISTS no toca una tabla que ya existe, asi que
+        # una columna anadida despues no llegaria nunca a las bases donde la
+        # tabla ya estaba creada.
+        cur.execute("""
+            ALTER TABLE goti.cruce_operativo_versiones
+            ADD COLUMN IF NOT EXISTS total_filas_detalle INTEGER
+        """)
+        # Los importes tienen que tener EXACTAMENTE los decimales del original,
+        # numeric(18,4). Con menos, la copia redondea: una diferencia de 0.0004
+        # se guarda como 0.00 y el recuento de productos descuadrados deja de
+        # cuadrar con el cruce del que salio.
+        cur.execute("""
+            ALTER TABLE goti.cruce_operativo_versiones
+            ALTER COLUMN valor_total_dif TYPE NUMERIC(18,4)
+        """)
+        for _col in ('cantidad_toma', 'cantidad_sistema', 'diferencia',
+                     'costo_unitario', 'valor_diferencia'):
+            cur.execute(
+                'ALTER TABLE goti.cruce_operativo_versiones_detalle '
+                'ALTER COLUMN ' + _col + ' TYPE NUMERIC(18,4)')
+        cur.execute("""
+            ALTER TABLE goti.cruce_operativo_versiones_detalle
+            ALTER COLUMN factor TYPE NUMERIC(14,4)
+        """)
+        conn.commit()
+
         # Motivos de conteos
         query1 = """
             SELECT motivo, COUNT(*) as cantidad
@@ -4445,6 +4518,75 @@ def resumen_persona_semanal():
 WORKER_TOKEN = os.environ.get('CRUCE_WORKER_TOKEN', 'worker-foodix-2026-7K3xR9pL2qN8mZ4w')
 
 
+def _archivar_version_cruce(cur, ejecucion_id, usuario):
+    """Guarda una copia del cruce antes de que se pise. Devuelve su numero.
+
+    Se llama justo antes de borrar el detalle. Si se llamara despues no habria
+    nada que copiar, que es exactamente lo que venia pasando: cada cruce nuevo
+    se llevaba por delante el anterior y no quedaba rastro de por donde
+    empezaron ni de cuanto habian corregido.
+
+    Devuelve None si no hay nada util que archivar: un cruce que fallo o que
+    aun no termino no aporta informacion.
+    """
+    cur.execute("""
+        SELECT bodega, fecha_toma, fecha_corte_contifico, estado, solicitado_por,
+               solicitado_at, timestamp_cruce, total_productos_toma,
+               total_productos_contifico, total_cruzados, total_con_diferencia,
+               valor_total_dif
+        FROM goti.cruce_operativo_ejecuciones WHERE id = %s
+    """, (ejecucion_id,))
+    e = cur.fetchone()
+    if not e or e['estado'] != 'completado':
+        return None
+
+    cur.execute("""
+        SELECT COALESCE(MAX(version), 0) + 1 AS siguiente
+        FROM goti.cruce_operativo_versiones
+        WHERE bodega = %s AND fecha_toma = %s
+    """, (e['bodega'], e['fecha_toma']))
+    version = cur.fetchone()['siguiente']
+
+    cur.execute("SELECT COUNT(*) AS n FROM goti.cruce_operativo_detalle "
+                "WHERE ejecucion_id = %s", (ejecucion_id,))
+    filas_detalle = cur.fetchone()['n']
+
+    cur.execute("""
+        INSERT INTO goti.cruce_operativo_versiones
+            (ejecucion_id, version, bodega, fecha_toma, fecha_corte_contifico,
+             solicitado_por, solicitado_at, timestamp_cruce,
+             total_productos_toma, total_productos_contifico, total_cruzados,
+             total_filas_detalle, total_con_diferencia, valor_total_dif,
+             archivado_por)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        RETURNING id
+    """, (ejecucion_id, version, e['bodega'], e['fecha_toma'],
+          e['fecha_corte_contifico'], e['solicitado_por'], e['solicitado_at'],
+          e['timestamp_cruce'], e['total_productos_toma'],
+          e['total_productos_contifico'], e['total_cruzados'], filas_detalle,
+          e['total_con_diferencia'], e['valor_total_dif'], usuario))
+    version_id = cur.fetchone()['id']
+
+    # Solo lo que DESCUADRA. Un producto que cuadra no aporta nada a la
+    # pregunta que responde este historico, y son la mayoria: en Bodega
+    # Principal, 65 de 210. El nombre y la categoria tampoco se copian: no
+    # cambian entre versiones y ya viven en el catalogo.
+    #
+    # Que un codigo no aparezca en una version significa que ahi cuadraba, y
+    # eso es suficiente para comparar: si estaba antes y ya no esta, se
+    # arreglo; si no estaba y aparece, se rompio.
+    cur.execute("""
+        INSERT INTO goti.cruce_operativo_versiones_detalle
+            (version_id, codigo, cantidad_toma, cantidad_sistema, diferencia,
+             costo_unitario, valor_diferencia, factor)
+        SELECT %s, codigo, cantidad_toma, cantidad_sistema, diferencia,
+               costo_unitario, valor_diferencia, factor
+        FROM goti.cruce_operativo_detalle
+        WHERE ejecucion_id = %s AND COALESCE(diferencia, 0) <> 0
+    """, (version_id, ejecucion_id))
+    return version
+
+
 @app.route('/api/cruce-op/solicitar', methods=['POST'])
 def cruce_op_solicitar():
     """Llamado desde el panel cuando el usuario presiona CUADRAR.
@@ -4480,7 +4622,10 @@ def cruce_op_solicitar():
             return jsonify({'id': existente['id'], 'estado': existente['estado'], 'reused': True})
 
         if existente and existente['estado'] == 'completado':
-            # Cualquier usuario puede re-ejecutar un cruce completado
+            # Cualquier usuario puede re-ejecutar un cruce completado.
+            # Antes de borrar nada se guarda la version que se va a perder: es
+            # el unico momento en que todavia existe.
+            _archivar_version_cruce(cur, existente['id'], usuario)
             cur.execute("DELETE FROM goti.cruce_operativo_detalle WHERE ejecucion_id = %s", (existente['id'],))
             cur.execute("""
                 UPDATE goti.cruce_operativo_ejecuciones
@@ -4594,6 +4739,191 @@ def cruce_op_cancelar(ejec_id):
     except Exception as e:
         if conn:
             conn.rollback()
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/cruce-op/versiones', methods=['GET'])
+def cruce_op_versiones():
+    """Historico de cruces de una bodega y fecha, del primero al ultimo.
+
+    Incluye la version viva -la que esta ahora en la tabla de ejecuciones- al
+    final de la lista, para poder ver el avance completo sin tener que juntar
+    dos consultas.
+    """
+    bodega = request.args.get('bodega')
+    fecha = request.args.get('fecha_toma')
+    if not bodega or not fecha:
+        return jsonify({'error': 'bodega y fecha_toma son requeridos'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT version, ejecucion_id, solicitado_por, solicitado_at,
+                   timestamp_cruce, total_productos_toma, total_cruzados,
+                   total_con_diferencia, valor_total_dif, archivado_at
+            FROM goti.cruce_operativo_versiones
+            WHERE bodega = %s AND fecha_toma = %s
+            ORDER BY version
+        """, (bodega, fecha))
+        filas = [dict(r) for r in cur.fetchall()]
+
+        # La que esta viva ahora todavia no se ha archivado: se anade al final
+        # con el numero que le tocaria.
+        cur.execute("""
+            SELECT id, estado, solicitado_por, solicitado_at, timestamp_cruce,
+                   total_productos_toma, total_cruzados, total_con_diferencia,
+                   valor_total_dif
+            FROM goti.cruce_operativo_ejecuciones
+            WHERE bodega = %s AND fecha_toma = %s
+            ORDER BY id DESC LIMIT 1
+        """, (bodega, fecha))
+        viva = cur.fetchone()
+        if viva and viva['estado'] == 'completado':
+            filas.append({
+                'version': len(filas) + 1,
+                'ejecucion_id': viva['id'],
+                'solicitado_por': viva['solicitado_por'],
+                'solicitado_at': viva['solicitado_at'],
+                'timestamp_cruce': viva['timestamp_cruce'],
+                'total_productos_toma': viva['total_productos_toma'],
+                'total_cruzados': viva['total_cruzados'],
+                'total_con_diferencia': viva['total_con_diferencia'],
+                'valor_total_dif': viva['valor_total_dif'],
+                'archivado_at': None,
+                'actual': True,
+            })
+
+        # Cuanto se corrigio de una version a la siguiente. Se calcula aqui y no
+        # en el navegador para que el mismo numero salga igual en todas partes.
+        anterior = None
+        for f in filas:
+            if anterior is not None:
+                f['gano_productos'] = (anterior.get('total_con_diferencia') or 0) - \
+                                      (f.get('total_con_diferencia') or 0)
+                f['gano_valor'] = abs(float(anterior.get('valor_total_dif') or 0)) - \
+                                  abs(float(f.get('valor_total_dif') or 0))
+            anterior = f
+
+        return jsonify({'bodega': bodega, 'fecha_toma': fecha,
+                        'versiones': filas, 'total': len(filas)})
+    except Exception as e:
+        return jsonify({'error': str(e)[:200]}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/cruce-op/comparar', methods=['GET'])
+def cruce_op_comparar():
+    """Que cambio entre dos versiones, producto por producto.
+
+    Separa lo arreglado de lo que se rompio por el camino, que es la parte que
+    no se ve mirando solo el total: un descuadre puede bajar de 900 a 400 y
+    haber tres productos nuevos descuadrados dentro.
+    """
+    bodega = request.args.get('bodega')
+    fecha = request.args.get('fecha_toma')
+    va = request.args.get('desde', type=int)
+    vb = request.args.get('hasta', type=int)
+    if not bodega or not fecha or va is None or vb is None:
+        return jsonify({'error': 'bodega, fecha_toma, desde y hasta son requeridos'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Los nombres no se guardan por version: no cambian y ocupaban mas que
+        # todos los numeros juntos. Se sacan del cruce vivo, que es el que
+        # tiene el catalogo al dia.
+        cur.execute("""
+            SELECT d.codigo, d.nombre
+            FROM goti.cruce_operativo_detalle d
+            JOIN goti.cruce_operativo_ejecuciones e ON e.id = d.ejecucion_id
+            WHERE e.bodega = %s AND e.fecha_toma = %s
+        """, (bodega, fecha))
+        nombres = {r['codigo']: r['nombre'] for r in cur.fetchall()}
+
+        def detalle_de(version):
+            """Lo que descuadraba en una version, venga del historico o de la viva.
+
+            Solo devuelve productos con diferencia. Que un codigo no este
+            significa que ahi cuadraba, y de eso se deduce lo que se arreglo.
+            """
+            cur.execute("""
+                SELECT id FROM goti.cruce_operativo_versiones
+                WHERE bodega=%s AND fecha_toma=%s AND version=%s
+            """, (bodega, fecha, version))
+            v = cur.fetchone()
+            if v:
+                cur.execute("""
+                    SELECT codigo, cantidad_toma, cantidad_sistema,
+                           diferencia, valor_diferencia
+                    FROM goti.cruce_operativo_versiones_detalle
+                    WHERE version_id = %s
+                """, (v['id'],))
+                return {r['codigo']: dict(r) for r in cur.fetchall()}
+            # No esta archivada: puede ser la viva, que si guarda todo el
+            # detalle, asi que aqui si hay que filtrar lo que cuadra.
+            cur.execute("""
+                SELECT id FROM goti.cruce_operativo_ejecuciones
+                WHERE bodega=%s AND fecha_toma=%s AND estado='completado'
+                ORDER BY id DESC LIMIT 1
+            """, (bodega, fecha))
+            e = cur.fetchone()
+            if not e:
+                return {}
+            cur.execute("""
+                SELECT codigo, cantidad_toma, cantidad_sistema,
+                       diferencia, valor_diferencia
+                FROM goti.cruce_operativo_detalle
+                WHERE ejecucion_id = %s AND COALESCE(diferencia, 0) <> 0
+            """, (e['id'],))
+            return {r['codigo']: dict(r) for r in cur.fetchall()}
+
+        a, b = detalle_de(va), detalle_de(vb)
+        if not a or not b:
+            return jsonify({'error': 'alguna de las dos versiones no existe'}), 404
+
+        arreglados, nuevos, siguen = [], [], []
+        for cod in set(list(a.keys()) + list(b.keys())):
+            da = float((a.get(cod) or {}).get('diferencia') or 0)
+            db = float((b.get(cod) or {}).get('diferencia') or 0)
+            fila = {
+                'codigo': cod,
+                'nombre': nombres.get(cod, cod),
+                'diferencia_antes': da,
+                'diferencia_ahora': db,
+                'valor_antes': float((a.get(cod) or {}).get('valor_diferencia') or 0),
+                'valor_ahora': float((b.get(cod) or {}).get('valor_diferencia') or 0),
+            }
+            if da != 0 and db == 0:
+                arreglados.append(fila)
+            elif da == 0 and db != 0:
+                nuevos.append(fila)
+            elif da != 0 and db != 0 and da != db:
+                siguen.append(fila)
+            elif da != 0 and da == db:
+                siguen.append(fila)
+
+        orden = lambda f: -abs(f['valor_antes'] or f['valor_ahora'])
+        return jsonify({
+            'bodega': bodega, 'fecha_toma': fecha, 'desde': va, 'hasta': vb,
+            'arreglados': sorted(arreglados, key=orden),
+            'nuevos': sorted(nuevos, key=lambda f: -abs(f['valor_ahora'])),
+            'siguen_descuadrados': sorted(siguen, key=orden),
+            'resumen': {
+                'arreglados': len(arreglados),
+                'nuevos': len(nuevos),
+                'siguen': len(siguen),
+            },
+        })
+    except Exception as e:
         return jsonify({'error': str(e)[:200]}), 500
     finally:
         if conn:
@@ -7644,6 +7974,9 @@ def _fc_crear_tabla_recurrentes(cur):
     cur.execute("ALTER TABLE fc_pagos_recurrentes ADD COLUMN IF NOT EXISTS fecha_inicio DATE")
     cur.execute("ALTER TABLE fc_pagos_recurrentes ADD COLUMN IF NOT EXISTS fecha_fin DATE")
     cur.execute("ALTER TABLE fc_pagos_recurrentes ADD COLUMN IF NOT EXISTS total_cuotas INTEGER DEFAULT 0")
+    # RUC del beneficiario: un pago fijo a nombre de una persona (p.ej. un arriendo)
+    # no se puede validar solo por el nombre. Con el RUC se amarra a fc_proveedores.
+    cur.execute("ALTER TABLE fc_pagos_recurrentes ADD COLUMN IF NOT EXISTS ruc TEXT DEFAULT ''")
 
 
 @app.route('/api/flujo-caja/recurrentes', methods=['GET'])
@@ -7656,7 +7989,8 @@ def flujo_caja_recurrentes_listar():
         _fc_crear_tabla_recurrentes(cur)
         conn.commit()
         cur.execute('''SELECT id, nombre, grupo, monto, frecuencia, dia_mes, dia_semana, banco,
-                       activo, observaciones, fecha_inicio, fecha_fin, total_cuotas
+                       activo, observaciones, fecha_inicio, fecha_fin, total_cuotas,
+                       COALESCE(ruc, '')
                        FROM fc_pagos_recurrentes ORDER BY grupo, nombre''')
         pagos = []
         for r in cur.fetchall():
@@ -7667,7 +8001,8 @@ def flujo_caja_recurrentes_listar():
                 'activo': r[8], 'observaciones': r[9] or '',
                 'fecha_inicio': r[10].isoformat() if r[10] else '',
                 'fecha_fin': r[11].isoformat() if r[11] else '',
-                'total_cuotas': r[12] or 0
+                'total_cuotas': r[12] or 0,
+                'ruc': r[13] or ''
             })
         return jsonify({'ok': True, 'pagos': pagos})
     except Exception as e:
@@ -7690,25 +8025,27 @@ def flujo_caja_recurrentes_guardar():
         f_ini = (data.get('fecha_inicio') or '').strip() or None
         f_fin = (data.get('fecha_fin') or '').strip() or None
         cuotas = int(data.get('total_cuotas') or 0)
+        # Solo digitos: el RUC es la llave contra fc_proveedores y Contifico
+        ruc = ''.join(c for c in str(data.get('ruc') or '') if c.isdigit())
         if pago_id and pago_id > 0:
             cur.execute('''
                 UPDATE fc_pagos_recurrentes SET nombre=%s, grupo=%s, monto=%s, frecuencia=%s,
                     dia_mes=%s, dia_semana=%s, banco=%s, activo=%s, observaciones=%s,
-                    fecha_inicio=%s, fecha_fin=%s, total_cuotas=%s, updated_at=NOW()
+                    fecha_inicio=%s, fecha_fin=%s, total_cuotas=%s, ruc=%s, updated_at=NOW()
                 WHERE id=%s RETURNING id
             ''', (data.get('nombre',''), data.get('grupo','pagos-fijos'), data.get('monto',0),
                   data.get('frecuencia','mensual'), data.get('dia_mes',1), data.get('dia_semana',0),
                   data.get('banco','produbanco'), data.get('activo',True), data.get('observaciones',''),
-                  f_ini, f_fin, cuotas, pago_id))
+                  f_ini, f_fin, cuotas, ruc, pago_id))
         else:
             cur.execute('''
                 INSERT INTO fc_pagos_recurrentes (nombre, grupo, monto, frecuencia, dia_mes, dia_semana,
-                    banco, activo, observaciones, fecha_inicio, fecha_fin, total_cuotas)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+                    banco, activo, observaciones, fecha_inicio, fecha_fin, total_cuotas, ruc)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
             ''', (data.get('nombre',''), data.get('grupo','pagos-fijos'), data.get('monto',0),
                   data.get('frecuencia','mensual'), data.get('dia_mes',1), data.get('dia_semana',0),
                   data.get('banco','produbanco'), data.get('activo',True), data.get('observaciones',''),
-                  f_ini, f_fin, cuotas))
+                  f_ini, f_fin, cuotas, ruc))
         pago_id = cur.fetchone()[0]
         conn.commit()
         return jsonify({'ok': True, 'id': pago_id})
