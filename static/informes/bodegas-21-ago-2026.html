@@ -159,32 +159,15 @@ td.cant{text-align:right;font-family:ui-monospace,'Cascadia Mono','Segoe UI Mono
 <div class="main">
 <div class="tab-content active" id="tab-resumen">
 
-<div class="big">
-<div class="kpi"><div class="kpi-label">Falta producto por</div>
-<div class="kpi-val neg">$5,245.92</div>
-<div class="expl">El sistema dice que deberia haber mas de lo que se encontro al contar.</div></div>
+<div class="rank-bar" id="pills"></div>
 
-<div class="kpi"><div class="kpi-label">Sobra producto por</div>
-<div class="kpi-val pos">$1,353.67</div>
-<div class="expl">Se encontro mas producto del que el sistema tenia registrado.</div></div>
+<div class="big" id="kpis"></div>
 
-<div class="kpi"><div class="kpi-label">Diferencia final</div>
-<div class="kpi-val neg">$3,892.25</div>
-<div class="expl">Falta mas de lo que sobra.
-Es el saldo entre las tres bodegas.</div></div>
-
-<div class="kpi"><div class="kpi-label">Productos que no cuadran</div>
-<div class="kpi-val" style="color:var(--yellow)">102</div>
-<div class="expl">De 592 productos revisados. No se incluyen 102 diferencias
-menores a $4 en productos que van por peso, que suman
-$14.03 en total.</div></div>
-</div>
-
-<div class="section-title">Que paso en cada bodega</div>
-<div class="bod" style="border-left-color:#2b6cb0"><div class="bod-nom">Bodega Principal</div><div class="bod-txt">Se revisaron <strong>210 productos</strong> y <strong>48 no cuadraron</strong> (22%). Falta producto por <strong class="neg">$1,768.47</strong> y sobra por <strong class="pos">$489.11</strong>. Al final falta mas de lo que sobra.</div></div><div class="bod" style="border-left-color:#276749"><div class="bod-nom">Bodega Materia Prima</div><div class="bod-txt">Se revisaron <strong>156 productos</strong> y <strong>6 no cuadraron</strong> (3%). Falta producto por <strong class="neg">$0.00</strong> y sobra por <strong class="pos">$107.36</strong>. Al final sobra mas de lo que falta.</div></div><div class="bod" style="border-left-color:#97266D"><div class="bod-nom">Planta de Produccion</div><div class="bod-txt">Se revisaron <strong>226 productos</strong> y <strong>48 no cuadraron</strong> (21%). Falta producto por <strong class="neg">$3,477.45</strong> y sobra por <strong class="pos">$757.20</strong>. Al final falta mas de lo que sobra.</div></div>
+<div class="section-title" id="tituloBod">Que paso en cada bodega</div>
+<div id="narr"></div>
 
 <div class="chart-row" style="margin-top:16px">
-<div class="chart-card"><h3>Como quedo cada bodega</h3><canvas id="chBod"></canvas>
+<div class="chart-card"><h3 id="tChBod">Como quedo cada bodega</h3><canvas id="chBod"></canvas>
 <div class="expl">Barra roja hacia la izquierda: falta producto. Verde hacia la derecha: sobra.</div></div>
 <div class="chart-card"><h3>Los 8 productos de mayor impacto</h3><canvas id="chTop"></canvas>
 <div class="expl">Los que mas dinero representan dentro del descuadre.</div></div>
@@ -278,9 +261,100 @@ function toggleNote(h){
 }
 const money=v=>'$'+Math.abs(v).toLocaleString('es-EC',{minimumFractionDigits:2,maximumFractionDigits:2});
 const cant=(v,u)=>v.toLocaleString('es-EC',{maximumFractionDigits:v%1?2:0})+(u?' '+u:'');
+const UMBRAL=4.0;
+let BOD='TODOS';
+let charts={};
+
+function seleccionar(b){
+  BOD=b;
+  const sel=document.getElementById('fBod'); if(sel) sel.value=b;
+  marcarPills();
+  resumen(); pintar();
+}
+function marcarPills(){
+  document.querySelectorAll('#pills .rank-pill').forEach(p=>
+    p.classList.toggle('active', p.dataset.bod===BOD));
+}
+const deBodega=r=>BOD==='TODOS'||r.bodega===BOD;
+
+function resumen(){
+  const act=RESUMEN.filter(r=>r.estado==='completado'&&deBodega(r));
+  const rel=FILAS.filter(r=>!r.menor&&deBodega(r));
+  const men=FILAS.filter(r=>r.menor&&deBodega(r));
+  const falta=rel.filter(r=>r.valor<0).reduce((a,r)=>a-r.valor,0);
+  const sobra=rel.filter(r=>r.valor>0).reduce((a,r)=>a+r.valor,0);
+  const neto=sobra-falta;
+  const cruz=act.reduce((a,r)=>a+r.cruzados,0);
+  const alcance=BOD==='TODOS'?'entre las tres bodegas':'en esta bodega';
+
+  document.getElementById('kpis').innerHTML=`
+   <div class="kpi"><div class="kpi-label">Falta producto por</div>
+     <div class="kpi-val neg">${money(falta)}</div>
+     <div class="expl">El sistema dice que deberia haber mas de lo que se encontro al contar.</div></div>
+   <div class="kpi"><div class="kpi-label">Sobra producto por</div>
+     <div class="kpi-val pos">${money(sobra)}</div>
+     <div class="expl">Se encontro mas producto del que el sistema tenia registrado.</div></div>
+   <div class="kpi"><div class="kpi-label">Diferencia final</div>
+     <div class="kpi-val ${neto<0?'neg':'pos'}">${money(neto)}</div>
+     <div class="expl">${neto<0?'Falta mas de lo que sobra.':'Sobra mas de lo que falta.'}
+       Es el saldo ${alcance}.</div></div>
+   <div class="kpi"><div class="kpi-label">Productos que no cuadran</div>
+     <div class="kpi-val" style="color:var(--yellow)">${rel.length}</div>
+     <div class="expl">De ${cruz} productos revisados. No se incluyen ${men.length} diferencias
+       menores a $${UMBRAL.toFixed(0)} en productos que van por peso, que suman
+       ${money(men.reduce((a,r)=>a+r.valor,0))} en total.</div></div>`;
+
+  document.getElementById('tituloBod').textContent =
+    BOD==='TODOS' ? 'Que paso en cada bodega' : 'Que paso en esta bodega';
+
+  document.getElementById('narr').innerHTML=RESUMEN.filter(deBodega).map(r=>{
+    if(r.estado!=='completado') return `<div class="bod" style="border-left-color:#c53030;background:#fff5f5">
+      <div class="bod-nom">${r.nombre}</div><div class="bod-txt">No hay cruce de esta semana,
+      asi que esta bodega no se pudo revisar.</div></div>`;
+    const f=FILAS.filter(x=>x.bodega===r.bodega&&!x.menor);
+    const fa=f.filter(x=>x.valor<0).reduce((a,x)=>a-x.valor,0);
+    const so=f.filter(x=>x.valor>0).reduce((a,x)=>a+x.valor,0);
+    const nt=so-fa, pc=r.cruzados?Math.floor(f.length*100/r.cruzados):0;
+    const cierre=nt<0?'Al final falta mas de lo que sobra.'
+                :nt>0?'Al final sobra mas de lo que falta.'
+                :'Lo que falta y lo que sobra se compensan.';
+    return `<div class="bod" style="border-left-color:${r.color}">
+      <div class="bod-nom">${r.nombre}</div>
+      <div class="bod-txt">Se revisaron <strong>${r.cruzados} productos</strong> y
+      <strong>${f.length} no cuadraron</strong> (${pc}%).
+      Falta producto por <strong class="neg">${money(fa)}</strong> y
+      sobra por <strong class="pos">${money(so)}</strong>. ${cierre}</div></div>`;
+  }).join('');
+
+  graficos(act, rel);
+}
+
+function graficos(act, rel){
+  if(charts.bod) charts.bod.destroy();
+  if(charts.top) charts.top.destroy();
+  const porBod=act.map(r=>({corto:r.corto,
+    neto:FILAS.filter(x=>x.bodega===r.bodega&&!x.menor).reduce((a,x)=>a+x.valor,0)}));
+  document.getElementById('tChBod').textContent =
+    BOD==='TODOS' ? 'Como quedo cada bodega' : 'Como quedo esta bodega';
+  charts.bod=new Chart(document.getElementById('chBod'),{type:'bar',
+    data:{labels:porBod.map(r=>r.corto),datasets:[{data:porBod.map(r=>r.neto),
+      backgroundColor:porBod.map(r=>r.neto<0?'#c53030':'#276749')}]},
+    options:{indexAxis:'y',plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:c=>(c.raw<0?'Falta ':'Sobra ')+money(c.raw)}}},
+      scales:{x:{ticks:{callback:v=>money(v)}}}}});
+
+  const top=[...rel].sort((a,b)=>Math.abs(b.valor)-Math.abs(a.valor)).slice(0,8);
+  charts.top=new Chart(document.getElementById('chTop'),{type:'bar',
+    data:{labels:top.map(r=>r.producto.length>22?r.producto.slice(0,22)+'...':r.producto),
+      datasets:[{data:top.map(r=>r.valor),backgroundColor:top.map(r=>r.valor<0?'#c53030':'#276749')}]},
+    options:{indexAxis:'y',plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:c=>(c.raw<0?'Falta ':'Sobra ')+money(c.raw)}}},
+      scales:{x:{ticks:{callback:v=>money(v)}}}}});
+}
 
 function pintar(){
-  const b=document.getElementById('fBod').value, t=document.getElementById('fTipo').value;
+  BOD=document.getElementById('fBod').value; const b=BOD; marcarPills();
+  const t=document.getElementById('fTipo').value;
   const vm=document.getElementById('fMenor').value==='1';
   const d=FILAS.filter(r=>(vm||!r.menor)&&(b==='TODOS'||r.bodega===b)
         &&(t==='TODOS'||(t==='falta'?r.valor<0:r.valor>0)))
@@ -299,26 +373,18 @@ function pintar(){
 }
 
 function init(){
+  document.getElementById('pills').innerHTML=
+    `<div class="rank-pill todos active" data-bod="TODOS" onclick="seleccionar('TODOS')">Todas</div>`+
+    RESUMEN.filter(r=>r.estado==='completado').map(r=>
+     `<div class="rank-pill" data-bod="${r.bodega}" onclick="seleccionar('${r.bodega}')">
+        <div class="pill-info"><div class="pill-name">${r.nombre}</div>
+        <div class="pill-stats">${r.con_dif} no cuadran</div></div></div>`).join('');
+
   const sel=document.getElementById('fBod');
   RESUMEN.filter(r=>r.estado==='completado').forEach(r=>{
     const o=document.createElement('option'); o.value=r.bodega; o.text=r.nombre; sel.add(o);
   });
-  const act=RESUMEN.filter(r=>r.estado==='completado');
-  new Chart(document.getElementById('chBod'),{type:'bar',
-    data:{labels:act.map(r=>r.corto),datasets:[{data:act.map(r=>r.neto),
-      backgroundColor:act.map(r=>r.neto<0?'#c53030':'#276749')}]},
-    options:{indexAxis:'y',plugins:{legend:{display:false},
-      tooltip:{callbacks:{label:c=>(c.raw<0?'Falta ':'Sobra ')+money(c.raw)}}},
-      scales:{x:{ticks:{callback:v=>money(v)}}}}});
-
-  const top=[...FILAS.filter(r=>!r.menor)].sort((a,b)=>Math.abs(b.valor)-Math.abs(a.valor)).slice(0,8);
-  new Chart(document.getElementById('chTop'),{type:'bar',
-    data:{labels:top.map(r=>r.producto.length>22?r.producto.slice(0,22)+'...':r.producto),
-      datasets:[{data:top.map(r=>r.valor),backgroundColor:top.map(r=>r.valor<0?'#c53030':'#276749')}]},
-    options:{indexAxis:'y',plugins:{legend:{display:false},
-      tooltip:{callbacks:{label:c=>(c.raw<0?'Falta ':'Sobra ')+money(c.raw)}}},
-      scales:{x:{ticks:{callback:v=>money(v)}}}}});
-  pintar();
+  resumen(); pintar();
 }
 init();
 
