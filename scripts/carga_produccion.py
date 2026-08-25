@@ -44,6 +44,16 @@ CONTIFICO_PASSWORD       = os.getenv('CONTIFICO_WEB_PASSWORD', '')
 
 BODEGA = 'BODEGA SIMON BOLON'
 
+# Ningun paquete de estos pesa mas de un kilo por unidad. Por encima de ahi el
+# dato esta mal escrito y la produccion no se registra: en marzo alguien puso
+# gramos donde iban kilos y el bot volvio a multiplicar por 1000, asi que la
+# PRO 202603000027 descargo 4.550 kg de albacora en vez de 4,55.
+MAX_KILOS_POR_UNIDAD = float(os.getenv('MAX_KILOS_POR_UNIDAD', '1.0'))
+
+# Registros con datos malos que ya se avisaron en esta corrida. Sin esto, cada
+# vuelta a la cola volveria a mandar el mismo mensaje por Telegram.
+_avisados = set()
+
 # SIMULAR=1 -> lee la cola y muestra que registraria, sin tocar Contifico.
 SIMULAR = os.getenv('SIMULAR', '1') == '1'
 
@@ -112,6 +122,10 @@ def obtener_registro_pendiente(omitir=()):
         codigo_mp  = codigos_mp[0] if codigos_mp else ''
 
         unidades_terminadas = fields.get('Unidades Terminadas', 0) or 0
+        # Del inventario sale lo que ENTRO a la produccion. 'Kilos Reales' es el
+        # peso del producto terminado -cae exacto en el gramaje del paquete, 110,
+        # 150, 100, 76 g- y descontar eso dejaba la merma dentro del sistema.
+        kilos_entrantes     = fields.get('Kilos entrantes', 0) or 0
         kilos_reales        = fields.get('Kilos Reales', 0) or 0
         lote                = fields.get('Lote', '') or ''
         observacion         = fields.get('Observación', '') or ''
@@ -120,14 +134,48 @@ def obtener_registro_pendiente(omitir=()):
             print(f'   [SKIP] Sin producto terminado o unidades: {record["id"]}')
             continue
 
-        if not kilos_reales:
-            print(f'   [SKIP] Sin kilos reales: {record["id"]}')
+        if not kilos_entrantes:
+            print(f'   [SKIP] Sin kilos entrantes: {record["id"]}')
+            if record['id'] not in _avisados:
+                notificar_error('Produccion', 'SIMON BOLON',
+                                f'{codigo_pt} x {unidades_terminadas} - {fecha}',
+                                'Falta "Kilos entrantes", que es lo que se descarga del inventario')
+            _avisados.add(record['id'])
+            continue
+
+        # Las unidades de un paquete son enteras. En 8 producciones alguien uso
+        # el punto como separador de miles y quedaron 9,802 unidades donde iban
+        # 9802 -mil veces menos producto terminado del que se hizo-.
+        if float(unidades_terminadas) != int(unidades_terminadas):
+            print(f'   [ALTO] unidades decimales: {unidades_terminadas}')
+            if record['id'] not in _avisados:
+                notificar_error(
+                    'Produccion', 'SIMON BOLON',
+                    f'{codigo_pt} x {unidades_terminadas} - {fecha}',
+                    f'Las unidades no pueden ser decimales ({unidades_terminadas}). '
+                    f'Parece que en AirTable usaron el punto como separador de miles: '
+                    f'seguramente son {int(round(unidades_terminadas * 1000))} unidades.')
+            _avisados.add(record['id'])
+            continue
+
+        por_unidad = kilos_entrantes / unidades_terminadas
+        if por_unidad > MAX_KILOS_POR_UNIDAD:
+            print(f'   [ALTO] {kilos_entrantes} kg para {unidades_terminadas} unidades '
+                  f'son {por_unidad:.2f} kg por unidad')
+            if record['id'] not in _avisados:
+                notificar_error(
+                    'Produccion', 'SIMON BOLON',
+                    f'{codigo_pt} x {unidades_terminadas} - MP {codigo_mp} {kilos_entrantes} kg - {fecha}',
+                    f'Peso imposible: {por_unidad:.2f} kg por unidad. En AirTable o '
+                    f'pusieron gramos donde van kilos, o las unidades estan mal.')
+            _avisados.add(record['id'])
             continue
 
         print(f'   Record ID:          {record["id"]}')
         print(f'   Fecha:              {fecha}')
         print(f'   Producto MP:        {codigo_mp}')
-        print(f'   Kilos Reales:       {kilos_reales} kg')
+        print(f'   Kilos entrantes:    {kilos_entrantes} kg  <- esto se descarga')
+        print(f'   Kilos Reales:       {kilos_reales} kg  (producto terminado)')
         print(f'   Producto Terminado: {codigo_pt}')
         print(f'   Unidades:           {unidades_terminadas}')
         print(f'   Lote:               {lote}')
@@ -136,6 +184,7 @@ def obtener_registro_pendiente(omitir=()):
             'record_id':          record['id'],
             'fecha':              fecha,
             'codigo_mp':          codigo_mp,
+            'kilos_entrantes':    kilos_entrantes,
             'kilos_reales':       kilos_reales,
             'codigo_pt':          codigo_pt,
             'unidades_terminadas': unidades_terminadas,
@@ -471,7 +520,7 @@ def procesar_registro(registro):
 
         print('\n6. FORMULA MATERIA PRIMA...')
         print('-' * 40)
-        paso_editar_formula(driver, registro['kilos_reales'])
+        paso_editar_formula(driver, registro['kilos_entrantes'])
 
         print('\n7. PRODUCIR...')
         print('-' * 40)
@@ -487,7 +536,7 @@ def procesar_registro(registro):
             actualizar_airtable(registro['record_id'], num_doc)
             detalle = (
                 f"📦 {nombre_producto(registro['codigo_pt'])} ({registro['codigo_pt']}) x {registro['unidades_terminadas']} uds\n"
-                f"🥩 MP: {nombre_producto(registro['codigo_mp'])} ({registro['codigo_mp']}) - {registro['kilos_reales']} kg\n"
+                f"🥩 MP: {nombre_producto(registro['codigo_mp'])} ({registro['codigo_mp']}) - {registro['kilos_entrantes']} kg (rinde {registro['kilos_reales']} kg)\n"
                 f"📅 {registro['fecha']}"
             )
             notificar_exito('Produccion', 'SIMON BOLON', detalle, num_doc)
