@@ -170,7 +170,7 @@ def actualizar_airtable(record_id, num_documento):
 # ============================================
 # CONTIFICO - HELPERS
 # ============================================
-def _autocomplete(driver, data_id, valor, timeout=10):
+def _autocomplete(driver, data_id, valor, timeout=10, exigir_codigo=False):
     wait = WebDriverWait(driver, timeout)
     driver.execute_script(f"var h=document.getElementById('{data_id}'); if(h) h.value='';")
     campo = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f"input[data_id='{data_id}']")))
@@ -182,7 +182,21 @@ def _autocomplete(driver, data_id, valor, timeout=10):
     campo.send_keys(valor)
     time.sleep(2.5)
     opciones = [o for o in driver.find_elements(By.CSS_SELECTOR, 'ul.ui-autocomplete li.ui-menu-item') if o.is_displayed()]
-    if opciones:
+
+    if exigir_codigo:
+        # Un producto se elige por su codigo entero y por nada mas. Nunca la
+        # primera de la lista, nunca ABAJO+ENTER a ciegas: asi es como un
+        # movimiento termina en el producto de al lado.
+        entero = re.compile(r'(^|[^A-Za-z0-9])' + re.escape(valor) + r'([^A-Za-z0-9]|$)',
+                            re.IGNORECASE)
+        elegida = next((o for o in opciones if entero.search(o.text or '')), None)
+        if elegida is None:
+            vistas = ' | '.join((o.text or '')[:40] for o in opciones[:5]) or 'ninguna'
+            print(f'   [ALTO] {valor} no aparece entre las sugerencias: {vistas}')
+            return False
+        elegida.click()
+        time.sleep(1)
+    elif opciones:
         elegida = next((o for o in opciones if valor.upper() in o.text.upper()), opciones[0])
         elegida.click()
         time.sleep(1)
@@ -261,11 +275,15 @@ def paso_agregar_detalle(driver):
 
 
 def paso_producto_terminado(driver, codigo_pt):
-    ok = _autocomplete(driver, 'id_produccion_1-producto_id', codigo_pt)
-    if ok:
-        print(f'   [OK] Producto terminado: {codigo_pt}')
-    else:
-        print(f'   [WARN] Producto no verificado: {codigo_pt}')
+    # Si el producto no queda confirmado, la produccion NO se crea. Antes esto
+    # era un [WARN] y seguia: se producia sobre lo que hubiera en el campo.
+    ok = _autocomplete(driver, 'id_produccion_1-producto_id', codigo_pt,
+                       exigir_codigo=True)
+    if not ok:
+        raise RuntimeError(
+            f'No se pudo seleccionar el producto {codigo_pt} en Contifico. '
+            f'No se crea la produccion: quedaria sobre otro producto.')
+    print(f'   [OK] Producto terminado: {codigo_pt}')
     time.sleep(1)
 
 
