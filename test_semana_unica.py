@@ -63,6 +63,13 @@ def consolidar(guardados, cartera, inicio, n_semanas=4):
                     filas[clave] = 'ya planificado'
                 elif nombre.upper().strip() in en_cartera:
                     filas[clave] = 'cartera de la semana'
+    # El codigo tambien RECONSTRUYE desde fc_cartera_semana a los proveedores de la
+    # cartera que todavia no estan en lo guardado (bloque `nuevos` de
+    # fc_cargarGuardado). Sin esto la simulacion los daba por perdidos.
+    ya = {n.upper().strip() for (g, n) in filas if g in GRUPOS_PROV}
+    for prov in en_cartera:
+        if prov not in ya:
+            filas[(PROV, prov)] = 'cartera de la semana'
     return filas, en_cartera
 
 

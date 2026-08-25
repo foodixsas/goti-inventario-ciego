@@ -32,10 +32,14 @@ function fc_deudaProveedor(it) {
 
 // A que grupo pertenece un proveedor segun el catalogo. Solo EVENTUAL se separa;
 // lo que esta sin clasificar se queda en principales para que no se pierda de vista.
-function fc_grupoDeProveedor(nombre) {
+function fc_grupoDeProveedor(nombre, grupoActual) {
     const ficha = fc_buscarProveedorBD(nombre);
-    return (ficha && (ficha.tipo_proveedor || '').trim().toUpperCase() === 'EVENTUAL')
-        ? FC_GRUPO_PROV_EVENT : FC_GRUPO_PROV;
+    const tipo = ficha ? (ficha.tipo_proveedor || '').trim().toUpperCase() : '';
+    // Sin ficha o sin clasificar no hay con que decidir: se RESPETA donde ya estaba.
+    // Los pagos sueltos que se agregan a mano en eventuales no tienen ficha, y
+    // mandarlos a principales por eso seria sacarlos del grupo a proposito.
+    if (!tipo) return grupoActual || FC_GRUPO_PROV;
+    return tipo === 'EVENTUAL' ? FC_GRUPO_PROV_EVENT : FC_GRUPO_PROV;
 }
 // Grupos que se rearman semana a semana desde su propia cartera. El resto
 // (arriendos, cajas, servicios, debitos, tarjetas, nomina, IESS...) es estructura
@@ -864,8 +868,10 @@ function fc_recalcularIngresos() {
 
 function fc_recalcularEgresos() {
     // Todos los subgrupos de pagos fijos + proveedores
-    const gruposFijos = ['inst-pub', 'arriendos', 'prestamos', 'nomina', 'colaboradores', 'cajas', 'entrenamiento', 'tasas', 'debitos', 'servicios', 'tarjetas', 'liquidaciones', 'agasajo', 'legales', 'fortuitos'];
-    const gruposProveedores = ['prov-principales'];
+    const gruposFijos = ['inst-pub', 'arriendos', 'prestamos', 'nomina', 'colaboradores', 'cajas', 'entrenamiento', 'tasas', 'debitos', 'servicios', 'tarjetas', 'liquidaciones', 'agasajo', 'legales', 'fortuitos', FC_GRUPO_ANEFI];
+    // Explicito, no por heuristica: si un grupo de proveedores no entra aqui, su
+    // total se suma a Pagos Fijos y las dos lineas quedan mal.
+    const gruposProveedores = [FC_GRUPO_PROV, FC_GRUPO_PROV_EVENT];
 
     // Agregar subgrupos dinamicos creados por el usuario
     document.querySelectorAll('[id^="fc-grupo-"]').forEach(el => {
@@ -2324,7 +2330,7 @@ async function fc_cargarDatosGuardados() {
             });
             if (nuevos.length) {
                 nuevos.forEach(it => {
-                    const g = fc_grupoDeProveedor(it.nombre);
+                    const g = fc_grupoDeProveedor(it.nombre, FC_GRUPO_PROV);
                     (egresosConsolidados[g] = egresosConsolidados[g] || []).push(it);
                 });
                 console.log(`Cartera: ${nuevos.length} proveedor(es) reconstruidos desde la cartera guardada`);
@@ -2335,7 +2341,7 @@ async function fc_cargarDatosGuardados() {
             const porGrupo = {};
             FC_GRUPOS_PROV.forEach(g => { porGrupo[g] = []; });
             FC_GRUPOS_PROV.forEach(g => (egresosConsolidados[g] || []).forEach(it => {
-                porGrupo[fc_grupoDeProveedor(it.nombre)].push(it);
+                porGrupo[fc_grupoDeProveedor(it.nombre, g)].push(it);
             }));
             let movidos = 0;
             FC_GRUPOS_PROV.forEach(g => {
@@ -2378,6 +2384,26 @@ async function fc_cargarDatosGuardados() {
         FC_GRUPOS_PROV.forEach(g => {
             if (!egresosConsolidados[g]) return;
             egresosConsolidados[g].sort((a, b) => fc_deudaProveedor(b) - fc_deudaProveedor(a));
+        });
+
+        // Las filas que SOBRAN hay que quitarlas. El bucle de abajo crea las que
+        // faltan pero nunca borra las de mas, y al repartir proveedores entre
+        // principales y eventuales un grupo queda con menos items que filas: las
+        // sobrantes conservaban el proveedor y el valor viejos, o sea el MISMO pago
+        // contado en los dos grupos y sumado dos veces en TOTAL EGRESOS.
+        // Va por fuera del bucle a proposito: un grupo que queda en cero se borra de
+        // egresosConsolidados y el bucle ni lo visita, dejando sus filas intactas.
+        FC_GRUPOS_PROV.forEach(g => {
+            const esperados = (egresosConsolidados[g] || []).length;
+            const filas = Array.from(document.querySelectorAll(`.fc-egreso-item-${g}`));
+            if (filas.length <= esperados) return;
+            filas.slice(esperados).forEach(r => {
+                const rid = r.dataset.fcRowId;
+                if (rid) delete fc_facturas_data[rid];
+                r.remove();
+            });
+            console.log(`Grupo ${g}: ${filas.length - esperados} fila(s) sobrante(s) eliminadas`
+                      + ' (evita que el mismo pago se cuente en los dos grupos)');
         });
 
         // Aplicar egresos consolidados (fuera del loop para evitar duplicados)
@@ -4389,7 +4415,22 @@ function fc_procesarCarteraXLS(input) {
                 Object.values(fc_cartera_cargada).map(v => v.nombre)
             );
 
-            filasProv.forEach(row => row.remove());
+            // OJO: no se borra todo. Las filas que se agregaron A MANO (un pago suelto
+            // a alguien que no esta en la cartera, tipico de eventuales) NO vienen en
+            // el archivo, asi que borrarlas las perderia para siempre. Se van solo las
+            // que vinieron de una cartera y las que el archivo nuevo va a recrear.
+            const nombresDelArchivo = new Set(
+                Object.values(fc_cartera_cargada).map(v => fc_normalizarNombre(v.nombre)));
+            let conservadosManual = 0;
+            filasProv.forEach(row => {
+                const nom = fc_normalizarNombre(row.querySelector('.fc-input-nombre')?.value || '');
+                const vinoDeCartera = !!row.dataset.carteraSemana;
+                if (vinoDeCartera || nombresDelArchivo.has(nom)) { row.remove(); return; }
+                conservadosManual++;
+            });
+            if (conservadosManual) {
+                console.log(`Cartera: ${conservadosManual} fila(s) agregada(s) a mano se conservan (no vienen en el archivo)`);
+            }
 
             // Crear un item por cada proveedor de la cartera. Cada uno entra al grupo
             // que le toca segun tipo_proveedor, con su propio punto de insercion.
@@ -4442,7 +4483,7 @@ function fc_procesarCarteraXLS(input) {
                     ? diasCred
                     : ((prev && prev.dias !== '') ? prev.dias : (diasCred || 0));
 
-                const gId = fc_grupoDeProveedor(prov.nombre);
+                const gId = fc_grupoDeProveedor(prov.nombre, FC_GRUPO_PROV);
                 const newRow = document.createElement('tr');
                 newRow.className = `row-banco-item fc-egreso-item-${gId}`;
                 newRow.dataset.grupo = `eg-${gId}`;
