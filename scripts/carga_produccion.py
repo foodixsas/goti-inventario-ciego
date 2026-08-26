@@ -50,6 +50,21 @@ BODEGA = 'BODEGA SIMON BOLON'
 # PRO 202603000027 descargo 4.550 kg de albacora en vez de 4,55.
 MAX_KILOS_POR_UNIDAD = float(os.getenv('MAX_KILOS_POR_UNIDAD', '1.0'))
 
+# La Matriz Contifico dice en que unidad lleva Contifico cada producto, en el
+# campo 'Und. Min.'. Sin esto habria que suponer que todo va en gramos.
+MATRIZ_TABLE_ID     = 'tblTUHpdmQgULTY1y'
+CAMPO_CODIGO_MATRIZ = 'Código'
+CAMPO_UNIDAD_MATRIZ = 'Und. Min.'
+
+# Cuantos gramos hay en un kilo segun la unidad del producto. Lo que no este
+# aqui no se sabe convertir y la produccion no se registra.
+FACTOR_A_GRAMOS = {'GRAMOS': 1000.0, 'KILOGRAMOS': 1.0}
+
+# Un producto terminado que se lleva por peso trae gramos, no paquetes. Ahi lo
+# que se comprueba es el rendimiento contra la materia prima que entro.
+RENDIMIENTO_MINIMO = float(os.getenv('RENDIMIENTO_MINIMO', '0.01'))
+RENDIMIENTO_MAXIMO = float(os.getenv('RENDIMIENTO_MAXIMO', '1.10'))
+
 # Registros con datos malos que ya se avisaron en esta corrida. Sin esto, cada
 # vuelta a la cola volveria a mandar el mismo mensaje por Telegram.
 _avisados = set()
@@ -87,6 +102,34 @@ def crear_driver():
 # ============================================
 # AIRTABLE
 # ============================================
+_unidades = None
+
+
+def unidad_de(codigo):
+    """En que unidad lleva Contifico ese producto, segun la Matriz.
+
+    Se lee una sola vez por corrida. Si la Matriz no se puede leer no se sigue:
+    antes que descontar mil veces de mas por suponer gramos, mejor no registrar
+    nada.
+    """
+    global _unidades
+    if _unidades is None:
+        try:
+            filas = Api(AIRTABLE_TOKEN).table(AIRTABLE_BASE_ID, MATRIZ_TABLE_ID).all()
+        except Exception as e:
+            notificar_error('Produccion', 'SIMON BOLON', 'Matriz Contifico',
+                            f'No se pudo leer la Matriz Contifico: {str(e)[:120]}')
+            raise RuntimeError('Sin la Matriz Contifico no se sabe en que unidad '
+                               'lleva Contifico cada producto') from e
+        _unidades = {}
+        for r in filas:
+            c = (r['fields'].get(CAMPO_CODIGO_MATRIZ) or '').strip().upper()
+            if c:
+                _unidades[c] = (r['fields'].get(CAMPO_UNIDAD_MATRIZ) or '').strip()
+        print(f'   Matriz Contifico: {len(_unidades)} productos con su unidad')
+    return _unidades.get((codigo or '').strip().upper(), '')
+
+
 def obtener_registro_pendiente(omitir=()):
     print('\n1. LEYENDO AIRTABLE - PRODUCCIONES...')
     print('-' * 40)
@@ -143,10 +186,56 @@ def obtener_registro_pendiente(omitir=()):
             _avisados.add(record['id'])
             continue
 
-        # Las unidades de un paquete son enteras. En 8 producciones alguien uso
-        # el punto como separador de miles y quedaron 9,802 unidades donde iban
-        # 9802 -mil veces menos producto terminado del que se hizo-.
-        if float(unidades_terminadas) != int(unidades_terminadas):
+        # De kilos a la unidad en que Contifico lleva la materia prima.
+        und_mp = unidad_de(codigo_mp)
+        factor = FACTOR_A_GRAMOS.get(und_mp.upper())
+        if not factor:
+            print(f'   [ALTO] {codigo_mp} se lleva en "{und_mp}"')
+            if record['id'] not in _avisados:
+                notificar_error(
+                    'Produccion', 'SIMON BOLON',
+                    f'{codigo_pt} x {unidades_terminadas} - MP {codigo_mp} - {fecha}',
+                    f'La materia prima {codigo_mp} se lleva en "{und_mp}" y el bot '
+                    f'solo sabe convertir Gramos y Kilogramos. Revisar "Und. Min." '
+                    f'en la Matriz Contifico.')
+            _avisados.add(record['id'])
+            continue
+        cantidad_mp = round(kilos_entrantes * factor, 2)
+
+        und_pt = unidad_de(codigo_pt).upper()
+        if und_pt in FACTOR_A_GRAMOS:
+            # El terminado se lleva por peso: 'Unidades Terminadas' son gramos,
+            # no paquetes. Lo que se comprueba aqui es el rendimiento.
+            rinde = (unidades_terminadas * FACTOR_A_GRAMOS[und_pt] / 1000.0) / cantidad_mp
+            if not (RENDIMIENTO_MINIMO <= rinde <= RENDIMIENTO_MAXIMO):
+                print(f'   [ALTO] rendimiento imposible: {rinde * 100:.2f}%')
+                if record['id'] not in _avisados:
+                    notificar_error(
+                        'Produccion', 'SIMON BOLON',
+                        f'{codigo_pt} {unidades_terminadas} - MP {codigo_mp} '
+                        f'{kilos_entrantes} kg - {fecha}',
+                        f'Rendimiento imposible: {rinde * 100:.2f}%. {codigo_pt} se '
+                        f'lleva en {und_pt.lower()}, asi que "Unidades Terminadas" '
+                        f'son {und_pt.lower()}. Revisar si usaron el punto como '
+                        f'separador de miles.')
+                _avisados.add(record['id'])
+                continue
+            print(f'   Rendimiento:        {rinde * 100:.1f}%')
+
+        elif und_pt not in ('UNIDAD', 'PAQUETE'):
+            print(f'   [ALTO] {codigo_pt} se lleva en "{und_pt}"')
+            if record['id'] not in _avisados:
+                notificar_error(
+                    'Produccion', 'SIMON BOLON',
+                    f'{codigo_pt} x {unidades_terminadas} - {fecha}',
+                    f'El producto terminado {codigo_pt} se lleva en "{und_pt}", que '
+                    f'no es ni peso ni unidades. Revisar "Und. Min." en la Matriz.')
+            _avisados.add(record['id'])
+            continue
+
+        # Lo que sigue solo tiene sentido cuando el terminado son paquetes: un
+        # paquete no se produce en fracciones y no lleva mas de un kilo.
+        if und_pt in ('UNIDAD', 'PAQUETE') and float(unidades_terminadas) != int(unidades_terminadas):
             print(f'   [ALTO] unidades decimales: {unidades_terminadas}')
             if record['id'] not in _avisados:
                 notificar_error(
@@ -159,7 +248,7 @@ def obtener_registro_pendiente(omitir=()):
             continue
 
         por_unidad = kilos_entrantes / unidades_terminadas
-        if por_unidad > MAX_KILOS_POR_UNIDAD:
+        if und_pt in ('UNIDAD', 'PAQUETE') and por_unidad > MAX_KILOS_POR_UNIDAD:
             print(f'   [ALTO] {kilos_entrantes} kg para {unidades_terminadas} unidades '
                   f'son {por_unidad:.2f} kg por unidad')
             if record['id'] not in _avisados:
@@ -174,7 +263,8 @@ def obtener_registro_pendiente(omitir=()):
         print(f'   Record ID:          {record["id"]}')
         print(f'   Fecha:              {fecha}')
         print(f'   Producto MP:        {codigo_mp}')
-        print(f'   Kilos entrantes:    {kilos_entrantes} kg  <- esto se descarga')
+        print(f'   Kilos entrantes:    {kilos_entrantes} kg')
+        print(f'   Se descuenta:       {cantidad_mp} {und_mp.lower()} de {codigo_mp}')
         print(f'   Kilos Reales:       {kilos_reales} kg  (producto terminado)')
         print(f'   Producto Terminado: {codigo_pt}')
         print(f'   Unidades:           {unidades_terminadas}')
@@ -185,6 +275,8 @@ def obtener_registro_pendiente(omitir=()):
             'fecha':              fecha,
             'codigo_mp':          codigo_mp,
             'kilos_entrantes':    kilos_entrantes,
+            'cantidad_mp':        cantidad_mp,
+            'unidad_mp':          und_mp,
             'kilos_reales':       kilos_reales,
             'codigo_pt':          codigo_pt,
             'unidades_terminadas': unidades_terminadas,
@@ -351,9 +443,11 @@ def paso_cantidad_producida(driver, unidades):
     print(f'   [OK] Unidades producidas: {unidades}')
 
 
-def paso_editar_formula(driver, kilos_mp):
-    gramos_mp = round(float(kilos_mp) * 1000, 2)
-    print(f'\n   EDITANDO FORMULA ({kilos_mp} kg -> {gramos_mp} g MP)...')
+def paso_editar_formula(driver, cantidad_mp, unidad_mp=''):
+    # La cantidad ya viene convertida a la unidad de Contifico. Antes se
+    # multiplicaba por 1000 aqui, dando por hecho que siempre son gramos.
+    gramos_mp = round(float(cantidad_mp), 2)
+    print(f'\n   EDITANDO FORMULA ({gramos_mp} {unidad_mp.lower()} de MP)...')
 
     # Esperar a que la fila se auto-guarde
     time.sleep(3)
@@ -400,7 +494,7 @@ def paso_editar_formula(driver, kilos_mp):
     # TAB para que Contifico registre el valor
     campo_gramos.send_keys(Keys.TAB)
     time.sleep(2)
-    print(f'   [OK] Gramos MP llenado: {gramos_mp} ({kilos_mp} kg x 1000)')
+    print(f'   [OK] MP llenada: {gramos_mp} {unidad_mp.lower()}')
 
     # Guardar formula
     btn_guardar = WebDriverWait(driver, 10).until(
@@ -520,7 +614,8 @@ def procesar_registro(registro):
 
         print('\n6. FORMULA MATERIA PRIMA...')
         print('-' * 40)
-        paso_editar_formula(driver, registro['kilos_entrantes'])
+        paso_editar_formula(driver, registro['cantidad_mp'],
+                            registro.get('unidad_mp', ''))
 
         print('\n7. PRODUCIR...')
         print('-' * 40)
