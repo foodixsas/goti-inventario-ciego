@@ -10,6 +10,7 @@ let co_filtros = { bodegas: [], categorias: [] };
 let co_categoriaAbierta = null;
 
 function co_init() {
+    co_cargarAnefi();   // el fondo se refresca cada vez que se entra a la vista
     if (co_iniciado) { co_cargarAlertas(); return; }
     co_iniciado = true;
 
@@ -403,5 +404,70 @@ async function co_refrescarDatos() {
         alert('No se pudo actualizar: ' + e.message);
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync"></i> Actualizar datos'; }
+    }
+}
+
+// ============ FONDO DE INVERSION ANEFI ============
+// El fondo vive aqui y NO en el flujo de caja: su acumulado no es caja con la que
+// se pueda pagar, es plata apartada que genera intereses. El aporte si sale del
+// banco, por eso sigue siendo un egreso dentro del flujo; lo que se muestra aqui
+// es en que va el fondo.
+// El movimiento se toma de la BD (no de la grilla del flujo, que puede ni existir
+// en esta pantalla).
+async function co_cargarAnefi() {
+    const cont = document.getElementById('co-anefi');
+    if (!cont) return;
+    try {
+        const res = await fetch('/api/flujo-caja/anefi-resumen');
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error || 'error');
+
+        const money = v => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        const fechaCorta = f => {
+            if (!f) return '';
+            const [a, m, dd] = f.split('-');
+            return `${dd}/${m}/${a}`;
+        };
+        const partes = [];
+        if (Math.abs(d.aportes) > 0.005) {
+            partes.push(`${d.aportes > 0 ? 'Aportes' : 'Rescates'} ${money(Math.abs(d.aportes))}`);
+        }
+        if (Math.abs(d.intereses) > 0.005) partes.push(`Intereses ${money(d.intereses)}`);
+
+        const base = d.fecha_corte
+            ? `Saldo al ${fechaCorta(d.fecha_corte)} ${money(d.saldo)}`
+            : `Acumulado ${money(d.saldo)}`;
+
+        const aviso = d.fecha_corte ? '' :
+            `<div style="font-size:10px;color:#b45309;margin-top:6px;">
+                <i class="fas fa-exclamation-triangle"></i>
+                Sin fecha de corte: todo lo registrado se suma al saldo. Si la cartola ya
+                traia esos intereses, quedarian contados dos veces.
+             </div>`;
+
+        cont.innerHTML = `
+            <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <span style="font-size:11px;color:#6d28d9;font-weight:700;letter-spacing:.4px;">
+                        <i class="fas fa-piggy-bank"></i> FONDO DE INVERSION ANEFI
+                    </span>
+                    <span style="font-size:10px;color:#64748b;">fuera del flujo de caja</span>
+                    <button onclick="fc_anefiAbrir()" title="Registrar intereses, ajustes y el saldo de la cartola"
+                            style="margin-left:auto;background:#6d28d9;color:#fff;border:none;border-radius:6px;
+                                   font-size:11px;font-weight:600;padding:5px 12px;cursor:pointer;">
+                        <i class="fas fa-plus"></i> Intereses y ajustes
+                    </button>
+                </div>
+                <div style="font-size:24px;font-weight:700;color:#4c1d95;margin-top:6px;font-family:'JetBrains Mono',monospace;">
+                    ${money(d.total)}
+                </div>
+                <div style="font-size:11px;color:#64748b;margin-top:2px;">
+                    ${base}${partes.length ? ' &middot; ' + partes.join(' &middot; ') : ' &middot; sin movimiento posterior'}
+                </div>
+                ${aviso}
+            </div>`;
+    } catch (e) {
+        cont.innerHTML = `<div style="font-size:11px;color:#dc2626;margin-bottom:12px;">
+            No se pudo cargar el fondo ANEFI: ${e.message}</div>`;
     }
 }

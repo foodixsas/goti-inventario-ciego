@@ -1403,7 +1403,10 @@ async function fc_liqGuardarConfig() {
     const pro = parseFloat(document.getElementById('fc-liq-min-pro')?.value) || 0;
     const pich = parseFloat(document.getElementById('fc-liq-min-pich')?.value) || 0;
     const sem = parseFloat(document.getElementById('fc-liq-cobertura')?.value) || 2;
-    const anefi = parseFloat(document.getElementById('fc-liq-anefi')?.value) || 0;
+    // El fondo ANEFI se administra en Control de Costos. El POST pisa saldo_anefi,
+    // asi que se reenvia el valor que ya estaba: si no, guardar los minimos aqui
+    // pondria el acumulado del fondo en cero.
+    const anefi = parseFloat(fc_liq_config.saldo_anefi) || 0;
     try {
         const res = await fetch('/api/flujo-caja/config-liquidez', {
             method: 'POST',
@@ -1418,7 +1421,7 @@ async function fc_liqGuardarConfig() {
                           semanas_cobertura: sem, saldo_anefi: anefi,
                           saldo_anefi_fecha: fc_liq_config.saldo_anefi_fecha || '' };
         fc_recalcularTodo(); // repinta celdas y panel con los pisos nuevos
-        alert(['Guardado:', 'Produbanco $' + fc_formatMonto(pro), 'Pichincha $' + fc_formatMonto(pich), 'Acumulado ANEFI $' + fc_formatMonto(anefi)].join(String.fromCharCode(10)));
+        alert(['Minimos guardados:', 'Produbanco $' + fc_formatMonto(pro), 'Pichincha $' + fc_formatMonto(pich)].join(String.fromCharCode(10)));
     } catch (e) {
         alert('Error al guardar: ' + e.message);
     }
@@ -1500,14 +1503,13 @@ function fc_renderAlertasLiquidez() {
         </div>`;
     };
 
-    const tarjetaAnefi = fc_tarjetaAnefiHtml;
     const hayRiesgo = pro.primera || pich.primera || coberturaBaja;
 
     // Este panel se redibuja entero en cada recalculo (24 sitios llaman a
     // fc_recalcularTodo). Sin esto, lo que se este escribiendo en los campos de
     // configuracion se pierde sin aviso al primer recalculo, y encima se pierde el
     // foco a media escritura. Se conserva lo tipeado y donde estaba el cursor.
-    const FC_LIQ_INPUTS = ['fc-liq-min-pro', 'fc-liq-min-pich', 'fc-liq-cobertura', 'fc-liq-anefi'];
+    const FC_LIQ_INPUTS = ['fc-liq-min-pro', 'fc-liq-min-pich', 'fc-liq-cobertura'];
     const enEdicion = {};
     FC_LIQ_INPUTS.forEach(id => {
         const el = document.getElementById(id);
@@ -1533,9 +1535,6 @@ function fc_renderAlertasLiquidez() {
                 <label style="font-size:10px;color:#475569;font-weight:600;" title="Semanas de egreso que el saldo deberia cubrir">Cobertura min. (sem)</label>
                 <input type="number" id="fc-liq-cobertura" step="0.5" value="${fc_liq_config.semanas_cobertura || ''}" placeholder="2"
                        style="width:60px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:right;">
-                <label style="font-size:10px;color:#475569;font-weight:600;" title="Lo que hay acumulado hoy en el fondo ANEFI. No es caja disponible.">Acumulado ANEFI $</label>
-                <input type="number" id="fc-liq-anefi" value="${fc_liq_config.saldo_anefi || ''}" placeholder="0"
-                       style="width:100px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:11px;text-align:right;">
                 <button class="fc-btn" style="background:#2e7d32;font-size:10px;" onclick="fc_liqGuardarConfig()"><i class="fas fa-save"></i> Guardar</button>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -1550,7 +1549,6 @@ function fc_renderAlertasLiquidez() {
                         Saldo hoy $${fc_formatMonto(saldoHoy)} &middot; egreso prom. $${fc_formatMonto(egresoSemanal)}/sem
                     </div>
                 </div>
-                ${tarjetaAnefi()}
             </div>
         </div>`;
 
@@ -1572,53 +1570,8 @@ function fc_renderAlertasLiquidez() {
 // Va aparte a proposito. Este saldo NO se suma al flujo: es plata apartada para
 // generar intereses, no caja con la que se pueda pagar. Por eso no entra en los
 // saldos por banco, ni en la cobertura, ni dispara alertas.
-function fc_tarjetaAnefiHtml() {
-    const base = parseFloat(fc_liq_config.saldo_anefi) || 0;
-    const corte = fc_liq_config.saldo_anefi_fecha || '';
-    const mov = fc_anefiMovimiento();
-    const int = fc_anefiIntereses();
-    const resultante = base + mov + int;
-    const partes = [];
-    if (Math.abs(mov) > 0.005) partes.push(`${mov > 0 ? 'Aporte' : 'Rescate'} $${fc_formatMonto(Math.abs(mov))}`);
-    if (Math.abs(int) > 0.005) partes.push(`Intereses $${fc_formatMonto(int)}`);
-    const desde = corte
-        ? `Saldo al ${fc_liqFechaCorta(corte)} $${fc_formatMonto(base)}`
-        : `Acumulado $${fc_formatMonto(base)}`;
-    const aviso = corte ? '' :
-        `<div style="font-size:9px;color:#b45309;margin-top:2px;">
-            <i class="fas fa-exclamation-triangle"></i> Sin fecha de corte: todo lo registrado se suma al saldo</div>`;
-    return `<div style="flex:1;min-width:230px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:8px 12px;"
-                 title="El acumulado de ANEFI no entra en los saldos ni en la cobertura: no es caja disponible.">
-        <div style="display:flex;align-items:center;gap:6px;">
-            <span style="font-size:10px;color:#6d28d9;font-weight:700;">FONDO ANEFI &middot; fuera del flujo</span>
-            <button onclick="fc_anefiAbrir()" title="Registrar intereses o ajustes del fondo"
-                    style="margin-left:auto;background:#6d28d9;color:#fff;border:none;border-radius:4px;
-                           font-size:9px;font-weight:700;padding:2px 7px;cursor:pointer;">+ Ajuste</button>
-        </div>
-        <div style="font-size:13px;font-weight:700;color:#4c1d95;margin-top:2px;">$${fc_formatMonto(resultante)}</div>
-        <div style="font-size:10px;color:#64748b;margin-top:2px;">
-            ${desde}${partes.length ? ' &middot; ' + partes.join(' &middot; ') : ''}
-        </div>
-        ${aviso}
-    </div>`;
-}
 
 // Movimiento del fondo dentro de las semanas visibles. Positivo = aporte (sale del
-// banco hacia ANEFI); negativo = rescate (vuelve al banco).
-function fc_anefiMovimiento() {
-    // Solo lo POSTERIOR al corte del saldo: lo anterior ya venia dentro de la cartola
-    // y contarlo otra vez inflaria el fondo.
-    const corte = fc_liq_config.saldo_anefi_fecha || '';
-    let total = 0;
-    document.querySelectorAll(`.fc-egreso-item-${FC_GRUPO_ANEFI}`).forEach(row => {
-        row.querySelectorAll('.fc-input[data-fecha]').forEach(inp => {
-            if (!inp.value) return;
-            if (corte && inp.dataset.fecha <= corte) return;
-            total += parseFloat(String(inp.value).replace(/,/g, '')) || 0;
-        });
-    });
-    return total;
-}
 
 // Intereses y ajustes registrados del fondo, posteriores al corte del saldo.
 let fc_anefi_movs = [];
@@ -1646,6 +1599,9 @@ async function fc_anefiAbrir() {
         modal.className = 'fc-modal';
         document.body.appendChild(modal);
     }
+    // Se abre desde Control de Costos, donde puede que el flujo nunca se haya
+    // cargado: sin esto fc_liq_config viene vacio y el saldo sale en cero.
+    await fc_liqCargarConfig();
     await fc_anefiCargarMovs();
     fc_anefiRender(modal);
     modal.classList.add('active');
@@ -1655,6 +1611,7 @@ async function fc_anefiAbrir() {
 function fc_anefiCerrar() {
     document.getElementById('fc-modal-anefi')?.classList.remove('active');
     fc_renderAlertasLiquidez();
+    if (typeof co_cargarAnefi === 'function') co_cargarAnefi();
 }
 
 function fc_anefiRender(modal) {

@@ -8520,6 +8520,65 @@ def flujo_caja_config_liquidez_guardar():
         if conn: fc_release_movimientos_db(conn)
 
 
+@app.route('/api/flujo-caja/anefi-resumen', methods=['GET'])
+def flujo_caja_anefi_resumen():
+    """Estado del fondo ANEFI para mostrarlo fuera del flujo de caja.
+
+    El acumulado NO es caja disponible: es plata apartada que genera intereses.
+    Los aportes salen del banco (por eso siguen siendo egreso en el flujo), pero
+    aqui se suman al fondo. Solo cuenta lo POSTERIOR a la fecha de corte del
+    saldo: lo anterior ya venia dentro de la cartola.
+    """
+    conn = None
+    try:
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        _fc_crear_tabla_liquidez(cur)
+        _fc_crear_tabla_anefi(cur)
+        conn.commit()
+
+        cur.execute("SELECT COALESCE(saldo_anefi, 0), saldo_anefi_fecha FROM fc_config_liquidez WHERE id = 1")
+        row = cur.fetchone()
+        saldo = float(row[0] or 0) if row else 0.0
+        corte = row[1].isoformat() if (row and row[1]) else ''
+
+        # Intereses y ajustes registrados despues del corte
+        if corte:
+            cur.execute("SELECT COALESCE(SUM(monto), 0) FROM fc_anefi_movimientos WHERE fecha > %s", (corte,))
+        else:
+            cur.execute("SELECT COALESCE(SUM(monto), 0) FROM fc_anefi_movimientos")
+        intereses = float(cur.fetchone()[0] or 0)
+
+        # Aportes y rescates guardados en el flujo (grupo de inversiones)
+        cur.execute("SELECT egresos FROM flujo_caja_guardado WHERE egresos IS NOT NULL")
+        aportes = 0.0
+        detalle_aportes = []
+        for (eg,) in cur.fetchall():
+            if isinstance(eg, str):
+                eg = json.loads(eg)
+            for item in (eg or {}).get('inversiones', []) or []:
+                for dia, monto in (item.get('valores') or {}).items():
+                    if corte and dia <= corte:
+                        continue
+                    val = float(monto or 0)
+                    if not val:
+                        continue
+                    aportes += val
+                    detalle_aportes.append({'fecha': dia, 'monto': val,
+                                            'concepto': item.get('nombre', 'ANEFI')})
+        detalle_aportes.sort(key=lambda x: x['fecha'])
+
+        return jsonify({'ok': True, 'saldo': saldo, 'fecha_corte': corte,
+                        'intereses': intereses, 'aportes': aportes,
+                        'total': saldo + intereses + aportes,
+                        'detalle_aportes': detalle_aportes})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
 @app.route('/api/flujo-caja/anefi-movimientos', methods=['GET'])
 def flujo_caja_anefi_listar():
     """Intereses y ajustes registrados del fondo ANEFI"""
