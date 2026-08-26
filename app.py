@@ -10183,9 +10183,54 @@ CO_UMBRAL_PRECIO = 8.0      # % de variacion para alertar
 CO_MIN_CONSUMO = 100.0      # $ de consumo en 30 dias para que el producto cuente
 CO_SEMANAS_PATRON = 6       # semanas hacia atras para el patron de consumo
 
+# Un producto tiene un costo tipico. El dia que Contifico devuelve un costo
+# muchas veces mayor, esa linea no es consumo: es un dato roto, y hay que
+# sacarlo de las cuentas antes de que arrastre todo lo demas.
+#
+# El caso que dejo el modulo inservible: el 19 de julio el CHICHARRON salio a
+# 14,97 dolares el gramo. Un solo producto, un solo dia, 236.721 dolares: el
+# 28% de los 839.406 de cuatro meses. Y como el patron de consumo se calculaba
+# con el PROMEDIO de los ultimos domingos, ese dia envenenaba la referencia
+# durante seis semanas -promedio 29.844 contra una mediana de 286-, asi que
+# todos los domingos siguientes aparecian como caidas del 99%.
+#
+# El costo se disparo porque el stock de CHICHARRON estaba en menos 294 kg, y
+# el promedio ponderado de Contifico se vuelve absurdo cuando el stock es
+# negativo. Eso venia del bot de produccion, que registraba mil veces menos
+# producto terminado del que se hacia. Corregido el 26-ago-2026.
+CO_FACTOR_COSTO_RARO = 5.0   # veces por encima de su costo habitual
+CO_MIN_VALOR_ROTO = 20.0     # $ de la linea, para no perseguir centavos
 
-def co_dia(valor, por_defecto=None):
-    """Convierte 'YYYY-MM-DD' a date; si viene vacio usa el por_defecto."""
+# Una linea sana es la que NO tiene el costo disparado respecto al del propio
+# producto. Se usa en todas las cuentas del modulo, para que ninguna cifra
+# quede contaminada por un costo imposible.
+CO_SQL_TIPICO_PROD = """
+    tipico_prod AS (
+        SELECT codigo_prod,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY costo_unitario) AS costo_med
+        FROM costos_resumen_diario
+        WHERE tipo = 'EGR' AND costo_unitario > 0
+          AND fecha > %(f)s - 120 AND fecha <= %(f)s
+        GROUP BY codigo_prod
+    )
+"""
+
+CO_SQL_SANO = """
+    sano AS (
+        SELECT c.*
+        FROM costos_resumen_diario c
+        LEFT JOIN tipico_prod t ON t.codigo_prod = c.codigo_prod
+        WHERE c.tipo = 'EGR'
+          AND c.fecha > %(f)s - (%(sem)s * 7) AND c.fecha <= %(f)s
+          AND NOT (COALESCE(t.costo_med, 0) > 0
+                   AND c.costo_unitario > t.costo_med * %(fac)s
+                   AND c.valor >= %(minroto)s)
+    )
+"""
+
+
+def co_dia(valor, por_defecto):
+    """Una fecha del querystring, o la de por defecto si no viene o viene mal."""
     if valor:
         try:
             return datetime.strptime(valor, '%Y-%m-%d').date()
@@ -10235,30 +10280,103 @@ def co_completitud(cur, fecha):
 
 @app.route('/api/costos/alertas', methods=['GET'])
 def costos_alertas():
-    """Alertas del dia: precios que se movieron y consumos fuera de patron."""
+    """Todo lo que hay que mirar de un dia, en el orden en que hay que mirarlo.
+
+    Devuelve cuatro cosas, y ese es el orden que importa:
+
+      1. rotos    - lineas con un costo imposible. Van primero porque mientras
+                    esten ahi, ninguna otra cifra del dia es de fiar.
+      2. resumen  - cuanto se consumio el dia y cuanto se suele consumir un dia
+                    como ese. Una sola cifra para saber si el dia fue normal.
+      3. precios  - productos que cambiaron de costo, con lo que eso cuesta al
+                    mes si se queda asi.
+      4. consumos - categorias que se salieron de su patron.
+
+    Las cuentas 2, 3 y 4 se hacen SOLO sobre lineas sanas.
+    """
     conn = None
     try:
         fecha = co_dia(request.args.get('fecha'), co_ultimo_dia_completo())
         umbral = float(request.args.get('umbral', CO_UMBRAL_PRECIO))
         min_consumo = float(request.args.get('min_consumo', CO_MIN_CONSUMO))
 
+        p = {'f': fecha, 'u': umbral, 'm': min_consumo,
+             'sem': CO_SEMANAS_PATRON, 'fac': CO_FACTOR_COSTO_RARO,
+             'minroto': CO_MIN_VALOR_ROTO,
+             'mindif': float(request.args.get('min_dif', 50))}
+
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
         cur.execute("SET statement_timeout = '90s'")
 
-        # --- Alertas de PRECIO: costo del dia vs mediana de los 30 dias previos
-        cur.execute("""
-            WITH hoy AS (
-                SELECT codigo_prod, max(nombre_prod) AS nombre_prod,
-                       max(categoria) AS categoria, max(bodega) AS bodega,
-                       sum(valor) / NULLIF(sum(cantidad), 0) AS costo_hoy,
-                       sum(cantidad) AS cantidad_hoy
-                FROM costos_resumen_diario
-                WHERE fecha = %(f)s AND tipo = 'EGR' AND costo_unitario > 0
-                  -- sin nombre en el catalogo no hay sobre que actuar: se reporta
-                  -- aparte, en el bloque de calidad, no como alerta de precio
-                  AND codigo_prod <> 'SIN_CODIGO' AND nombre_prod <> '(SIN NOMBRE)'
-                GROUP BY codigo_prod
+        # --- 1. Lineas con un costo imposible -------------------------------
+        cur.execute("WITH " + CO_SQL_TIPICO_PROD + """
+            SELECT c.codigo_prod, max(c.nombre_prod), max(c.categoria), max(c.bodega),
+                   sum(c.cantidad), sum(c.valor),
+                   sum(c.valor) / NULLIF(sum(c.cantidad), 0) AS costo_dia,
+                   max(t.costo_med) AS costo_med
+            FROM costos_resumen_diario c
+            JOIN tipico_prod t ON t.codigo_prod = c.codigo_prod
+            WHERE c.fecha = %(f)s AND c.tipo = 'EGR' AND c.cantidad > 0
+              AND t.costo_med > 0 AND c.valor >= %(minroto)s
+              AND c.costo_unitario > t.costo_med * %(fac)s
+            GROUP BY c.codigo_prod
+            ORDER BY sum(c.valor) DESC LIMIT 20
+        """, p)
+        rotos = []
+        for r in cur.fetchall():
+            med = float(r[7] or 0)
+            cd = float(r[6] or 0)
+            rotos.append({
+                'codigo_prod': r[0], 'nombre_prod': r[1], 'categoria': r[2],
+                'bodega': r[3], 'cantidad': float(r[4] or 0), 'valor': float(r[5] or 0),
+                'costo_dia': cd, 'costo_tipico': med,
+                'veces': round(cd / med, 1) if med else None,
+            })
+
+        # --- 2. El dia contra un dia como el ---------------------------------
+        cur.execute("WITH " + CO_SQL_TIPICO_PROD + "," + CO_SQL_SANO + """,
+            hist AS (
+                SELECT fecha, sum(valor) AS v FROM sano
+                WHERE fecha < %(f)s
+                  AND extract(dow FROM fecha) = extract(dow FROM %(f)s::date)
+                GROUP BY fecha
+            )
+            SELECT (SELECT coalesce(sum(valor), 0) FROM sano WHERE fecha = %(f)s),
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY v),
+                   count(*)
+            FROM hist
+        """, p)
+        r = cur.fetchone()
+        valor_dia = float(r[0] or 0)
+        valor_tipico = float(r[1] or 0)
+        resumen = {
+            'valor_dia': valor_dia,
+            'valor_tipico': valor_tipico,
+            'muestras': int(r[2] or 0),
+            'diferencia': valor_dia - valor_tipico,
+            'desvio': ((valor_dia - valor_tipico) / valor_tipico * 100) if valor_tipico else None,
+            'dia_semana': ['lunes', 'martes', 'miercoles', 'jueves', 'viernes',
+                           'sabado', 'domingo'][fecha.weekday()],
+        }
+
+        # --- 3. Precios que se movieron --------------------------------------
+        cur.execute("WITH " + CO_SQL_TIPICO_PROD + """,
+            hoy AS (
+                SELECT c.codigo_prod, max(c.nombre_prod) AS nombre_prod,
+                       max(c.categoria) AS categoria, max(c.bodega) AS bodega,
+                       sum(c.valor) / NULLIF(sum(c.cantidad), 0) AS costo_hoy,
+                       sum(c.cantidad) AS cantidad_hoy
+                FROM costos_resumen_diario c
+                LEFT JOIN tipico_prod t ON t.codigo_prod = c.codigo_prod
+                WHERE c.fecha = %(f)s AND c.tipo = 'EGR' AND c.costo_unitario > 0
+                  -- sin nombre en el catalogo no hay sobre que actuar
+                  AND c.codigo_prod <> 'SIN_CODIGO' AND c.nombre_prod <> '(SIN NOMBRE)'
+                  -- lo que tiene el costo disparado ya salio arriba, como dato roto
+                  AND NOT (COALESCE(t.costo_med, 0) > 0
+                           AND c.costo_unitario > t.costo_med * %(fac)s
+                           AND c.valor >= %(minroto)s)
+                GROUP BY c.codigo_prod
             ),
             base AS (
                 SELECT codigo_prod,
@@ -10283,7 +10401,7 @@ def costos_alertas():
               AND b.valor_30d >= %(m)s
             ORDER BY abs((h.costo_hoy - b.costo_base) * b.cantidad_30d) DESC
             LIMIT 60
-        """, {'f': fecha, 'u': umbral, 'm': min_consumo})
+        """, p)
 
         precios = [{
             'codigo_prod': r[0], 'nombre_prod': r[1], 'categoria': r[2], 'bodega': r[3],
@@ -10292,43 +10410,41 @@ def costos_alertas():
             'impacto_mes': float(r[8] or 0), 'valor_30d': float(r[9] or 0),
         } for r in cur.fetchall()]
 
-        # --- Alertas de CONSUMO: valor del dia vs mismo dia de semana anteriores
-        cur.execute("""
-            WITH dia AS (
+        # --- 4. Categorias fuera de su patron --------------------------------
+        # La referencia es la MEDIANA de los ultimos dias iguales, no el
+        # promedio: con el promedio, un solo dia raro deja la referencia
+        # inservible durante seis semanas.
+        cur.execute("WITH " + CO_SQL_TIPICO_PROD + "," + CO_SQL_SANO + """,
+            dia AS (
                 SELECT bodega, categoria, sum(valor) AS valor_dia
-                FROM costos_resumen_diario
-                WHERE fecha = %(f)s AND tipo = 'EGR'
-                GROUP BY bodega, categoria
+                FROM sano WHERE fecha = %(f)s GROUP BY bodega, categoria
             ),
             historico AS (
                 SELECT bodega, categoria, fecha, sum(valor) AS valor
-                FROM costos_resumen_diario
-                WHERE tipo = 'EGR'
-                  AND fecha < %(f)s
-                  AND fecha >= %(f)s - (%(sem)s * 7)
+                FROM sano
+                WHERE fecha < %(f)s
                   AND extract(dow FROM fecha) = extract(dow FROM %(f)s::date)
                 GROUP BY bodega, categoria, fecha
             ),
             patron AS (
-                SELECT bodega, categoria, avg(valor) AS promedio,
+                SELECT bodega, categoria,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY valor) AS tipico,
                        count(*) AS muestras
                 FROM historico GROUP BY bodega, categoria
             )
-            SELECT d.bodega, d.categoria, d.valor_dia, p.promedio, p.muestras,
-                   (d.valor_dia - p.promedio) / NULLIF(p.promedio, 0) * 100 AS desvio,
-                   d.valor_dia - p.promedio AS diferencia
+            SELECT d.bodega, d.categoria, d.valor_dia, p.tipico, p.muestras,
+                   (d.valor_dia - p.tipico) / NULLIF(p.tipico, 0) * 100 AS desvio,
+                   d.valor_dia - p.tipico AS diferencia
             FROM dia d
             JOIN patron p ON p.bodega = d.bodega AND p.categoria = d.categoria
-            WHERE p.muestras >= 3 AND p.promedio > 20
-              AND abs((d.valor_dia - p.promedio) / NULLIF(p.promedio, 0) * 100) >= 30
-              -- ademas del desvio relativo, exigir una diferencia en dolares que
-              -- valga la pena mirar: una categoria chica se dispara con 15 dolares
-              -- de diferencia y solo hace ruido
-              AND abs(d.valor_dia - p.promedio) >= %(mindif)s
-            ORDER BY abs(d.valor_dia - p.promedio) DESC
+            WHERE p.muestras >= 3 AND p.tipico > 20
+              AND abs((d.valor_dia - p.tipico) / NULLIF(p.tipico, 0) * 100) >= 30
+              -- ademas del desvio relativo, una diferencia en dolares que valga
+              -- la pena mirar: una categoria chica se dispara con 15 dolares
+              AND abs(d.valor_dia - p.tipico) >= %(mindif)s
+            ORDER BY abs(d.valor_dia - p.tipico) DESC
             LIMIT 40
-        """, {'f': fecha, 'sem': CO_SEMANAS_PATRON,
-              'mindif': float(request.args.get('min_dif', 50))})
+        """, p)
 
         consumos = [{
             'bodega': r[0], 'categoria': r[1], 'valor_dia': float(r[2] or 0),
@@ -10336,7 +10452,7 @@ def costos_alertas():
             'desvio': float(r[5] or 0), 'diferencia': float(r[6] or 0),
         } for r in cur.fetchall()]
 
-        # --- Calidad del dato del dia (productos sin costo = puntos ciegos)
+        # --- Calidad del dato del dia ----------------------------------------
         cur.execute("""
             SELECT count(*) FILTER (WHERE sin_costo > 0) AS filas_sin_costo,
                    count(*) AS filas,
@@ -10353,6 +10469,9 @@ def costos_alertas():
             'fecha': fecha.isoformat(),
             'dias_madurez': CO_DIAS_MADUREZ,
             'umbral': umbral,
+            'semanas_patron': CO_SEMANAS_PATRON,
+            'resumen': resumen,
+            'rotos': rotos,
             'precios': precios,
             'consumos': consumos,
             'calidad': {

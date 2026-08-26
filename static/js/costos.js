@@ -80,7 +80,7 @@ async function co_cargarFiltros() {
 async function co_cargarAlertas() {
     const cont = document.getElementById('co-alertas');
     if (!cont) return;
-    cont.innerHTML = '<div class="co-cargando">Buscando variaciones...</div>';
+    cont.innerHTML = '<div class="co-cargando">Revisando el dia...</div>';
 
     const fecha = document.getElementById('co-fecha')?.value || '';
     const umbral = document.getElementById('co-umbral')?.value || '8';
@@ -90,61 +90,143 @@ async function co_cargarAlertas() {
         const d = await r.json();
         if (!d.ok) throw new Error(d.error || 'Error al cargar alertas');
 
-        let html = '';
-
-        // Aviso de calidad: consumo sin costo o sin catalogo = puntos ciegos
-        if (d.calidad) {
-            const avisos = [];
-            // Un dia a medias se leeria como una caida de consumo que no ocurrio
-            if (d.calidad.completitud !== null && d.calidad.completitud < 80) {
-                avisos.push(`<b>Este dia todavia se esta cargando (${d.calidad.completitud}% de lo
-                    habitual para un dia asi).</b> Las alertas de consumo de abajo pueden marcar
-                    caidas que no son reales. Los movimientos siguen llegando hasta unos
-                    ${d.dias_madurez} dias despues.`);
-            }
-            if (d.calidad.filas_sin_costo > 0) {
-                const pct = d.calidad.filas
-                    ? (100 * d.calidad.filas_sin_costo / d.calidad.filas).toFixed(0) : 0;
-                avisos.push(`<b>${pct}% de los movimientos del dia no tienen costo registrado.</b>
-                    Ese consumo no se puede valorizar, asi que las cifras de abajo son un piso, no el total.`);
-            }
-            if (d.calidad.sin_catalogo > 0) {
-                avisos.push(`${d.calidad.sin_catalogo} movimiento(s) son de productos que no estan
-                    en el catalogo de Contifico. No generan alerta porque no hay sobre que actuar,
-                    pero conviene darlos de alta.`);
-            }
-            if (avisos.length) {
-                html += `<div class="co-aviso"><i class="fas fa-exclamation-triangle"></i>
-                    <div>${avisos.join('<br><br>')}</div></div>`;
-            }
-        }
+        // El orden importa: primero lo que invalida el resto.
+        let html = co_bloqueRotos(d) + co_bloqueDia(d) + co_bloqueCalidad(d);
 
         if (!d.precios.length && !d.consumos.length) {
             html += `<div class="co-vacio">
                 <i class="fas fa-check-circle"></i>
-                <div><b>Sin variaciones sobre el umbral</b>
-                <span>Ningun precio se movio mas de ${umbral}% ni hay consumos fuera de patron el ${d.fecha}.</span></div>
+                <div><b>Nada que revisar</b>
+                <span>Ningun precio se movio mas de ${umbral}% y ninguna categoria
+                se salio de su patron.</span></div>
             </div>`;
-            cont.innerHTML = html;
-            return;
-        }
-
-        if (d.precios.length) {
-            html += `<h3 class="co-h3"><span class="co-chip co-chip-precio">PRECIO</span>
-                ${d.precios.length} producto${d.precios.length > 1 ? 's' : ''} cambiaron de costo</h3>`;
-            html += d.precios.map(p => co_filaPrecio(p)).join('');
-        }
-
-        if (d.consumos.length) {
-            html += `<h3 class="co-h3"><span class="co-chip co-chip-consumo">CONSUMO</span>
-                ${d.consumos.length} categoria${d.consumos.length > 1 ? 's' : ''} fuera de su patron</h3>`;
-            html += d.consumos.map(c => co_filaConsumo(c)).join('');
+        } else {
+            if (d.precios.length) {
+                html += `<h3 class="co-h3"><span class="co-chip co-chip-precio">PRECIO</span>
+                    ${d.precios.length} producto${d.precios.length > 1 ? 's cambiaron' : ' cambio'} de costo</h3>`;
+                html += d.precios.map(co_filaPrecio).join('');
+            }
+            if (d.consumos.length) {
+                html += `<h3 class="co-h3"><span class="co-chip co-chip-consumo">CONSUMO</span>
+                    ${d.consumos.length} categoria${d.consumos.length > 1 ? 's' : ''} fuera de lo habitual</h3>`;
+                html += d.consumos.map(co_filaConsumo).join('');
+            }
         }
 
         cont.innerHTML = html;
     } catch (e) {
         cont.innerHTML = `<div class="co-error">No se pudieron cargar las alertas: ${e.message}</div>`;
     }
+}
+
+// ============ 1. LO QUE ESTA ROTO ============
+// Un costo imposible no es un gasto: es un dato malo. Y mientras este ahi,
+// arrastra el total del dia, el de la categoria y la referencia de las
+// semanas siguientes. Por eso va primero y en rojo.
+function co_bloqueRotos(d) {
+    const rotos = d.rotos || [];
+    if (!rotos.length) return '';
+    const total = rotos.reduce((a, x) => a + x.valor, 0);
+    return `<div class="co-roto-panel">
+        <div class="co-roto-head">
+            <i class="fas fa-triangle-exclamation"></i>
+            <div>
+                <b>${rotos.length} ${rotos.length > 1 ? 'productos tienen' : 'producto tiene'} un costo imposible este dia</b>
+                <span>Suman ${co_money(total)} que no son consumo real. Estan fuera de
+                todas las cifras de abajo, pero hay que corregirlos en Contifico:
+                mientras el costo siga asi, este producto ensucia cualquier informe.</span>
+            </div>
+        </div>
+        ${rotos.map(x => `
+            <div class="co-roto-fila">
+                <div class="co-roto-prod">
+                    <b>${x.nombre_prod || x.codigo_prod}</b>
+                    <span class="co-meta">${x.codigo_prod} · ${x.categoria} · ${x.bodega}</span>
+                </div>
+                <div class="co-roto-cifras">
+                    <div><span class="co-roto-lbl">costo del dia</span>
+                         <b class="co-roto-malo">${co_money(x.costo_dia)}</b></div>
+                    <div><span class="co-roto-lbl">lo habitual</span>
+                         <b>${co_money(x.costo_tipico)}</b></div>
+                    <div><span class="co-roto-lbl">se registro</span>
+                         <b class="co-roto-malo">${co_money(x.valor)}</b></div>
+                </div>
+                <div class="co-roto-veces">${co_veces(x.veces)}<span>su costo normal</span></div>
+            </div>`).join('')}
+        <div class="co-roto-pie">
+            Un costo se dispara asi cuando el stock del producto esta en negativo:
+            el promedio ponderado de Contifico deja de tener sentido. Revisar el
+            stock de ese producto antes que el costo.
+        </div>
+    </div>`;
+}
+
+function co_veces(v) {
+    if (!v) return '';
+    if (v >= 1000) return Math.round(v / 1000) + '.000x';
+    return Math.round(v) + 'x';
+}
+
+// ============ 2. COMO FUE EL DIA ============
+// Una sola cifra para saber si hay que preocuparse. La referencia es la
+// MEDIANA de los mismos dias de semana, no el promedio: con el promedio, un
+// solo dia raro deja la referencia inservible durante semanas.
+function co_bloqueDia(d) {
+    const r = d.resumen;
+    if (!r || !r.muestras) return '';
+    const hay = r.desvio !== null && r.desvio !== undefined;
+    const sube = hay && r.desvio > 0;
+    const fuerte = hay && Math.abs(r.desvio) >= 25;
+    let frase;
+    if (!hay) {
+        frase = 'Todavia no hay suficientes dias para comparar.';
+    } else if (!fuerte) {
+        frase = `Un ${r.dia_semana} normal. La diferencia con lo habitual es de
+                 ${co_money(Math.abs(r.diferencia))}.`;
+    } else {
+        frase = `Se consumio ${co_money(Math.abs(r.diferencia))}
+                 ${sube ? 'mas' : 'menos'} que un ${r.dia_semana} habitual.
+                 ${sube ? 'Vale la pena ver en que se fue.'
+                        : 'Puede ser que el dia todavia se este cargando.'}`;
+    }
+    return `<div class="co-dia ${fuerte ? (sube ? 'sube' : 'baja') : 'normal'}">
+        <div class="co-dia-cifra">
+            <span class="co-dia-lbl">Consumo del dia</span>
+            <b>${co_money(r.valor_dia)}</b>
+        </div>
+        <div class="co-dia-vs">
+            <span class="co-dia-lbl">Un ${r.dia_semana} habitual</span>
+            <b>${co_money(r.valor_tipico)}</b>
+            <span class="co-dia-muestras">mediana de ${r.muestras} ${r.dia_semana}s</span>
+        </div>
+        ${hay ? `<div class="co-dia-var ${sube ? 'sube' : 'baja'}">${co_pct(r.desvio)}</div>` : ''}
+        <div class="co-dia-frase">${frase}</div>
+    </div>`;
+}
+
+// ============ 3. AVISOS DE CALIDAD DEL DATO ============
+function co_bloqueCalidad(d) {
+    const c = d.calidad;
+    if (!c) return '';
+    const avisos = [];
+    if (c.completitud !== null && c.completitud < 80) {
+        avisos.push(`<b>Este dia todavia se esta cargando: llego el ${c.completitud}% de
+            los movimientos que suele tener un dia asi.</b> Lo de abajo puede marcar
+            caidas que no son reales. Los movimientos siguen llegando hasta unos
+            ${d.dias_madurez} dias despues.`);
+    }
+    if (c.filas_sin_costo > 0) {
+        const pct = c.filas ? (100 * c.filas_sin_costo / c.filas).toFixed(0) : 0;
+        avisos.push(`<b>${pct}% de los movimientos del dia no tienen costo.</b>
+            Ese consumo no se puede valorizar, asi que las cifras son un piso, no el total.`);
+    }
+    if (c.sin_catalogo > 0) {
+        avisos.push(`${c.sin_catalogo} movimiento(s) son de productos que no estan en el
+            catalogo de Contifico. Conviene darlos de alta para poder seguirlos.`);
+    }
+    if (!avisos.length) return '';
+    return `<div class="co-aviso"><i class="fas fa-circle-info"></i>
+        <div>${avisos.join('<br><br>')}</div></div>`;
 }
 
 function co_filaPrecio(p) {
@@ -179,7 +261,7 @@ function co_filaConsumo(c) {
                 <span class="co-meta">${c.bodega}</span>
             </div>
             <div class="co-alerta-cifras">
-                <span class="co-antes">tipico ${co_money(c.promedio)}</span>
+                <span class="co-antes">habitual ${co_money(c.promedio)}</span>
                 <i class="fas fa-arrow-right"></i>
                 <span class="co-ahora">${co_money(c.valor_dia)}</span>
                 <span class="co-var ${sube ? 'sube' : 'baja'}">${co_pct(c.desvio)}</span>
@@ -187,7 +269,7 @@ function co_filaConsumo(c) {
         </div>
         <div class="co-alerta-lado">
             <div class="co-impacto ${sube ? 'sube' : 'baja'}">${co_money(c.diferencia)}</div>
-            <div class="co-impacto-lbl">vs ${c.muestras} semanas</div>
+            <div class="co-impacto-lbl">vs ${c.muestras} dias iguales</div>
             <button class="co-btn-mini" onclick="co_verCategoria('${c.categoria.replace(/'/g, "\\'")}')">Ver productos</button>
         </div>
     </div>`;

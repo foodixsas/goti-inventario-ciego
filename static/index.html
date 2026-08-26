@@ -155,6 +155,34 @@
         .co-btn:disabled { background:#94a3b8; cursor:default; }
         .co-info { font-size:11px; color:#94a3b8; margin-left:auto; }
         .co-panel { margin-bottom:22px; }
+        /* El dia en una linea */
+        .co-dia { display:flex; align-items:center; gap:26px; background:white; border:1px solid #e2e8f0; border-left:4px solid #94a3b8; border-radius:10px; padding:16px 22px; margin-bottom:16px; flex-wrap:wrap; }
+        .co-dia.sube { border-left-color:#dc2626; }
+        .co-dia.baja { border-left-color:#0284c7; }
+        .co-dia-lbl { display:block; font-size:10px; font-weight:600; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; }
+        .co-dia-cifra b { font-family:'JetBrains Mono',monospace; font-size:26px; font-weight:700; color:#0f172a; font-variant-numeric:tabular-nums; }
+        .co-dia-vs b { font-family:'JetBrains Mono',monospace; font-size:18px; color:#64748b; font-variant-numeric:tabular-nums; }
+        .co-dia-muestras { display:block; font-size:10px; color:#cbd5e1; }
+        .co-dia-var { font-family:'JetBrains Mono',monospace; font-size:17px; font-weight:700; padding:4px 12px; border-radius:6px; }
+        .co-dia-var.sube { background:#fee2e2; color:#b91c1c; }
+        .co-dia-var.baja { background:#e0f2fe; color:#0369a1; }
+        .co-dia-frase { flex:1; min-width:220px; font-size:13px; color:#475569; line-height:1.5; }
+        /* Lo que esta roto */
+        .co-roto-panel { background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:16px 20px; margin-bottom:16px; }
+        .co-roto-head { display:flex; gap:12px; align-items:flex-start; margin-bottom:12px; }
+        .co-roto-head i { color:#dc2626; font-size:18px; margin-top:2px; }
+        .co-roto-head b { display:block; font-size:14px; color:#7f1d1d; }
+        .co-roto-head span { display:block; font-size:12.5px; color:#9f1239; margin-top:4px; line-height:1.5; }
+        .co-roto-fila { display:flex; align-items:center; gap:18px; background:white; border:1px solid #fecaca; border-radius:8px; padding:11px 15px; margin-bottom:7px; flex-wrap:wrap; }
+        .co-roto-prod { flex:1; min-width:170px; }
+        .co-roto-prod b { font-size:14px; color:#0f172a; }
+        .co-roto-prod .co-meta { display:block; margin-left:0; margin-top:2px; }
+        .co-roto-cifras { display:flex; gap:20px; font-family:'JetBrains Mono',monospace; font-size:13px; font-variant-numeric:tabular-nums; }
+        .co-roto-lbl { display:block; font-family:system-ui,sans-serif; font-size:9.5px; color:#94a3b8; text-transform:uppercase; letter-spacing:.04em; }
+        .co-roto-malo { color:#b91c1c; }
+        .co-roto-veces { text-align:right; min-width:96px; font-family:'JetBrains Mono',monospace; font-size:17px; font-weight:700; color:#b91c1c; }
+        .co-roto-veces span { display:block; font-family:system-ui,sans-serif; font-size:9.5px; font-weight:500; color:#94a3b8; text-transform:uppercase; letter-spacing:.04em; }
+        .co-roto-pie { font-size:12px; color:#9f1239; margin-top:10px; line-height:1.5; }
         .co-h3 { font-size:13px; font-weight:700; color:#334155; margin:18px 0 8px; display:flex; align-items:center; gap:8px; }
         .co-chip { font-size:10px; font-weight:700; letter-spacing:.08em; padding:3px 8px; border-radius:4px; }
         .co-chip-precio { background:#fee2e2; color:#b91c1c; }
@@ -3104,7 +3132,7 @@
     <script src="js/config.js?v=20260317a"></script>
     <script src="js/app.js?v=20260821tg2"></script>
     <script src="js/flujo-caja.js?v=20260825a"></script>
-    <script src="js/costos.js?v=20260825a"></script>
+    <script src="js/costos.js?v=20260826a"></script>
     <script src="js/nomina.js?v=20260812a"></script>
     <style>
         /* NOMINA MODULE STYLES */
