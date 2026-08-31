@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control de Costos — GFC</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+       background: #f1f5f9; color: #0f172a; }
+.mono { font-family: "JetBrains Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+/* la barra de arriba, igual que el resto del sistema */
+.bar { background: #0f2744; color: #fff; padding: 13px 24px; display: flex;
+       align-items: center; gap: 13px; position: sticky; top: 0; z-index: 20; }
+.bar .logo { font-size: 19px; }
+.bar b { font-family: "JetBrains Mono", monospace; font-size: 16px; letter-spacing: .01em; }
+.bar a { margin-left: auto; color: #93c5fd; text-decoration: none; font-size: 13px; }
+.bar a:hover { color: #fff; }
+
+.wrap { max-width: 1400px; margin: 0 auto; padding: 22px 24px 70px; }
+h1 { font-size: 22px; display: flex; align-items: center; gap: 10px; }
+h1 .tag { font-size: 11px; font-weight: 600; background: #fee2e2; color: #b91c1c;
+          padding: 3px 9px; border-radius: 5px; }
+.sub { color: #64748b; font-size: 13px; }
+
+/* --- KPIs --- */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 14px; margin: 18px 0 22px; }
+.k { background: #fff; border: 1px solid #e2e8f0; border-radius: 13px; padding: 16px 19px;
+     border-top: 4px solid #94a3b8; }
+.k.rojo { border-top-color: #dc2626; }
+.k.naranja { border-top-color: #ea580c; }
+.k.azul { border-top-color: #1d4ed8; }
+.k .lbl { font-size: 10.5px; font-weight: 700; color: #94a3b8; text-transform: uppercase;
+          letter-spacing: .05em; }
+.k .big { font-size: 33px; font-weight: 700; line-height: 1.1; margin: 7px 0 3px; }
+.k.rojo .big { color: #b91c1c; }
+.k.naranja .big { color: #c2410c; }
+.k.azul .big { color: #1d4ed8; }
+.k .pie { font-size: 11.5px; color: #64748b; line-height: 1.45; }
+
+/* --- bloques --- */
+.blk { background: #fff; border: 1px solid #e2e8f0; border-radius: 13px;
+       padding: 20px 24px; margin-bottom: 18px; }
+.blk h2 { font-size: 16px; margin-bottom: 3px; }
+.blk > .sub { margin-bottom: 16px; max-width: 940px; }
+.dos { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 1000px) { .dos { grid-template-columns: 1fr; } }
+
+/* --- barras horizontales --- */
+.hb { display: grid; grid-template-columns: 190px 1fr 86px; gap: 11px;
+      align-items: center; padding: 5px 0; cursor: pointer; }
+.hb:hover { background: #f8fafc; }
+.hb .nom { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hb .nom span { display: block; font-size: 10px; color: #94a3b8; }
+.hb .track { background: #f1f5f9; border-radius: 4px; height: 20px; position: relative; }
+.hb .fill { height: 100%; border-radius: 4px; background: #dc2626; }
+.hb .fill.az { background: #1d4ed8; }
+.hb .fill.na { background: #ea580c; }
+.hb .val { text-align: right; font-size: 12.5px; font-weight: 700; }
+
+/* --- serie diaria --- */
+.serie { position: relative; height: 168px; display: flex; align-items: flex-end;
+         gap: 1px; border-bottom: 1px solid #e2e8f0; padding-top: 24px; }
+.serie .d { flex: 1; min-width: 1px; background: #cbd5e1; border-radius: 1px 1px 0 0;
+            min-height: 1px; position: relative; }
+.serie .d.alto { background: #dc2626; }
+.serie .d.medio { background: #f59e0b; }
+.serie .d:hover { opacity: .55; }
+.serie .d .et { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+                font-size: 9.5px; font-weight: 700; color: #b91c1c; white-space: nowrap; }
+.ejex { display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8;
+        padding-top: 6px; }
+
+/* --- tarjetas de cambio de escala --- */
+.esc { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+.e { border: 1px solid #e2e8f0; border-radius: 11px; padding: 13px 16px; cursor: pointer; }
+.e:hover { border-color: #94a3b8; }
+.e .n { font-size: 13.5px; font-weight: 700; }
+.e .c { font-size: 10.5px; color: #94a3b8; margin-bottom: 8px; }
+.e .r { display: flex; align-items: baseline; gap: 9px; }
+.e .antes { color: #94a3b8; text-decoration: line-through; font-size: 14px; }
+.e .ahora { font-size: 19px; font-weight: 700; }
+.e.sube .ahora { color: #b91c1c; }
+.e.baja .ahora { color: #0369a1; }
+.e .x { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px; }
+.e.sube .x { background: #fee2e2; color: #b91c1c; }
+.e.baja .x { background: #e0f2fe; color: #0369a1; }
+.e .d { font-size: 11px; color: #64748b; margin-top: 5px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase;
+     letter-spacing: .04em; padding: 8px 9px; border-bottom: 1.5px solid #e2e8f0; white-space: nowrap; }
+td { padding: 9px; border-bottom: 1px solid #f1f5f9; }
+th.n, td.n { text-align: right; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: #f8fafc; }
+.sube { color: #b91c1c; font-weight: 700; }
+.baja { color: #0369a1; font-weight: 700; }
+
+/* --- linea de tiempo del producto --- */
+.tl { position: relative; margin: 10px 0 16px; }
+.tl-eje { position: absolute; left: 0; top: 0; width: 82px; height: 210px; display: flex;
+          flex-direction: column; justify-content: space-between; text-align: right;
+          padding-right: 10px; font-size: 10px; color: #cbd5e1; }
+.tl-area { position: relative; height: 210px; margin-left: 82px; border-bottom: 1px solid #e2e8f0; }
+.tl-banda { position: absolute; left: 0; right: 0; background: #dcfce7; opacity: .6; }
+.tl-media { position: absolute; left: 0; right: 0; border-top: 1px dashed #16a34a; }
+.tl-pts { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 1px; }
+.tl-b { flex: 1; min-width: 2px; background: #94a3b8; border-radius: 2px 2px 0 0; min-height: 2px; }
+.tl-b.fuera { background: #dc2626; }
+.tl-b.ent { background: #1d4ed8; }
+.tl-b:hover { opacity: .5; }
+.nota { background: #fffbeb; border: 1px solid #fde68a; border-radius: 9px; padding: 12px 16px;
+        font-size: 12.5px; color: #78350f; line-height: 1.55; }
+.cargando { padding: 40px; text-align: center; color: #94a3b8; font-size: 13px; }
+.error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 9px;
+         padding: 15px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="bar"><span class="logo">🏷️</span><b>GFC - Control Contable</b>
+    <a href="/">← volver al sistema</a></div>
+
+<div class="wrap">
+    <h1>Control de Costos <span class="tag" id="tag" style="display:none"></span></h1>
+    <p class="sub">El costo unitario de cada producto, y cuándo se sale de lo suyo.
+       Sale de los movimientos de inventario: ingresos, egresos y traslados.</p>
+
+    <div id="tablero" class="cargando">Revisando 180 días de movimientos… tarda unos 15 segundos.</div>
+    <div id="detalle"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const money = v => v === null || v === undefined ? '—'
+    : '$' + Number(v).toLocaleString('es-EC', {minimumFractionDigits: Math.abs(v) < 1 ? 4 : 2,
+                                               maximumFractionDigits: Math.abs(v) < 1 ? 4 : 2});
+const num = v => Math.round(v).toLocaleString('es-EC');
+const MES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const fech = s => { const p = s.split('-'); return parseInt(p[2]) + '-' + MES[parseInt(p[1]) - 1]; };
+const veces = v => !v ? '—' : (v >= 1000 ? Math.round(v / 1000) + 'k×'
+                             : (v >= 10 ? Math.round(v) + '×' : v.toFixed(1) + '×'));
+
+let VENT = null, NIV = null;
+
+Promise.all([
+    fetch('/api/costos/ventanas?dias=180').then(r => r.json()),
+    fetch('/api/costos/niveles').then(r => r.json()),
+]).then(([v, n]) => {
+    if (!v.ok) throw new Error(v.error);
+    VENT = v; NIV = n.ok ? n : {filas: []};
+    pintar();
+}).catch(e => { $('tablero').className = ''; $('tablero').innerHTML =
+    '<div class="error">No se pudo cargar: ' + e.message + '</div>'; });
+
+function pintar() {
+    const v = VENT, n = NIV;
+    const dias = v.por_dia || [];
+    const peor = dias.reduce((a, b) => b.productos > (a ? a.productos : 0) ? b : a, null);
+    const ult30 = dias.filter(d => (Date.now() - new Date(d.fecha + 'T12:00:00')) < 30 * 864e5);
+    const prod30 = ult30.reduce((a, b) => a + b.productos, 0);
+
+    $('tag').style.display = '';
+    $('tag').textContent = v.n_productos + ' productos con el costo fuera de control';
+
+    $('tablero').className = '';
+    $('tablero').innerHTML = `
+    <div class="kpis">
+        ${kpi('rojo', v.n_productos, 'Productos con el costo roto',
+              `de los que se movieron en ${v.dias} días. Su costo unitario se salió de su propia
+               banda en al menos una ocasión.`)}
+        ${kpi('naranja', v.n_ventanas, 'Veces que se rompió',
+              `episodios distintos. Cada uno arrastró todo lo que salió mientras duró:
+               Contifico no reprocesa hacia atrás.`)}
+        ${kpi('rojo', peor ? peor.productos : 0, 'El peor día',
+              peor ? `el ${fech(peor.fecha)} rompieron ${peor.productos} productos a la vez.
+                      No es azar: es un proceso.` : '')}
+        ${kpi('azul', n.filas.length, 'Cambiaron de escala',
+              `su costo se movió y se quedó así. La banda móvil ya no los ve porque
+               absorbió el nivel nuevo.`)}
+    </div>
+
+    <div class="blk">
+        <h2>Cuándo se rompe el costo</h2>
+        <p class="sub">Cada barra es un día: cuántos productos tuvieron el costo unitario fuera de
+           su banda. Si el problema fuera azaroso, las barras serían parejas.</p>
+        ${serie(dias)}
+        ${peor && peor.productos > 30 ? `<div class="nota" style="margin-top:14px">
+            <b>Los picos caen en el último día del mes.</b> ${dias.filter(d => esFinDeMes(d.fecha) && d.productos > 15)
+              .map(d => fech(d.fecha) + ' (' + d.productos + ')').join(', ')}.
+            Decenas de productos rompiendo el costo el mismo día es un proceso de cierre,
+            no errores sueltos. Hay que averiguar qué corre esos días en Contifico.</div>` : ''}
+    </div>
+
+    <div class="dos">
+        <div class="blk">
+            <h2>Los que más se salieron</h2>
+            <p class="sub">Cuántas veces su costo unitario superó lo normal.</p>
+            ${barras(v.productos.slice(0, 10).map(p => ({
+                nom: p.nombre || p.codigo, sub: p.codigo + ' · ' + p.categoria,
+                val: Math.abs(p.peor.veces || 0), txt: veces(p.peor.veces), cod: p.codigo,
+                cls: p.peor.pico > p.peor.normal ? '' : 'az'})), true)}
+        </div>
+        <div class="blk">
+            <h2>Dónde se concentra</h2>
+            <p class="sub">Productos con el costo roto, por categoría.</p>
+            ${barras(v.categorias.slice(0, 10).map(c => ({
+                nom: c.categoria, sub: c.ventanas + ' episodios',
+                val: c.productos, txt: c.productos + ' prod', cls: 'na'})))}
+        </div>
+    </div>
+
+    <div class="blk">
+        <h2>Cambiaron de escala y se quedaron así</h2>
+        <p class="sub">Esto la banda móvil no lo ve: cuando un costo cambia y se queda, a las tres
+           semanas la media lo absorbe y deja de avisar aunque el problema siga corriendo.
+           Aquí se comparan los últimos 30 días contra los 60 anteriores, sin medias móviles.</p>
+        <div class="esc">${n.filas.slice(0, 12).map(f => `
+            <div class="e ${f.sentido}" data-c="${f.codigo}">
+                <div class="n">${f.nombre || f.codigo}</div>
+                <div class="c">${f.codigo} · ${f.categoria}</div>
+                <div class="r"><span class="antes">${money(f.antes)}</span>
+                    <span class="ahora">${money(f.ahora)}</span>
+                    <span class="x">${veces(f.razon)}</span></div>
+                <div class="d">por ${f.unidad || 'unidad'} · así desde hace ${f.dias_ahora} días con salida</div>
+            </div>`).join('')}</div>
+    </div>
+
+    <div class="blk">
+        <h2>Todo el detalle</h2>
+        <p class="sub">Clic en cualquier producto para ver su línea de tiempo.</p>
+        <table><thead><tr><th>Producto</th><th>Categoría</th><th class="n">Costo normal</th>
+            <th class="n">Llegó a</th><th class="n">Veces</th><th class="n">Episodios</th>
+            <th class="n">El peor</th></tr></thead><tbody>
+            ${v.productos.slice(0, 40).map(p => { const w = p.peor; return `<tr data-c="${p.codigo}">
+                <td><b>${p.nombre || p.codigo}</b><br><span style="font-size:10.5px;color:#94a3b8">${p.codigo} · por ${p.unidad || 'unidad'}</span></td>
+                <td style="font-size:11.5px;color:#64748b">${p.categoria}</td>
+                <td class="n mono">${money(w.normal)}</td>
+                <td class="n mono ${w.pico > w.normal ? 'sube' : 'baja'}">${money(w.pico)}</td>
+                <td class="n mono ${w.pico > w.normal ? 'sube' : 'baja'}">${veces(w.veces)}</td>
+                <td class="n mono">${p.ventanas}</td>
+                <td class="n mono">${fech(w.desde)}</td></tr>`; }).join('')}
+        </tbody></table>
+    </div>`;
+
+    document.querySelectorAll('[data-c]').forEach(el =>
+        el.addEventListener('click', () => verLinea(el.dataset.c)));
+}
+
+function esFinDeMes(iso) {
+    const d = new Date(iso + 'T12:00:00');
+    const m = new Date(d); m.setDate(d.getDate() + 1);
+    return m.getMonth() !== d.getMonth();
+}
+
+function kpi(cls, big, lbl, pie) {
+    return `<div class="k ${cls}"><div class="lbl">${lbl}</div>
+        <div class="big mono">${num(big)}</div><div class="pie">${pie}</div></div>`;
+}
+
+function barras(items, log) {
+    const max = Math.max(...items.map(i => i.val), 1);
+    const esc = v => log ? (Math.log10(Math.max(v, 1)) / Math.log10(max) * 100)
+                         : (v / max * 100);
+    return items.map(i => `<div class="hb" ${i.cod ? 'data-c="' + i.cod + '"' : ''}>
+        <div class="nom">${i.nom}<span>${i.sub}</span></div>
+        <div class="track"><div class="fill ${i.cls || ''}" style="width:${Math.max(2, esc(i.val))}%"></div></div>
+        <div class="val mono">${i.txt}</div></div>`).join('');
+}
+
+function serie(dias) {
+    if (!dias.length) return '<div class="cargando">Sin datos</div>';
+    const max = Math.max(...dias.map(d => d.productos));
+    // se rellenan los dias sin nada, para que el eje sea tiempo real y no una lista
+    const ini = new Date(dias[0].fecha + 'T12:00:00'), fin = new Date(dias[dias.length - 1].fecha + 'T12:00:00');
+    const mapa = {}; dias.forEach(d => mapa[d.fecha] = d);
+    const todos = [];
+    for (let t = new Date(ini); t <= fin; t.setDate(t.getDate() + 1)) {
+        const iso = t.toISOString().slice(0, 10);
+        todos.push(mapa[iso] || {fecha: iso, productos: 0});
+    }
+    return `<div class="serie">${todos.map(d => {
+        const h = max ? d.productos / max * 100 : 0;
+        const cls = d.productos >= max * .5 ? 'alto' : (d.productos >= max * .2 ? 'medio' : '');
+        const et = d.productos >= max * .5 ? `<span class="et">${d.productos}</span>` : '';
+        return `<div class="d ${cls}" style="height:${Math.max(d.productos ? 2 : 0, h)}%"
+                     title="${fech(d.fecha)}: ${d.productos} producto(s)">${et}</div>`;
+    }).join('')}</div>
+    <div class="ejex"><span>${fech(todos[0].fecha)}</span><span>${fech(todos[todos.length - 1].fecha)}</span></div>`;
+}
+
+// ---------- la linea de tiempo de un producto ----------
+async function verLinea(cod) {
+    $('detalle').innerHTML = '<div class="blk"><div class="cargando">Cargando ' + cod + '…</div></div>';
+    $('detalle').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    try {
+        const d = await (await fetch('/api/costos/linea?codigo=' + encodeURIComponent(cod) + '&dias=180')).json();
+        if (!d.ok) throw new Error(d.error);
+        $('detalle').innerHTML = '<div class="blk">' + linea(d) + '</div>';
+    } catch (e) {
+        $('detalle').innerHTML = '<div class="blk"><div class="error">' + cod + ': ' + e.message + '</div></div>';
+    }
+}
+
+function linea(d) {
+    const s = d.serie;
+    if (!s.length) return '<div class="cargando">Sin movimientos</div>';
+    const fuera = s.filter(x => x.fuera).length, ult = s[s.length - 1];
+    return `<h2>${d.nombre} <span style="color:#94a3b8;font-weight:400">(${d.codigo})</span></h2>
+    <p class="sub">${d.categoria} · costo por ${d.unidad || 'unidad'} ·
+       ${s.length} días con salida · ${fuera} fuera de banda</p>
+    <div class="kpis" style="margin:14px 0">
+        ${kpi('', ult.costo, 'Costo hoy', fech(ult.fecha)).replace(num(ult.costo), money(ult.costo))}
+        ${kpi('', 0, 'Su costo normal', ult.desv ? 'desviación ' + money(ult.desv) : 'sin base')
+             .replace('<div class="big mono">0</div>', '<div class="big mono">' + (ult.media !== null ? money(ult.media) : '—') + '</div>')}
+        ${kpi('rojo', fuera, 'Días con el costo roto', 'de ' + s.length + ' días con salida')}
+        ${kpi('naranja', d.ventanas.length, 'Episodios', d.sin_movimiento ?
+              d.sin_movimiento + ' más sin mercadería de por medio' : 'todos movieron producto')}
+    </div>
+    ${tlGrafico(s)}
+    ${d.ventanas.length ? `<table><thead><tr><th>Episodio</th><th class="n">Días</th>
+        <th class="n">Costo normal</th><th class="n">Llegó a</th><th class="n">Veces</th>
+        <th class="n">Salió</th><th class="n">Se trasladó</th></tr></thead><tbody>
+        ${d.ventanas.map(v => `<tr><td>${fech(v.desde)} a ${fech(v.hasta)}</td>
+            <td class="n mono">${v.dias}</td><td class="n mono">${money(v.normal)}</td>
+            <td class="n mono ${v.pico > v.normal ? 'sube' : 'baja'}">${money(v.pico)}</td>
+            <td class="n mono ${v.pico > v.normal ? 'sube' : 'baja'}">${veces(v.veces)}</td>
+            <td class="n mono">${num(v.sal)}</td><td class="n mono">${num(v.tras)}</td></tr>`).join('')}
+      </tbody></table>` : ''}
+    <div class="nota" style="margin-top:14px"><b>Cómo leerlo.</b> La franja verde es el costo normal
+      de este producto con su desviación. Barra gris = día dentro de banda. <b style="color:#b91c1c">Roja
+      = el costo se salió</b>. Azul = ese día además hubo un ingreso, que suele ser la causa.
+      Lo que salió en un día rojo ya se fue con ese costo.</div>`;
+}
+
+function tlGrafico(s) {
+    const pos = s.map(x => x.costo).filter(v => v > 0);
+    if (!pos.length) return '';
+    const min = Math.min(...pos), max = Math.max(...pos);
+    const lg = v => v > 0 ? Math.log10(v) : Math.log10(min) - 1;
+    const a = Math.log10(min) - .15, b = Math.log10(max) + .15;
+    const alt = v => Math.max(1, Math.min(100, (lg(v) - a) / (b - a) * 100));
+    const barras = s.map(x => {
+        const cls = x.fuera ? 'fuera' : (x.ent > 0 ? 'ent' : '');
+        const t = [fech(x.fecha) + ' · ' + money(x.costo),
+                   x.media !== null ? 'normal ' + money(x.media) +
+                       (x.sigmas !== null ? '  (' + x.sigmas.toFixed(1) + ' desviaciones)' : '') : '',
+                   x.sal > 0 ? 'salió ' + num(x.sal) : '',
+                   x.tras > 0 ? 'se trasladó ' + num(x.tras) : '',
+                   x.ent > 0 ? 'entró ' + num(x.ent) + ' a ' + money(x.costo_entrada) : ''
+                  ].filter(Boolean).join('\n');
+        return `<div class="tl-b ${cls}" style="height:${alt(x.costo)}%" title="${t.replace(/"/g, '&quot;')}"></div>`;
+    }).join('');
+    const base = [...s].reverse().find(x => x.media !== null && x.desv);
+    let franja = '';
+    if (base) {
+        const lo = Math.max(min * .5, base.media - 2 * base.desv), hi = base.media + 2 * base.desv;
+        franja = `<div class="tl-banda" style="top:${100 - alt(hi)}%;height:${Math.max(1, alt(hi) - alt(lo))}%"></div>
+                  <div class="tl-media" style="top:${100 - alt(base.media)}%"></div>`;
+    }
+    return `<div class="tl">
+        <div class="tl-eje mono"><span>${money(max)}</span><span></span><span>${money(min)}</span></div>
+        <div class="tl-area">${franja}<div class="tl-pts">${barras}</div></div>
+        <div class="ejex" style="margin-left:82px"><span>${fech(s[0].fecha)}</span><span>${fech(s[s.length - 1].fecha)}</span></div>
+    </div>`;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control de Costos — FOODIX</title>
+<style>
+/* Lo primero que se ve es que esta fallando y cuanto cuesta. Las tablas van
+   despues, y solo si alguien quiere entrar al detalle. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font: 14px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
+       background: #eef2f7; color: #0f172a; padding: 24px 22px 60px; }
+.wrap { max-width: 1340px; margin: 0 auto; }
+.mono { font-family: "JetBrains Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+.top { display: flex; justify-content: space-between; align-items: flex-end;
+       gap: 18px; flex-wrap: wrap; margin-bottom: 20px; }
+h1 { font-size: 23px; }
+.sub { color: #64748b; font-size: 13px; }
+.vent button { border: 1px solid #cbd5e1; background: #fff; color: #64748b;
+               font-size: 12px; padding: 7px 15px; cursor: pointer; }
+.vent button:first-child { border-radius: 8px 0 0 8px; }
+.vent button:last-child { border-radius: 0 8px 8px 0; }
+.vent button.on { background: #0f172a; border-color: #0f172a; color: #fff; font-weight: 600; }
+
+/* --- la franja de arriba --- */
+.franja { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+          gap: 13px; margin-bottom: 26px; }
+.f { background: #fff; border: 1px solid #e2e8f0; border-radius: 13px;
+     padding: 17px 19px; cursor: pointer; position: relative;
+     border-top: 4px solid #94a3b8; transition: transform .1s, box-shadow .1s; }
+.f:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(15,23,42,.09); }
+.f.alta { border-top-color: #dc2626; }
+.f.media { border-top-color: #d97706; }
+.f.ok { border-top-color: #059669; }
+.f.abierta { box-shadow: 0 0 0 2px #0f172a; }
+.f .tit { font-size: 13px; font-weight: 700; line-height: 1.35; min-height: 36px; }
+.f .cifra { font-size: 27px; font-weight: 700; margin: 9px 0 2px; }
+.f.alta .cifra { color: #b91c1c; }
+.f.media .cifra { color: #b45309; }
+.f.ok .cifra { color: #15803d; }
+.f .sub2 { font-size: 11.5px; color: #64748b; }
+.f .ver { position: absolute; right: 15px; bottom: 13px; font-size: 11px; color: #94a3b8; }
+
+/* --- el panel que se abre --- */
+.panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 13px;
+         padding: 20px 24px; margin-bottom: 26px; }
+.panel h2 { font-size: 17px; margin-bottom: 4px; }
+.panel .expl { display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+               margin: 14px 0 18px; }
+.expl div { background: #f8fafc; border-radius: 9px; padding: 12px 15px; font-size: 12.5px;
+            color: #475569; line-height: 1.55; }
+.expl b { display: block; font-size: 10px; color: #94a3b8; text-transform: uppercase;
+          letter-spacing: .05em; margin-bottom: 4px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-size: 10px; font-weight: 700; color: #94a3b8;
+     text-transform: uppercase; letter-spacing: .04em; padding: 8px 9px;
+     border-bottom: 1.5px solid #e2e8f0; white-space: nowrap; }
+td { padding: 9px; border-bottom: 1px solid #f1f5f9; }
+th.n, td.n { text-align: right; }
+tbody tr.sel { cursor: pointer; }
+tbody tr.sel:hover { background: #f8fafc; }
+tbody tr.act { background: #eff6ff; }
+.cod { display: block; font-size: 10.5px; color: #94a3b8; }
+.malo { color: #b91c1c; font-weight: 700; }
+.bueno { color: #15803d; }
+.ciego { color: #b45309; font-weight: 700; }
+.pill { font-size: 10px; padding: 1px 7px; border-radius: 4px; margin-left: 5px;
+        background: #dcfce7; color: #15803d; }
+
+h3.sec { font-size: 15px; margin: 0 0 3px; }
+.caja { background: #fff; border: 1px solid #e2e8f0; border-radius: 13px;
+        padding: 18px 22px; margin-bottom: 18px; }
+.barra { display: flex; gap: 13px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.barra input { flex: 1; min-width: 200px; border: 1.5px solid #e2e8f0;
+               border-radius: 8px; padding: 9px 13px; font-size: 14px; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+        gap: 12px; margin: 15px 0; }
+.kpi { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 13px 16px; }
+.kpi.mal { background: #fef2f2; border-color: #fecaca; }
+.kpi .lbl { display: block; font-size: 10px; font-weight: 600; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .05em; }
+.kpi b { display: block; font-size: 23px; margin: 4px 0 5px; }
+.kpi.mal b { color: #b91c1c; }
+.kpi .pie { font-size: 11px; color: #64748b; line-height: 1.45; }
+.warn { color: #b45309; }
+
+.leyenda { display: flex; gap: 17px; flex-wrap: wrap; font-size: 11.5px; color: #475569; margin-bottom: 11px; }
+.leyenda i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
+.dash { width: 17px !important; height: 0 !important; border-top: 2px dashed #059669;
+        border-radius: 0 !important; vertical-align: middle; }
+.graf { position: relative; margin-bottom: 20px; }
+.eje { position: absolute; left: 0; top: 0; width: 64px; height: 200px; display: flex;
+       flex-direction: column; justify-content: space-between; text-align: right;
+       padding-right: 9px; font-size: 10px; color: #cbd5e1; }
+.area { position: relative; height: 200px; margin-left: 64px; border-bottom: 1px solid #e2e8f0; }
+.barras { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; }
+.b { border-radius: 2px 2px 0 0; min-height: 2px; }
+.b:hover { opacity: .55; }
+.mejor-l { position: absolute; left: 0; right: 0; border-top: 2px dashed #059669; z-index: 2; }
+.mejor-l span { position: absolute; left: 5px; top: -16px; font-size: 10px; color: #059669;
+                background: #fff; padding: 0 5px; }
+.fechas { display: flex; justify-content: space-between; margin-left: 64px;
+          font-size: 10px; color: #94a3b8; padding-top: 6px; }
+.salida { border-radius: 10px; padding: 14px 18px; font-size: 12.5px; line-height: 1.55; margin-top: 16px; }
+.salida.ok { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+.salida.mal { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }
+.salida > b { display: block; font-size: 13.5px; margin-bottom: 4px; }
+
+.cargando, .vacio { padding: 34px; text-align: center; color: #94a3b8; font-size: 13px; }
+.error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+         border-radius: 9px; padding: 15px; font-size: 13px; }
+@media (max-width: 720px) { .panel .expl { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <div class="top">
+        <div>
+            <h1>Control de Costos</h1>
+            <p class="sub">Que esta fallando, cuanto cuesta y que hacer.</p>
+        </div>
+        <div class="vent" id="vent"></div>
+    </div>
+
+    <div id="franja" class="cargando">Revisando...</div>
+    <div id="panel"></div>
+
+    <div class="caja">
+        <h3 class="sec">Precios de compra por producto</h3>
+        <p class="sub" style="margin-bottom:12px">Cada barra es un ingreso a bodega. El precio sale
+           del movimiento, asi que tambien se ve lo que entro sin factura.</p>
+        <div class="barra"><input id="buscar" placeholder="Buscar producto o codigo..." autocomplete="off"></div>
+        <div id="lista" class="cargando">Cargando...</div>
+    </div>
+    <div id="detalle"></div>
+</div>
+
+<script>
+const COLORES = ['#1d4ed8', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2', '#be185d'];
+const GRIS = '#b6bcc7', RARO = '#e2e8f0';
+let DIAS = 90, FILAS = [], FALLOS = [], SEL = null, ABIERTO = null;
+
+const $ = id => document.getElementById(id);
+const money = (v, d) => v === null || v === undefined ? '—'
+    : '$' + Number(v).toLocaleString('es-EC', {minimumFractionDigits: d === undefined ? (Math.abs(v) < 10 ? 2 : 0) : d,
+                                               maximumFractionDigits: d === undefined ? (Math.abs(v) < 10 ? 2 : 0) : d});
+const num = v => Math.round(v).toLocaleString('es-EC');
+const pct = v => v === null || v === undefined ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%';
+const MES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const fech = s => { if (!s) return ''; const p = s.split('-');
+                    return parseInt(p[2]) + '-' + MES[parseInt(p[1]) - 1] + '-' + p[0].slice(2); };
+const hace = s => { if (!s) return ''; const d = Math.round((Date.now() - new Date(s + 'T12:00:00')) / 864e5);
+                    return d <= 0 ? 'hoy' : (d === 1 ? 'ayer' : 'hace ' + d + ' d'); };
+
+$('vent').innerHTML = [30, 90, 180, 365].map(n =>
+    `<button data-d="${n}" class="${n === DIAS ? 'on' : ''}">${n === 365 ? '1 año' : n + ' dias'}</button>`).join('');
+$('vent').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    DIAS = +b.dataset.d;
+    [...$('vent').children].forEach(x => x.classList.toggle('on', x === b));
+    ABIERTO = null; $('panel').innerHTML = '';
+    cargarTablero(); cargarLista();
+});
+$('buscar').addEventListener('input', pintarLista);
+
+// ============ LO PRIMERO: QUE ESTA FALLANDO ============
+async function cargarTablero() {
+    $('franja').className = 'cargando';
+    $('franja').textContent = 'Revisando ' + DIAS + ' dias...';
+    try {
+        const d = await (await fetch('/api/costos/tablero?dias=' + DIAS)).json();
+        if (!d.ok) throw new Error(d.error || 'error');
+        FALLOS = d.fallos;
+        $('franja').className = 'franja';
+        $('franja').innerHTML = FALLOS.map((f, i) => `
+            <div class="f ${f.gravedad}" data-i="${i}">
+                <div class="tit">${f.titulo}</div>
+                <div class="cifra mono">${f.valor !== null && f.valor !== undefined ? money(f.valor) : f.cifra}</div>
+                <div class="sub2">${f.valor !== null && f.valor !== undefined ? f.cifra : '&nbsp;'}</div>
+                <span class="ver">ver ›</span>
+            </div>`).join('');
+        $('franja').querySelectorAll('.f').forEach(el =>
+            el.addEventListener('click', () => abrir(+el.dataset.i)));
+    } catch (e) {
+        $('franja').className = '';
+        $('franja').innerHTML = '<div class="error">No se pudo revisar: ' + e.message + '</div>';
+    }
+}
+
+function abrir(i) {
+    if (ABIERTO === i) { ABIERTO = null; $('panel').innerHTML = ''; marcar(); return; }
+    ABIERTO = i; marcar();
+    const f = FALLOS[i];
+    $('panel').innerHTML = `<div class="panel">
+        <h2>${f.titulo}</h2>
+        <p class="sub">${f.resumen}</p>
+        <div class="expl">
+            <div><b>Por que importa</b>${f.porque}</div>
+            <div><b>Que hacer</b>${f.hacer}</div>
+        </div>
+        ${tablaFallo(f)}
+    </div>`;
+    $('panel').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    $('panel').querySelectorAll('tr[data-c]').forEach(tr =>
+        tr.addEventListener('click', () => verProducto(tr.dataset.c)));
+}
+
+function marcar() {
+    $('franja').querySelectorAll('.f').forEach(el =>
+        el.classList.toggle('abierta', +el.dataset.i === ABIERTO));
+}
+
+// Cada revision trae sus propias columnas, asi que la tabla se arma segun cual sea.
+function tablaFallo(f) {
+    if (!f.detalle.length) return '<div class="vacio">Nada que revisar aqui.</div>';
+    const filas = f.detalle.map(x => {
+        const prod = `<td><b>${x.nombre || x.codigo}</b><span class="cod">${x.codigo}</span></td>`;
+        if (f.id === 'envenenado')
+            return `<tr class="sel" data-c="${x.codigo}">${prod}
+                <td class="n mono">${money(x.compra)}</td>
+                <td class="n mono malo">${money(x.salida)}</td>
+                <td class="n mono malo">${x.veces.toFixed(1)}x</td></tr>`;
+        if (f.id === 'precio_raro')
+            return `<tr class="sel" data-c="${x.codigo}">${prod}
+                <td class="n mono">${x.n}</td>
+                <td class="n mono malo">${money(x.precio)}</td>
+                <td class="n mono">${money(x.normal)}</td></tr>`;
+        if (f.id === 'sin_costo')
+            return `<tr class="sel" data-c="${x.codigo}">${prod}
+                <td class="n mono">${x.n} dias</td>
+                <td class="n mono">${num(x.cantidad)}</td></tr>`;
+        return `<tr class="sel" data-c="${x.codigo}">${prod}
+            <td class="n mono">${x.n}</td>
+            <td class="n mono"><b>${money(x.valor)}</b></td></tr>`;
+    }).join('');
+    return `<table><thead><tr>${f.cols.map((c, i) =>
+        `<th class="${i ? 'n' : ''}">${c}</th>`).join('')}</tr></thead><tbody>${filas}</tbody></table>
+        <p class="sub" style="margin-top:10px">Haz clic en cualquier producto para ver todos sus ingresos.</p>`;
+}
+
+// ============ DESPUES: LAS TABLAS ============
+async function cargarLista() {
+    $('lista').className = 'cargando';
+    $('lista').textContent = 'Cargando precios...';
+    try {
+        const d = await (await fetch('/api/costos/compras?dias=' + DIAS)).json();
+        if (!d.ok) throw new Error(d.error || 'error');
+        FILAS = d.filas;
+        pintarLista();
+    } catch (e) {
+        $('lista').className = '';
+        $('lista').innerHTML = '<div class="error">No se pudo cargar: ' + e.message + '</div>';
+    }
+}
+
+function pintarLista() {
+    const q = $('buscar').value.trim().toUpperCase();
+    const f = q ? FILAS.filter(x => (x.nombre || '').toUpperCase().includes(q)
+                                 || x.codigo.toUpperCase().includes(q)) : FILAS;
+    $('lista').className = '';
+    if (!f.length) { $('lista').innerHTML = '<div class="vacio">Nada coincide con "' + q + '"</div>'; return; }
+    $('lista').innerHTML = `<table><thead><tr>
+        <th>Producto</th><th class="n">Ingresos</th><th class="n">Cantidad</th><th class="n">Gasto</th>
+        <th class="n">Mejor</th><th class="n">Ultimo</th><th class="n">Vs mejor</th>
+        <th class="n">Sin factura</th><th class="n">Se pago de mas</th></tr></thead>
+        <tbody>${f.slice(0, 40).map(fila).join('')}</tbody></table>
+        ${f.length > 40 ? '<p class="sub" style="margin-top:10px">40 de ' + f.length + '. Usa el buscador.</p>' : ''}`;
+    $('lista').querySelectorAll('tr[data-c]').forEach(tr =>
+        tr.addEventListener('click', () => verProducto(tr.dataset.c)));
+}
+
+function fila(x) {
+    return `<tr class="sel ${x.codigo === SEL ? 'act' : ''}" data-c="${x.codigo}">
+        <td><b>${x.nombre || x.codigo}</b><span class="cod">${x.codigo}${
+            x.sospechosos ? ' · ' + x.sospechosos + ' a revisar' : ''}</span></td>
+        <td class="n mono">${x.ingresos}</td>
+        <td class="n mono">${num(x.cantidad)} ${x.unidad}</td>
+        <td class="n mono">${money(x.gasto)}</td>
+        <td class="n mono">${money(x.mejor_precio)}</td>
+        <td class="n mono">${money(x.ultimo_precio)}</td>
+        <td class="n mono ${x.vs_mejor >= 15 ? 'malo' : ''}">${pct(x.vs_mejor)}</td>
+        <td class="n mono ${x.pct_sin_factura >= 50 ? 'ciego' : ''}">${x.pct_sin_factura.toFixed(0)}%</td>
+        <td class="n mono"><b>${money(x.pagado_de_mas)}</b></td></tr>`;
+}
+
+async function verProducto(cod) {
+    SEL = cod;
+    document.querySelectorAll('tr[data-c]').forEach(tr => tr.classList.toggle('act', tr.dataset.c === cod));
+    $('detalle').innerHTML = '<div class="caja"><div class="cargando">Cargando ' + cod + '...</div></div>';
+    $('detalle').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    try {
+        const d = await (await fetch('/api/costos/compras/producto?codigo=' +
+                                     encodeURIComponent(cod) + '&dias=' + DIAS)).json();
+        if (!d.ok) throw new Error(d.error || 'error');
+        $('detalle').innerHTML = '<div class="caja">' + render(d) + '</div>';
+    } catch (e) {
+        $('detalle').innerHTML = '<div class="caja"><div class="error">' + cod + ': ' + e.message + '</div></div>';
+    }
+}
+
+function render(d) {
+    const r = d.resumen, col = {};
+    let k = 0;
+    d.proveedores.forEach(p => col[p.proveedor] = p.sin_factura ? GRIS : COLORES[k++ % COLORES.length]);
+    const kpi = (t, v, pie, mal) => `<div class="kpi ${mal ? 'mal' : ''}">
+        <span class="lbl">${t}</span><b class="mono">${v}</b><span class="pie">${pie}</span></div>`;
+
+    return `<h3 class="sec">${d.nombre} <span style="color:#94a3b8;font-weight:400">(${d.codigo})</span></h3>
+    <p class="sub">cada barra es un ingreso · $ por ${d.unidad}</p>
+    <div class="kpis">
+      ${kpi('Ultimo precio pagado', money(r.ultimo_precio) + '/' + d.unidad,
+            fech(r.ultima_fecha) + ' · ' + r.ultimo_proveedor +
+            (r.ultimo_sospechoso ? ` · <span class="warn">⚠ el ingreso del ${fech(r.sospechoso_fecha)} a ${money(r.sospechoso_precio)} no se cree</span>` : ''))}
+      ${kpi('Mejor precio en ' + d.dias + ' dias', money(r.mejor_precio) + '/' + d.unidad,
+            fech(r.mejor_fecha) + ' (' + hace(r.mejor_fecha) + ') · ' + r.mejor_proveedor)}
+      ${kpi('Ultimo vs mejor', pct(r.vs_mejor),
+            money(r.pagado_de_mas) + ' pagados por encima del mejor precio', r.vs_mejor >= 15)}
+      ${kpi('Ingresos en la ventana', r.n,
+            `${r.n_series} proveedor${r.n_series > 1 ? 'es' : ''} · ${num(r.cantidad)} ${d.unidad} · ${money(r.gasto)}
+             · ${r.pct_sin_factura.toFixed(1)}% sin factura` + (r.n_sospechosas ? ` · ${r.n_sospechosas} para revisar` : ''))}
+    </div>
+    <div class="leyenda">
+      ${d.proveedores.map(p => `<span><i style="background:${col[p.proveedor]}"></i>${p.proveedor}</span>`).join('')}
+      ${r.n_sospechosas ? `<span><i style="background:${RARO}"></i>Registro sospechoso (no entra en el mejor precio)</span>` : ''}
+      <span><i class="dash"></i>mejor precio</span>
+    </div>
+    ${grafico(d, col)}
+    <table><thead><tr><th>Proveedor</th><th class="n">Ingresos</th><th class="n">Cantidad</th>
+      <th class="n">Gasto</th><th class="n">Precio prom.</th><th class="n">Minimo</th>
+      <th class="n">Ultimo</th></tr></thead><tbody>
+      ${d.proveedores.map(p => `<tr>
+        <td><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:8px;background:${col[p.proveedor]}"></i>${p.proveedor}
+            ${p.mejor ? '<span class="pill">mejor precio</span>' : ''}</td>
+        <td class="n mono">${p.compras}</td><td class="n mono">${num(p.cantidad)} ${d.unidad}</td>
+        <td class="n mono">${money(p.gasto)} <span style="color:#94a3b8">(${p.parte.toFixed(1)}%)</span></td>
+        <td class="n mono">${money(p.promedio)}</td><td class="n mono bueno">${money(p.minimo)}</td>
+        <td class="n mono">${money(p.ultimo)} <span style="color:#94a3b8">${fech(p.ultima_fecha)}</span></td>
+      </tr>`).join('')}</tbody></table>
+    ${salida(d)}`;
+}
+
+function salida(d) {
+    const s = d.salida;
+    if (!s) return '';
+    const mal = s.envenenado;
+    return `<div class="salida ${mal ? 'mal' : 'ok'}">
+      <b>¿A que costo salio a ventas?</b>
+      Sale a <b>${money(s.tipico)}/${d.unidad}</b> (entre ${money(s.minimo)} y ${money(s.maximo)}
+      en ${s.dias} dias) y se compra a ${money(d.resumen.mejor_precio)}/${d.unidad}.
+      ${mal ? `<b>Sale ${s.veces_compra.toFixed(1)} veces mas caro de lo que entra.</b>
+        Con esa diferencia, el margen de este producto y cualquier informe que lo incluya estan mal.
+        Casi siempre es porque el stock quedo en negativo.`
+      : 'Los dos numeros se parecen, asi que el costo de salida es sano.'}</div>`;
+}
+
+function grafico(d, col) {
+    const g = d.ingresos;
+    if (!g.length) return '<div class="vacio">Sin ingresos en la ventana</div>';
+    const mejor = d.resumen.mejor_precio;
+    const tope = Math.max(...g.filter(x => !x.sospechosa).map(x => x.precio), mejor) * 1.15;
+    const w = Math.max(2, Math.min(15, Math.floor(900 / g.length) - 2));
+    const barras = g.map(x => {
+        const h = Math.min(100, tope ? x.precio / tope * 100 : 0);
+        const c = x.sospechosa ? RARO : (col[x.proveedor] || GRIS);
+        const vs = (mejor && !x.sospechosa)
+            ? '  ' + (x.precio > mejor ? '+' : '') + ((x.precio - mejor) / mejor * 100).toFixed(1) + '% vs mejor' : '';
+        const t = [fech(x.fecha) + ' · ' + x.proveedor,
+                   money(x.precio) + '/' + d.unidad + vs,
+                   'Cantidad: ' + num(x.cantidad) + ' ' + d.unidad + ' · Valor: ' + money(x.valor),
+                   x.bodega ? 'Recibio: ' + x.bodega : '',
+                   'Ingreso: ' + x.ingreso + (x.factura ? ' · factura ' + x.factura : ' · sin factura enlazada'),
+                   x.sospechosa ? 'Precio fuera de rango: no entra en el mejor precio' : ''
+                  ].filter(Boolean).join('\n');
+        return `<div class="b" style="height:${h}%;width:${w}px;background:${c}" title="${t.replace(/"/g, '&quot;')}"></div>`;
+    }).join('');
+    return `<div class="graf">
+      <div class="eje mono"><span>${money(tope)}</span><span>${money(tope / 2)}</span><span>$0</span></div>
+      <div class="area">
+        <div class="mejor-l" style="top:${tope ? 100 - mejor / tope * 100 : 100}%">
+          <span>mejor ${money(mejor)}/${d.unidad}</span></div>
+        <div class="barras">${barras}</div>
+      </div>
+      <div class="fechas"><span>${fech(g[0].fecha)}</span><span>${fech(g[g.length - 1].fecha)}</span></div>
+    </div>`;
+}
+
+cargarTablero();
+cargarLista();
+</script>
+</body>
+</html>

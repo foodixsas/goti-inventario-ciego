@@ -444,6 +444,25 @@ def index():
     html = html.replace('</head>', inject + '</head>')
     return html
 
+@app.route('/costos')
+def pagina_costos():
+    """El tablero de costos, en su propia pagina."""
+    with open(os.path.join(app.static_folder, 'costos.html'), 'r', encoding='utf-8') as f:
+        return f.read()
+
+
+@app.route('/precios')
+def pagina_precios():
+    """Precios de compra, en su propia pagina.
+
+    Aparte del index a proposito: no depende del menu, ni de app.js, ni de que
+    el navegador suelte el cache de un archivo de 500 KB.
+    """
+    ruta = os.path.join(app.static_folder, 'precios.html')
+    with open(ruta, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
 @app.route('/establecer-clave')
 def pagina_establecer_clave():
     """Pagina publica donde el usuario establece su contrasena."""
@@ -10671,6 +10690,1443 @@ def costos_refrescar():
         if conn:
             try: conn.autocommit = False
             except Exception: pass
+            fc_release_movimientos_db(conn)
+
+
+# ============================================================
+# MODULO: Precios de Compra
+# ============================================================
+# Cada barra de esta pantalla es un INGRESO -un ING de
+# contifico_movimientos-, no una linea de factura. Es la diferencia que
+# importa: la factura dice lo que se pidio, el ingreso dice lo que entro a la
+# bodega, y son dos cosas distintas. De las papas francesas entraron 140
+# ingresos en 90 dias y solo 84 traen una factura enlazada.
+#
+# El precio de cada ingreso sale de total_movimiento partido para la cantidad.
+# No de precio, que viene en cero en 140 de 140. Para CONG001 eso da 1,25 el
+# kilo, y los ingresos a 12,50 son los que hay que revisar.
+#
+# La unidad se resuelve sola y sin adivinar: un movimiento siempre viene en la
+# unidad con la que Contifico lleva el producto. Si es Gramos, se muestra por
+# kilo. Con las facturas esto era imposible, porque cada proveedor factura como
+# quiere -el mismo producto en kilos y en gramos-.
+#
+# El proveedor se saca del numero de factura que alguien escribio en la
+# descripcion del ingreso. Cuando no hay numero, la mercaderia entro sin
+# factura enlazada y no se sabe de quien vino: es la serie mas grande de todas,
+# el 55% del dinero, y es el punto ciego mas grande que tiene esto.
+
+CP_DIAS = 90                  # ventana por defecto
+CP_FACTOR_SOSPECHOSO = 5.0    # veces la mediana para no creerse un precio
+CP_SIN_FACTURA = 'Sin factura (ingreso manual)'
+
+# El numero de factura tal como lo escriben: 001-010-000000276
+CP_RE_FACTURA = r'([0-9]{3})-([0-9]{3})-0*([0-9]{4,})'
+
+# Los ingresos de la ventana, con su precio unitario y su numero de factura si
+# es que lo trae escrito.
+CP_SQL_ING = """
+    ing AS (
+        SELECT m.producto_id, m.fecha, m.codigo, m.cantidad,
+               m.total_movimiento AS valor,
+               m.total_movimiento / NULLIF(m.cantidad, 0) AS pu,
+               m.bodega_destino_id, m.descripcion,
+               substring(m.descripcion from %(re)s) IS NOT NULL AS con_factura
+        FROM contifico_movimientos m
+        WHERE m.tipo = 'ING'
+          AND m.fecha >= CURRENT_DATE - %(d)s
+          AND m.cantidad > 0 AND m.total_movimiento > 0
+    ),
+    med AS (
+        SELECT producto_id,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY pu) AS m
+        FROM ing GROUP BY producto_id
+    ),
+    marc AS (
+        -- Ni por arriba ni por abajo: un precio cinco veces la mediana no se
+        -- cree, y uno cinco veces por debajo tampoco. Sin el lado bajo, el
+        -- "mejor precio" lo fija un dato roto y todo lo demas sale mal.
+        SELECT i.*, (d.m > 0 AND (i.pu > d.m * %(fac)s OR i.pu < d.m / %(fac)s)) AS rara
+        FROM ing i JOIN med d ON d.producto_id = i.producto_id
+    )
+"""
+
+
+def cp_unidad(unidad):
+    """Como mostrar los precios de un producto.
+
+    Un movimiento siempre viene en la unidad de Contifico, asi que aqui no hay
+    nada que adivinar: gramos se muestran por kilo, mililitros por litro.
+    """
+    u = (unidad or '').strip().upper()
+    if u == 'GRAMOS':
+        return 'kg', 1000.0
+    if u == 'MILILITROS':
+        return 'L', 1000.0
+    return (unidad or 'unidad').lower(), 1.0
+
+
+def cp_proveedores_por_factura(cur, dias):
+    """De que proveedor es cada numero de factura."""
+    cur.execute("""
+        SELECT num_documento, max(persona) FROM fact_detallada_compras
+        WHERE fecha >= CURRENT_DATE - %s - 45 AND persona IS NOT NULL
+        GROUP BY num_documento
+    """, (dias,))
+    import re as _re
+    rx = _re.compile(CP_RE_FACTURA)
+    mapa = {}
+    for doc, per in cur.fetchall():
+        m = rx.search(doc or '')
+        if m:
+            mapa['%s-%s-%s' % (m.group(1), m.group(2), m.group(3))] = per
+    return mapa
+
+
+@app.route('/api/costos/compras', methods=['GET'])
+def costos_compras():
+    """Donde se esta pagando de mas, ordenado por cuanto."""
+    conn = None
+    try:
+        dias = min(int(request.args.get('dias', CP_DIAS)), 365)
+        p = {'d': dias, 'fac': CP_FACTOR_SOSPECHOSO, 're': CP_RE_FACTURA}
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '120s'")
+        cur.execute("WITH " + CP_SQL_ING + """,
+            mejor AS (
+                SELECT producto_id, min(pu) AS mp
+                FROM marc WHERE NOT rara GROUP BY producto_id
+            ),
+            tot AS (
+                SELECT producto_id, count(*) AS n, sum(cantidad) AS q,
+                       sum(valor) AS g, count(*) FILTER (WHERE rara) AS nr,
+                       sum(valor) FILTER (WHERE NOT con_factura) AS g_sin,
+                       count(DISTINCT date_trunc('day', fecha)) AS ndias
+                FROM marc GROUP BY producto_id
+            ),
+            ultima AS (
+                SELECT DISTINCT ON (producto_id) producto_id, fecha, pu
+                FROM marc WHERE NOT rara ORDER BY producto_id, fecha DESC, valor DESC
+            ),
+            demas AS (
+                SELECT m.producto_id, sum((m.pu - j.mp) * m.cantidad) AS dm
+                FROM marc m JOIN mejor j ON j.producto_id = m.producto_id
+                WHERE NOT m.rara GROUP BY m.producto_id
+            )
+            SELECT pr.codigo, pr.nombre, coalesce(u.nombre, ''),
+                   t.n, t.q, t.g, t.nr, coalesce(t.g_sin, 0),
+                   j.mp, ul.pu, ul.fecha, coalesce(d.dm, 0)
+            FROM tot t
+            JOIN contifico_productos pr ON pr.id = t.producto_id
+            LEFT JOIN contifico_unidades u ON u.id = pr.unidad_id
+            JOIN mejor j  ON j.producto_id = t.producto_id
+            JOIN ultima ul ON ul.producto_id = t.producto_id
+            LEFT JOIN demas d ON d.producto_id = t.producto_id
+            WHERE t.n >= 2
+            ORDER BY coalesce(d.dm, 0) DESC
+            LIMIT 150
+        """, p)
+
+        filas = []
+        for r in cur.fetchall():
+            uni, factor = cp_unidad(r[2])
+            mejor = float(r[8] or 0) * factor
+            ultimo = float(r[9] or 0) * factor
+            gasto = float(r[5] or 0)
+            filas.append({
+                'codigo': r[0], 'nombre': r[1], 'unidad': uni,
+                'ingresos': r[3], 'cantidad': float(r[4] or 0) / factor,
+                'gasto': gasto, 'sospechosos': r[6],
+                'pct_sin_factura': (float(r[7] or 0) / gasto * 100) if gasto else 0,
+                'mejor_precio': mejor, 'ultimo_precio': ultimo,
+                'ultima_fecha': r[10].isoformat() if r[10] else None,
+                'pagado_de_mas': float(r[11] or 0),
+                'vs_mejor': ((ultimo - mejor) / mejor * 100) if mejor else None,
+            })
+
+        return jsonify({'ok': True, 'dias': dias, 'filas': filas,
+                        'pagado_de_mas': sum(f['pagado_de_mas'] for f in filas)})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/compras/producto', methods=['GET'])
+def costos_compras_producto():
+    """Un producto: cada ingreso, de quien vino y a que precio."""
+    conn = None
+    try:
+        codigo = (request.args.get('codigo') or '').strip().upper()
+        if not codigo:
+            return jsonify({'error': 'codigo requerido'}), 400
+        dias = min(int(request.args.get('dias', CP_DIAS)), 365)
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '120s'")
+
+        cur.execute("""
+            SELECT p.id, p.nombre, coalesce(u.nombre, '')
+            FROM contifico_productos p
+            LEFT JOIN contifico_unidades u ON u.id = p.unidad_id
+            WHERE p.codigo = %s""", (codigo,))
+        info = cur.fetchone()
+        if not info:
+            return jsonify({'error': 'producto %s no esta en el catalogo' % codigo}), 404
+        pid, nombre, unidad = info
+        uni, factor = cp_unidad(unidad)
+
+        cur.execute("""
+            SELECT m.fecha, m.codigo, m.cantidad, m.total_movimiento,
+                   coalesce(b.nombre, ''), m.descripcion
+            FROM contifico_movimientos m
+            LEFT JOIN contifico_bodegas b ON b.id = m.bodega_destino_id
+            WHERE m.producto_id = %s AND m.tipo = 'ING'
+              AND m.fecha >= CURRENT_DATE - %s
+              AND m.cantidad > 0 AND m.total_movimiento > 0
+            ORDER BY m.fecha, m.codigo""", (pid, dias))
+        crudos = cur.fetchall()
+
+        porfactura = cp_proveedores_por_factura(cur, dias)
+        cur.execute("""SELECT DISTINCT persona FROM fact_detallada_compras
+                       WHERE persona IS NOT NULL AND length(persona) > 8""")
+        personas = [x[0] for x in cur.fetchall()]
+
+        import re as _re
+        rx = _re.compile(CP_RE_FACTURA)
+        ingresos = []
+        for f, cod, q, tot, bod, desc in crudos:
+            q = float(q or 0)
+            precio = (float(tot or 0) / q * factor) if q else 0.0
+            factura, prov = None, None
+            m = rx.search(desc or '')
+            if m:
+                factura = '%s-%s-%s' % (m.group(1), m.group(2), m.group(3))
+                prov = porfactura.get(factura)
+            if not prov:
+                # A veces el nombre del proveedor esta escrito y el numero no
+                d = (desc or '').upper()
+                for x in personas:
+                    if x.upper()[:16] in d:
+                        prov = x
+                        break
+            ingresos.append({
+                'fecha': f.isoformat(), 'ingreso': cod,
+                'cantidad': q / factor, 'valor': float(tot or 0),
+                'precio': precio, 'bodega': bod,
+                'factura': factura, 'proveedor': prov or CP_SIN_FACTURA,
+                'sin_factura': not bool(m),
+            })
+
+        precios = sorted(x['precio'] for x in ingresos if x['precio'] > 0)
+        mediana = precios[len(precios) // 2] if precios else 0
+        for x in ingresos:
+            x['sospechosa'] = bool(mediana and (x['precio'] > mediana * CP_FACTOR_SOSPECHOSO
+                                                or x['precio'] < mediana / CP_FACTOR_SOSPECHOSO))
+
+        creibles = [x for x in ingresos if not x['sospechosa']]
+        mejor = min((x['precio'] for x in creibles), default=0.0)
+        mejor_x = next((x for x in creibles if x['precio'] == mejor), None)
+        ultima = creibles[-1] if creibles else None
+        ultima_real = ingresos[-1] if ingresos else None
+        pagado_de_mas = sum((x['precio'] - mejor) * x['cantidad'] for x in creibles)
+
+        series = {}
+        for x in ingresos:
+            s = series.setdefault(x['proveedor'], {
+                'proveedor': x['proveedor'], 'compras': 0, 'cantidad': 0.0,
+                'gasto': 0.0, 'minimo': None, 'ultimo': None, 'ultima_fecha': None,
+                'sin_factura': x['proveedor'] == CP_SIN_FACTURA})
+            s['compras'] += 1
+            s['cantidad'] += x['cantidad']
+            s['gasto'] += x['valor']
+            if not x['sospechosa']:
+                s['minimo'] = x['precio'] if s['minimo'] is None else min(s['minimo'], x['precio'])
+            if s['ultima_fecha'] is None or x['fecha'] >= s['ultima_fecha']:
+                s['ultima_fecha'], s['ultimo'] = x['fecha'], x['precio']
+        gasto = sum(s['gasto'] for s in series.values())
+        proveedores = sorted(series.values(), key=lambda x: -x['gasto'])
+        for s in proveedores:
+            s['promedio'] = s['gasto'] / s['cantidad'] if s['cantidad'] else 0
+            s['parte'] = (s['gasto'] / gasto * 100) if gasto else 0
+            s['mejor'] = s['minimo'] is not None and mejor and abs(s['minimo'] - mejor) < 1e-9
+
+        # A que costo salio a ventas: si el costo de salida se envenena, el
+        # producto ensucia todos los informes aunque se haya comprado bien.
+        cur.execute("""
+            SELECT min(costo_unitario), max(costo_unitario),
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY costo_unitario),
+                   count(*)
+            FROM costos_resumen_diario
+            WHERE codigo_prod = %s AND tipo = 'EGR' AND costo_unitario > 0
+              AND fecha >= CURRENT_DATE - %s""", (codigo, dias))
+        c = cur.fetchone()
+        salida = None
+        if c and c[3]:
+            cmed = float(c[2] or 0)
+            cmax = float(c[1] or 0)
+            # El costo de salida se juzga contra lo que costo comprar. Medirlo
+            # contra si mismo no sirve: si esta mal todos los dias, la mediana
+            # tambien esta mal y no salta nada.
+            salida = {
+                'minimo': float(c[0] or 0) * factor, 'maximo': cmax * factor,
+                'tipico': cmed * factor, 'dias': c[3],
+                'veces_compra': (cmed * factor / mejor) if mejor else None,
+                'envenenado': bool(mejor and cmed * factor > mejor * 3),
+            }
+
+        return jsonify({
+            'ok': True, 'codigo': codigo, 'nombre': nombre, 'unidad': uni,
+            'dias': dias, 'ingresos': ingresos, 'proveedores': proveedores,
+            'salida': salida,
+            'resumen': {
+                'n': len(ingresos),
+                'n_sospechosas': sum(1 for x in ingresos if x['sospechosa']),
+                'n_series': len(proveedores),
+                'cantidad': sum(x['cantidad'] for x in ingresos),
+                'gasto': gasto,
+                'pct_sin_factura': (sum(s['gasto'] for s in proveedores if s['sin_factura'])
+                                    / gasto * 100) if gasto else 0,
+                'mejor_precio': mejor,
+                'mejor_fecha': mejor_x['fecha'] if mejor_x else None,
+                'mejor_proveedor': mejor_x['proveedor'] if mejor_x else None,
+                'ultimo_precio': ultima['precio'] if ultima else None,
+                'ultima_fecha': ultima['fecha'] if ultima else None,
+                'ultimo_proveedor': ultima['proveedor'] if ultima else None,
+                'ultimo_sospechoso': bool(ultima_real['sospechosa']) if ultima_real else False,
+                'sospechoso_precio': (ultima_real['precio']
+                                      if ultima_real and ultima_real['sospechosa'] else None),
+                'sospechoso_fecha': (ultima_real['fecha']
+                                     if ultima_real and ultima_real['sospechosa'] else None),
+                'vs_mejor': (((ultima['precio'] - mejor) / mejor * 100)
+                             if ultima and mejor else None),
+                'pagado_de_mas': pagado_de_mas,
+            },
+        })
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+# ============================================================
+# MODULO: Tablero de fallos
+# ============================================================
+# Lo primero que tiene que ver un gerente no es una tabla de precios: es que
+# esta roto, cuanto cuesta y que hacer. Las tablas van despues.
+#
+# Cada revision devuelve lo mismo -cuanta plata, cuantos productos, quienes
+# son los peores y que hacer- para que la pantalla las pinte todas igual y se
+# puedan ordenar por dinero.
+
+TB_DIAS = 90
+
+
+@app.route('/api/costos/tablero', methods=['GET'])
+def costos_tablero():
+    """Las seis cosas que pueden estar mal, con su costo."""
+    conn = None
+    try:
+        dias = min(int(request.args.get('dias', TB_DIAS)), 365)
+        p = {'d': dias, 'fac': CP_FACTOR_SOSPECHOSO, 're': CP_RE_FACTURA}
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '150s'")
+        fallos = []
+
+        # ---- 1. Mercaderia que entro sin factura -------------------------
+        # No se sabe de quien vino ni si el precio fue el pactado. Es el punto
+        # ciego mas grande: sobre esa plata no se puede negociar nada.
+        cur.execute("WITH " + CP_SQL_ING + """
+            SELECT coalesce(sum(valor) FILTER (WHERE NOT con_factura), 0),
+                   coalesce(sum(valor), 0),
+                   count(*) FILTER (WHERE NOT con_factura),
+                   count(DISTINCT producto_id) FILTER (WHERE NOT con_factura)
+            FROM marc
+        """, p)
+        sf, tot, nsf, psf = cur.fetchone()
+        sf, tot = float(sf or 0), float(tot or 0)
+        cur.execute("WITH " + CP_SQL_ING + """
+            SELECT pr.codigo, pr.nombre, sum(m.valor), count(*)
+            FROM marc m JOIN contifico_productos pr ON pr.id = m.producto_id
+            WHERE NOT m.con_factura
+            GROUP BY pr.codigo, pr.nombre ORDER BY sum(m.valor) DESC LIMIT 12
+        """, p)
+        fallos.append({
+            'id': 'sin_factura', 'titulo': 'Mercaderia que entro sin factura',
+            'valor': sf, 'gravedad': 'alta' if tot and sf / tot > 0.4 else 'media',
+            'cifra': '%.0f%% de todo lo que entro' % (100 * sf / tot if tot else 0),
+            'resumen': ('%s de %s en %d dias entraron sin un numero de factura en el ingreso, '
+                        'repartidos en %d ingresos de %d productos.'
+                        % (fc_money(sf), fc_money(tot), dias, nsf or 0, psf or 0)),
+            'porque': ('Sin factura enlazada no se sabe de que proveedor vino ni si se pago el '
+                       'precio pactado. Sobre esa plata no se puede negociar ni reclamar.'),
+            'hacer': 'Exigir que el ingreso lleve el numero de factura. Es un campo, no un proceso nuevo.',
+            'detalle': [{'codigo': r[0], 'nombre': r[1], 'valor': float(r[2] or 0), 'n': r[3]}
+                        for r in cur.fetchall()],
+            'cols': ['Producto', 'Ingresos', 'Entro sin factura'],
+        })
+
+        # ---- 2. Consumo que no se puede valorizar ------------------------
+        # Si Contifico no le pone costo, el producto no existe para ningun
+        # informe: no se puede saber cuanto costo lo que se consumio.
+        cur.execute("""
+            SELECT count(*) FILTER (WHERE coalesce(valor, 0) = 0), count(*),
+                   count(DISTINCT codigo_prod) FILTER (WHERE coalesce(valor, 0) = 0),
+                   count(DISTINCT codigo_prod)
+            FROM costos_resumen_diario
+            WHERE tipo = 'EGR' AND fecha >= CURRENT_DATE - %s
+        """, (dias,))
+        lc, lt, pc, pt = cur.fetchone()
+        cur.execute("""
+            SELECT codigo_prod, max(nombre_prod), max(categoria),
+                   count(DISTINCT fecha), sum(cantidad)
+            FROM costos_resumen_diario
+            WHERE tipo = 'EGR' AND fecha >= CURRENT_DATE - %s
+            GROUP BY codigo_prod HAVING sum(coalesce(valor, 0)) = 0
+            ORDER BY count(DISTINCT fecha) DESC, sum(cantidad) DESC LIMIT 12
+        """, (dias,))
+        fallos.append({
+            'id': 'sin_costo', 'titulo': 'Productos que se consumen sin costo',
+            'valor': None, 'gravedad': 'alta' if pt and pc / pt > 0.25 else 'media',
+            'cifra': '%d de %d productos' % (pc or 0, pt or 0),
+            'resumen': ('%d productos se movieron en %d dias y Contifico no les asigna costo, '
+                        'asi que su consumo vale cero. Son %d de %d lineas de movimiento.'
+                        % (pc or 0, dias, lc or 0, lt or 0)),
+            'porque': ('Un producto sin costo es invisible: no aparece en variaciones, no suma al '
+                       'consumo y no se puede saber si se gasto de mas. Son casi todos los '
+                       'procesados en bodega -salsas, zumos, carnicos-.'),
+            'hacer': 'Ponerles costo en Contifico, o costearlos desde la formula de produccion.',
+            'detalle': [{'codigo': r[0], 'nombre': r[1], 'categoria': r[2],
+                         'n': r[3], 'cantidad': float(r[4] or 0)} for r in cur.fetchall()],
+            'cols': ['Producto', 'Dias con movimiento', 'Cantidad sin valorizar'],
+        })
+
+        # ---- 3. Costo de salida envenenado -------------------------------
+        # Se compra bien y se descarga la venta a un costo disparatado. Ahi el
+        # margen de ese producto y todo informe que lo incluya estan mal.
+        cur.execute("WITH " + CP_SQL_ING + """,
+            mejor AS (SELECT producto_id, min(pu) mp FROM marc WHERE NOT rara GROUP BY producto_id),
+            compra AS (
+                SELECT pr.codigo, m.mp,
+                       CASE WHEN upper(coalesce(u.nombre, '')) IN ('GRAMOS', 'MILILITROS')
+                            THEN 1000.0 ELSE 1.0 END AS factor
+                FROM mejor m
+                JOIN contifico_productos pr ON pr.id = m.producto_id
+                LEFT JOIN contifico_unidades u ON u.id = pr.unidad_id
+            ),
+            venta AS (
+                SELECT codigo_prod,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY costo_unitario) cu,
+                       sum(valor) gastado, max(nombre_prod) nombre
+                FROM costos_resumen_diario
+                WHERE tipo = 'EGR' AND costo_unitario > 0 AND fecha >= CURRENT_DATE - %(d)s
+                GROUP BY codigo_prod
+            )
+            SELECT v.codigo_prod, v.nombre, v.cu * c.factor, c.mp * c.factor,
+                   (v.cu * c.factor) / NULLIF(c.mp * c.factor, 0), v.gastado
+            FROM venta v JOIN compra c ON c.codigo = v.codigo_prod
+            WHERE c.mp > 0 AND v.cu * c.factor > c.mp * c.factor * 3
+            ORDER BY v.gastado DESC LIMIT 12
+        """, p)
+        env = [{'codigo': r[0], 'nombre': r[1], 'salida': float(r[2] or 0),
+                'compra': float(r[3] or 0), 'veces': float(r[4] or 0),
+                'valor': float(r[5] or 0)} for r in cur.fetchall()]
+        fallos.append({
+            'id': 'envenenado', 'titulo': 'Sale a ventas mucho mas caro de lo que entra',
+            'valor': sum(x['valor'] for x in env),
+            'gravedad': 'alta' if env else 'ok',
+            'cifra': '%d productos' % len(env),
+            'resumen': ('%d productos se descargan a ventas a un costo que no se parece al que se '
+                        'compraron. Se valorizo %s de consumo con esos costos.'
+                        % (len(env), fc_money(sum(x['valor'] for x in env)))),
+            'porque': ('El costo de salida lo calcula Contifico como promedio ponderado, y deja de '
+                       'tener sentido cuando el stock queda en negativo. Con eso mal, el margen '
+                       'del producto y cualquier informe que lo incluya estan mal.'),
+            'hacer': 'Revisar el stock de esos productos antes que el costo: casi siempre esta negativo.',
+            'detalle': env,
+            'cols': ['Producto', 'Entra a', 'Sale a', 'Veces'],
+        })
+
+        # ---- 4. Precios imposibles en el ingreso -------------------------
+        cur.execute("WITH " + CP_SQL_ING + """
+            SELECT pr.codigo, pr.nombre, count(*), sum(m.valor),
+                   max(m.pu), min(d.m)
+            FROM marc m
+            JOIN contifico_productos pr ON pr.id = m.producto_id
+            JOIN med d ON d.producto_id = m.producto_id
+            WHERE m.rara
+            GROUP BY pr.codigo, pr.nombre
+            ORDER BY sum(m.valor) DESC LIMIT 12
+        """, p)
+        raros = [{'codigo': r[0], 'nombre': r[1], 'n': r[2], 'valor': float(r[3] or 0),
+                  'precio': float(r[4] or 0), 'normal': float(r[5] or 0)}
+                 for r in cur.fetchall()]
+        cur.execute("WITH " + CP_SQL_ING + """
+            SELECT count(*), coalesce(sum(valor), 0), count(DISTINCT producto_id)
+            FROM marc WHERE rara""", p)
+        nr, vr, prr = cur.fetchone()
+        fallos.append({
+            'id': 'precio_raro', 'titulo': 'Ingresos con un precio que no puede ser',
+            'valor': float(vr or 0), 'gravedad': 'alta' if (nr or 0) > 50 else 'media',
+            'cifra': '%d ingresos' % (nr or 0),
+            'resumen': ('%d ingresos de %d productos entraron a un precio muy distinto al habitual '
+                        'de ese mismo producto, por %s.' % (nr or 0, prr or 0, fc_money(vr))),
+            'porque': ('Un precio fuera de escala casi siempre es la unidad mal puesta: gramos '
+                       'donde van kilos, o al reves. Ensucia el costo del producto y arrastra '
+                       'los informes de las semanas siguientes.'),
+            'hacer': 'Corregir esos ingresos en Contifico. Estan listados con su numero.',
+            'detalle': raros,
+            'cols': ['Producto', 'Ingresos', 'Precio puesto', 'Precio normal'],
+        })
+
+        # ---- 5. Se paga de mas ------------------------------------------
+        cur.execute("WITH " + CP_SQL_ING + """,
+            mejor AS (SELECT producto_id, min(pu) mp FROM marc WHERE NOT rara GROUP BY producto_id),
+            demas AS (
+                SELECT m.producto_id, sum((m.pu - j.mp) * m.cantidad) dm, count(*) n
+                FROM marc m JOIN mejor j ON j.producto_id = m.producto_id
+                WHERE NOT m.rara GROUP BY m.producto_id
+            )
+            SELECT pr.codigo, pr.nombre, d.dm, d.n
+            FROM demas d JOIN contifico_productos pr ON pr.id = d.producto_id
+            WHERE d.dm > 0 ORDER BY d.dm DESC LIMIT 12
+        """, p)
+        caros = [{'codigo': r[0], 'nombre': r[1], 'valor': float(r[2] or 0), 'n': r[3]}
+                 for r in cur.fetchall()]
+        cur.execute("WITH " + CP_SQL_ING + """,
+            mejor AS (SELECT producto_id, min(pu) mp FROM marc WHERE NOT rara GROUP BY producto_id)
+            SELECT coalesce(sum((m.pu - j.mp) * m.cantidad), 0)
+            FROM marc m JOIN mejor j ON j.producto_id = m.producto_id WHERE NOT m.rara""", p)
+        dm = float(cur.fetchone()[0] or 0)
+        fallos.append({
+            'id': 'pagado_de_mas', 'titulo': 'Se pago mas que el mejor precio del mismo producto',
+            'valor': dm, 'gravedad': 'media',
+            'cifra': fc_money(dm),
+            'resumen': ('Comprando siempre al mejor precio que ya se consiguio para cada producto, '
+                        'se habrian ahorrado %s en %d dias.' % (fc_money(dm), dias)),
+            'porque': ('El mismo producto entra a precios distintos segun el proveedor y el dia. '
+                       'La diferencia contra el mejor precio conseguido es lo que se dejo sobre la mesa.'),
+            'hacer': 'Mirar los de arriba: ahi esta concentrada casi toda la diferencia.',
+            'detalle': caros,
+            'cols': ['Producto', 'Ingresos', 'Se pago de mas'],
+        })
+
+        fallos.sort(key=lambda x: -(x['valor'] or 0))
+        return jsonify({'ok': True, 'dias': dias, 'fallos': fallos})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+def fc_money(v):
+    """Un numero de dinero, corto y legible."""
+    try:
+        v = float(v or 0)
+    except (TypeError, ValueError):
+        return '$0'
+    return '$%s' % format(int(round(v)), ',d').replace(',', '.')
+
+
+# ============================================================
+# MODULO: Costos - ventanas envenenadas
+# ============================================================
+# Contifico no reprocesa hacia atras. Si un producto entra con el costo mal,
+# todo lo que sale o se traslada mientras ese costo esta vigente se va con el
+# costo malo, y corregir el ingreso despues no repara nada. Por eso no alcanza
+# con mirar el ingreso ni con mirar la salida: hay que mirar la linea de tiempo
+# del producto y encontrar las ventanas en las que el costo estuvo roto.
+#
+# Todo sale de contifico_movimientos y de un solo campo:
+#
+#     costo unitario = total_movimiento / cantidad
+#
+# total_movimiento esta en el 99% de los movimientos; costo_promedio solo en el
+# 60%, y por leerlo a el parecia que 168 productos no tenian costo cuando si lo
+# tienen.
+#
+# El ajuste de costo (AJU) queda fuera a proposito: corrige el costo hacia
+# adelante, no mueve mercaderia, y meterlo en la banda distorsiona lo que se
+# considera normal.
+
+CV_DIAS = 180        # cuanto historial se mira
+CV_VENTANA = 90      # sobre cuantos dias se calcula lo normal
+CV_SIGMAS = 2.0      # cuando se considera que el costo se salio
+CV_MIN_MUESTRAS = 8  # dias con movimiento antes de creerle a la desviacion
+
+# La sincronizacion vuelve a insertar el mismo documento con un movimiento_id
+# nuevo en cada corrida. Sin deduplicar, un producto aparece con varias veces
+# el consumo que tuvo. Verificado con EGR 202608124294, que estaba 3 veces.
+CV_DEDUP = ("m.codigo, m.producto_id, m.cantidad, m.total_movimiento, "
+            "m.bodega_origen_id, m.fecha")
+
+CV_SQL = """
+WITH dedup AS (
+    SELECT DISTINCT ON (%(k)s)
+           m.fecha, m.tipo, m.producto_id, m.cantidad, m.total_movimiento
+    FROM contifico_movimientos m
+    WHERE m.tipo IN ('ING', 'EGR', 'TRA')
+      AND m.fecha >= CURRENT_DATE - %%(dias)s
+      AND m.cantidad > 0 AND m.total_movimiento > 0
+      %(filtro)s
+    ORDER BY %(k)s, m.id
+),
+dia AS (
+    SELECT producto_id, fecha,
+           -- Dos costos, no uno. El de salida manda porque es el que se lleva
+           -- el dinero; el de entrada se vigila aparte porque es la causa.
+           sum(total_movimiento) FILTER (WHERE tipo IN ('EGR', 'TRA'))
+             / NULLIF(sum(cantidad) FILTER (WHERE tipo IN ('EGR', 'TRA')), 0) AS costo,
+           sum(total_movimiento) FILTER (WHERE tipo = 'ING')
+             / NULLIF(sum(cantidad) FILTER (WHERE tipo = 'ING'), 0)           AS costo_entrada,
+           coalesce(sum(cantidad)         FILTER (WHERE tipo = 'EGR'), 0) AS sal,
+           coalesce(sum(total_movimiento) FILTER (WHERE tipo = 'EGR'), 0) AS sal_val,
+           coalesce(sum(cantidad)         FILTER (WHERE tipo = 'TRA'), 0) AS tras,
+           coalesce(sum(total_movimiento) FILTER (WHERE tipo = 'TRA'), 0) AS tras_val,
+           coalesce(sum(cantidad)         FILTER (WHERE tipo = 'ING'), 0) AS ent,
+           coalesce(sum(total_movimiento) FILTER (WHERE tipo = 'ING'), 0) AS ent_val
+    FROM dedup GROUP BY producto_id, fecha
+),
+-- Sin salida no hay costo de salida, y ese dia no entra en la banda: si
+-- entrara, un dia que solo tuvo ingreso movería la referencia sin motivo.
+con_salida AS (
+    SELECT * FROM dia WHERE costo IS NOT NULL
+),
+banda AS (
+    SELECT d.*,
+           avg(costo)         OVER v AS media,
+           stddev_samp(costo) OVER v AS desv,
+           count(*)           OVER v AS muestras
+    FROM con_salida d
+    WINDOW v AS (PARTITION BY producto_id ORDER BY fecha
+                 RANGE BETWEEN INTERVAL '%(vent)s days' PRECEDING
+                           AND INTERVAL '1 day' PRECEDING)
+)
+SELECT producto_id, fecha, costo, costo_entrada, media, desv, muestras,
+       sal, sal_val, tras, tras_val, ent, ent_val,
+       CASE WHEN desv > 0 AND muestras >= %(min)s
+            THEN (costo - media) / desv END AS sigmas
+FROM banda ORDER BY producto_id, fecha
+"""
+
+
+def cv_sql(filtro=''):
+    return CV_SQL % {'k': CV_DEDUP, 'filtro': filtro,
+                     'vent': CV_VENTANA, 'min': CV_MIN_MUESTRAS}
+
+
+def cv_ventanas(filas, sigmas=CV_SIGMAS):
+    """Agrupa los dias fuera de banda en ventanas, y calcula el daño.
+
+    Una ventana empieza el primer dia que el costo se sale y termina cuando
+    vuelve dentro. El daño es lo que salio y se traslado durante la ventana,
+    valorado contra el costo que ese producto deberia haber tenido.
+    """
+    ventanas, abierta = [], None
+    for f in filas:
+        costo = float(f['costo'] or 0)
+        sig = f['sigmas']
+        fuera = sig is not None and abs(float(sig)) > sigmas
+        if fuera and abierta is None:
+            abierta = {'desde': f['fecha'], 'hasta': f['fecha'],
+                       'normal': float(f['media'] or 0), 'pico': costo,
+                       'sal': 0.0, 'sal_val': 0.0, 'tras': 0.0, 'tras_val': 0.0,
+                       'dias': 0, 'sigmas': float(sig)}
+        if abierta is None:
+            continue
+        abierta['hasta'] = f['fecha']
+        abierta['dias'] += 1
+        if abs(costo - abierta['normal']) > abs(abierta['pico'] - abierta['normal']):
+            abierta['pico'] = costo
+        for k in ('sal', 'sal_val', 'tras', 'tras_val'):
+            abierta[k] += float(f[k] or 0)
+        if sig is not None and abs(float(sig)) > abs(abierta['sigmas']):
+            abierta['sigmas'] = float(sig)
+        if not fuera:
+            ventanas.append(abierta)
+            abierta = None
+    if abierta:
+        ventanas.append(abierta)
+
+    for v in ventanas:
+        # Lo que decide la gravedad es cuanto se movio el COSTO UNITARIO.
+        v['veces'] = (v['pico'] / v['normal']) if v['normal'] else None
+        v['variacion'] = ((v['pico'] - v['normal']) / v['normal'] * 100) if v['normal'] else None
+        # El dinero queda como contexto: dice sobre cuanto aplica la desviacion,
+        # pero no decide nada.
+        v['movido'] = v['sal'] + v['tras']
+        v['valorado'] = v['sal_val'] + v['tras_val']
+    return ventanas
+
+
+def cv_catalogo(cur):
+    """codigo, nombre y categoria de cada producto."""
+    cur.execute("""
+        SELECT p.id, p.codigo, p.nombre, coalesce(c.nombre, 'SIN CATEGORIA'),
+               coalesce(u.nombre, '')
+        FROM contifico_productos p
+        LEFT JOIN contifico_categorias c ON c.id = p.categoria_id
+        LEFT JOIN contifico_unidades u ON u.id = p.unidad_id
+    """)
+    return {r[0]: {'codigo': r[1], 'nombre': r[2], 'categoria': r[3], 'unidad': r[4]}
+            for r in cur.fetchall()}
+
+
+@app.route('/api/costos/ventanas', methods=['GET'])
+def costos_ventanas():
+    """Todas las ventanas en las que el costo de un producto estuvo roto."""
+    conn = None
+    try:
+        dias = min(int(request.args.get('dias', CV_DIAS)), 400)
+        sigmas = float(request.args.get('sigmas', CV_SIGMAS))
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '240s'")
+        cat = cv_catalogo(cur)
+
+        cur.execute(cv_sql(), {'dias': dias})
+        cols = [d[0] for d in cur.description]
+        por_producto = {}
+        for r in cur.fetchall():
+            f = dict(zip(cols, r))
+            por_producto.setdefault(f['producto_id'], []).append(f)
+
+        productos, todas, vistos = [], [], set()
+        for pid, filas in por_producto.items():
+            info = cat.get(pid)
+            if not info or not info['codigo']:
+                continue
+            vs = [v for v in cv_ventanas(filas, sigmas) if v['movido'] > 0]
+            if not vs:
+                continue
+            for v in vs:
+                v.update({'codigo': info['codigo'], 'nombre': info['nombre'],
+                          'categoria': info['categoria'], 'unidad': info['unidad'],
+                          'desde': v['desde'].isoformat(), 'hasta': v['hasta'].isoformat()})
+            todas.extend(vs)
+            vistos.add(pid)
+            peor = max(vs, key=lambda x: abs(x['sigmas']))
+            productos.append({
+                'codigo': info['codigo'], 'nombre': info['nombre'],
+                'categoria': info['categoria'], 'unidad': info['unidad'],
+                'ventanas': len(vs), 'peor': peor,
+                'sigmas': peor['sigmas'], 'veces': peor['veces'],
+                'movido': sum(v['movido'] for v in vs),
+                'valorado': sum(v['valorado'] for v in vs),
+                'dias_con_movimiento': len(filas),
+            })
+
+        productos.sort(key=lambda x: -abs(x['sigmas']))
+        todas.sort(key=lambda x: -abs(x['sigmas']))
+
+        # Cuantos productos tuvieron el costo roto cada dia. Si el problema
+        # fuera azaroso las barras serian parejas; si se amontonan, hay un
+        # proceso detras.
+        pordia = {}
+        for pid, filas in por_producto.items():
+            if pid not in vistos:
+                continue
+            for f in filas:
+                if f['sigmas'] is None or abs(float(f['sigmas'])) <= sigmas:
+                    continue
+                d = pordia.setdefault(f['fecha'].isoformat(), {'fecha': f['fecha'].isoformat(),
+                                                               'productos': 0, 'arriba': 0, 'abajo': 0})
+                d['productos'] += 1
+                if float(f['sigmas']) > 0:
+                    d['arriba'] += 1
+                else:
+                    d['abajo'] += 1
+        por_dia = sorted(pordia.values(), key=lambda x: x['fecha'])
+
+        porcat = {}
+        for p in productos:
+            c = porcat.setdefault(p['categoria'], {'categoria': p['categoria'],
+                                                   'productos': 0, 'ventanas': 0,
+                                                   'peor_sigmas': 0.0})
+            c['productos'] += 1
+            c['ventanas'] += p['ventanas']
+            if abs(p['sigmas']) > abs(c['peor_sigmas']):
+                c['peor_sigmas'] = p['sigmas']
+        categorias = sorted(porcat.values(), key=lambda x: -x['productos'])
+
+        return jsonify({
+            'ok': True, 'dias': dias, 'sigmas': sigmas, 'ventana_base': CV_VENTANA,
+            'n_productos': len(productos), 'n_ventanas': len(todas),
+            'por_dia': por_dia,
+            'productos': productos[:120],
+            'ventanas': todas[:120],
+            'categorias': categorias,
+        })
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/linea', methods=['GET'])
+def costos_linea():
+    """La linea de tiempo de un producto: costo diario, banda normal y ventanas."""
+    conn = None
+    try:
+        codigo = (request.args.get('codigo') or '').strip().upper()
+        if not codigo:
+            return jsonify({'error': 'codigo requerido'}), 400
+        dias = min(int(request.args.get('dias', CV_DIAS)), 400)
+        sigmas = float(request.args.get('sigmas', CV_SIGMAS))
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '120s'")
+        cur.execute("""
+            SELECT p.id, p.nombre, coalesce(c.nombre, 'SIN CATEGORIA'), coalesce(u.nombre, '')
+            FROM contifico_productos p
+            LEFT JOIN contifico_categorias c ON c.id = p.categoria_id
+            LEFT JOIN contifico_unidades u ON u.id = p.unidad_id
+            WHERE p.codigo = %s""", (codigo,))
+        info = cur.fetchone()
+        if not info:
+            return jsonify({'error': 'no existe el producto %s' % codigo}), 404
+        pid, nombre, categoria, unidad = info
+
+        cur.execute(cv_sql(" AND m.producto_id = %(pid)s "), {'dias': dias, 'pid': pid})
+        cols = [d[0] for d in cur.description]
+        filas = [dict(zip(cols, r)) for r in cur.fetchall()]
+        ventanas = cv_ventanas(filas, sigmas)
+
+        serie = [{
+            'fecha': f['fecha'].isoformat(),
+            'costo': float(f['costo'] or 0),
+            'costo_entrada': float(f['costo_entrada']) if f['costo_entrada'] is not None else None,
+            'media': float(f['media']) if f['media'] is not None else None,
+            'desv': float(f['desv']) if f['desv'] is not None else None,
+            'sigmas': float(f['sigmas']) if f['sigmas'] is not None else None,
+            'sal': float(f['sal'] or 0), 'sal_val': float(f['sal_val'] or 0),
+            'tras': float(f['tras'] or 0), 'tras_val': float(f['tras_val'] or 0),
+            'ent': float(f['ent'] or 0), 'ent_val': float(f['ent_val'] or 0),
+            'fuera': f['sigmas'] is not None and abs(float(f['sigmas'])) > sigmas,
+        } for f in filas]
+
+        for v in ventanas:
+            v['desde'] = v['desde'].isoformat()
+            v['hasta'] = v['hasta'].isoformat()
+
+        return jsonify({
+            'ok': True, 'codigo': codigo, 'nombre': nombre,
+            'categoria': categoria, 'unidad': unidad, 'dias': dias,
+            'serie': serie,
+            'ventanas': sorted([v for v in ventanas if v['movido'] > 0],
+                               key=lambda x: -abs(x['sigmas'])),
+            'sin_movimiento': len([v for v in ventanas if v['movido'] <= 0]),
+        })
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+CN_RECIENTE = 30      # dias del periodo nuevo
+CN_ANTERIOR = 90      # hasta donde se mira el periodo viejo
+CN_FACTOR = 2.0       # al doble o a la mitad, cambio de escala
+
+
+@app.route('/api/costos/niveles', methods=['GET'])
+def costos_niveles():
+    """Productos cuyo costo de salida cambio de escala y se quedo asi.
+
+    Es el punto ciego de la banda movil: lo que sube y vuelve lo agarra la
+    banda; lo que sube y se queda lo absorbe y deja de avisar. Aqui no hay
+    media movil, se comparan dos periodos.
+    """
+    conn = None
+    try:
+        factor = float(request.args.get('factor', CN_FACTOR))
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '180s'")
+        cur.execute("""
+            WITH dedup AS (
+                SELECT DISTINCT ON (%s)
+                       m.fecha, m.tipo, m.producto_id, m.cantidad, m.total_movimiento
+                FROM contifico_movimientos m
+                WHERE m.tipo IN ('EGR', 'TRA')
+                  AND m.fecha >= CURRENT_DATE - %%(ant)s
+                  AND m.cantidad > 0 AND m.total_movimiento > 0
+                ORDER BY %s, m.id
+            ),
+            dia AS (
+                SELECT producto_id, fecha,
+                       sum(total_movimiento) / NULLIF(sum(cantidad), 0) AS costo,
+                       sum(cantidad) AS cant, sum(total_movimiento) AS valor
+                FROM dedup GROUP BY producto_id, fecha
+            ),
+            comp AS (
+                SELECT producto_id,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY costo)
+                         FILTER (WHERE fecha >= CURRENT_DATE - %%(rec)s) AS ahora,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY costo)
+                         FILTER (WHERE fecha < CURRENT_DATE - %%(rec)s) AS antes,
+                       count(*) FILTER (WHERE fecha >= CURRENT_DATE - %%(rec)s) AS n_ahora,
+                       count(*) FILTER (WHERE fecha < CURRENT_DATE - %%(rec)s) AS n_antes,
+                       sum(cant)  FILTER (WHERE fecha >= CURRENT_DATE - %%(rec)s) AS cant_ahora,
+                       sum(valor) FILTER (WHERE fecha >= CURRENT_DATE - %%(rec)s) AS valor_ahora
+                FROM dia GROUP BY producto_id
+            )
+            SELECT p.codigo, p.nombre, coalesce(c.nombre, 'SIN CATEGORIA'),
+                   coalesce(u.nombre, ''),
+                   x.antes, x.ahora, x.n_antes, x.n_ahora,
+                   x.cant_ahora, x.valor_ahora,
+                   x.ahora / NULLIF(x.antes, 0) AS razon
+            FROM comp x
+            JOIN contifico_productos p ON p.id = x.producto_id
+            LEFT JOIN contifico_categorias c ON c.id = p.categoria_id
+            LEFT JOIN contifico_unidades u ON u.id = p.unidad_id
+            WHERE x.antes > 0 AND x.ahora > 0
+              AND x.n_antes >= 5 AND x.n_ahora >= 3
+              AND (x.ahora > x.antes * %%(f)s OR x.ahora < x.antes / %%(f)s)
+            ORDER BY greatest(x.ahora / NULLIF(x.antes, 0),
+                              x.antes / NULLIF(x.ahora, 0)) DESC
+            LIMIT 80
+        """ % (CV_DEDUP, CV_DEDUP),
+            {'rec': CN_RECIENTE, 'ant': CN_ANTERIOR, 'f': factor})
+
+        filas = []
+        for r in cur.fetchall():
+            antes, ahora = float(r[4] or 0), float(r[5] or 0)
+            cant = float(r[8] or 0)
+            valor = float(r[9] or 0)
+            # Lo que costo el consumo de los ultimos 30 dias contra lo que
+            # habria costado al nivel anterior.
+            debio = cant * antes
+            filas.append({
+                'codigo': r[0], 'nombre': r[1], 'categoria': r[2], 'unidad': r[3],
+                'antes': antes, 'ahora': ahora,
+                'dias_antes': r[6], 'dias_ahora': r[7],
+                'cantidad': cant, 'valor': valor, 'debio': debio,
+                'diferencia': valor - debio,
+                'razon': float(r[10] or 0),
+                'sentido': 'subio' if ahora > antes else 'bajo',
+            })
+        return jsonify({'ok': True, 'factor': factor,
+                        'reciente': CN_RECIENTE, 'anterior': CN_ANTERIOR,
+                        'filas': filas})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/movimientos', methods=['GET'])
+def costos_movimientos():
+    """Los movimientos de un producto en un rango, uno por uno.
+
+    Es lo que hace falta para poder actuar: no basta con saber que el 30 de
+    abril el costo se rompio, hay que saber cual fue el documento, de que
+    bodega salio y a que costo, para poder ir a Contifico a mirarlo.
+    """
+    conn = None
+    try:
+        codigo = (request.args.get('codigo') or '').strip().upper()
+        desde = request.args.get('desde')
+        hasta = request.args.get('hasta') or desde
+        if not codigo or not desde:
+            return jsonify({'error': 'codigo y desde requeridos'}), 400
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '90s'")
+        cur.execute("""
+            SELECT p.id, p.nombre, coalesce(u.nombre, '')
+            FROM contifico_productos p
+            LEFT JOIN contifico_unidades u ON u.id = p.unidad_id
+            WHERE p.codigo = %s""", (codigo,))
+        info = cur.fetchone()
+        if not info:
+            return jsonify({'error': 'no existe %s' % codigo}), 404
+        pid, nombre, unidad = info
+
+        cur.execute("""
+            SELECT DISTINCT ON (m.codigo, m.cantidad, m.total_movimiento,
+                                m.bodega_origen_id, m.fecha)
+                   m.fecha, m.tipo, m.codigo, m.cantidad, m.total_movimiento,
+                   m.costo_promedio,
+                   coalesce(bo.nombre, ''), coalesce(bd.nombre, ''),
+                   m.descripcion, m.estado,
+                   -- Cuantas lineas tiene el documento. Si tiene mas de una,
+                   -- total_movimiento es el total de todas y no sirve para
+                   -- sacar el costo de esta.
+                   (SELECT count(*) FROM contifico_movimientos d
+                     WHERE d.codigo = m.codigo AND d.fecha = m.fecha) AS lineas_doc
+            FROM contifico_movimientos m
+            LEFT JOIN contifico_bodegas bo ON bo.id = m.bodega_origen_id
+            LEFT JOIN contifico_bodegas bd ON bd.id = m.bodega_destino_id
+            WHERE m.producto_id = %(pid)s
+              AND m.tipo IN ('ING', 'EGR', 'TRA')
+              AND m.fecha >= %(d)s AND m.fecha <= %(h)s
+              AND m.cantidad > 0
+            ORDER BY m.codigo, m.cantidad, m.total_movimiento,
+                     m.bodega_origen_id, m.fecha, m.id
+        """, {'pid': pid, 'd': desde, 'h': hasta})
+
+        movs = []
+        for r in cur.fetchall():
+            lineas = int(r[10] or 1)
+            cant = float(r[3] or 0)
+            # El costo unitario solo se puede sacar del total cuando el
+            # documento trae una sola linea. Si trae varias, se usa el
+            # costo_promedio -que viene redondeado a centavos- y si tampoco
+            # esta, se dice que no se sabe, en vez de inventarlo.
+            if lineas == 1 and cant:
+                costo, origen_costo = float(r[4] or 0) / cant, 'documento'
+            elif r[5] and float(r[5]) > 0:
+                costo, origen_costo = float(r[5]), 'costo promedio'
+            else:
+                costo, origen_costo = None, None
+            movs.append({
+                'fecha': r[0].isoformat(), 'tipo': r[1], 'documento': r[2],
+                'cantidad': cant, 'total_documento': float(r[4] or 0),
+                'costo': costo, 'origen_costo': origen_costo,
+                'lineas_doc': lineas,
+                'origen': r[6], 'destino': r[7],
+                'descripcion': ' · '.join((r[8] or '').split(chr(10)))[:120],
+                'estado': r[9],
+            })
+        movs.sort(key=lambda x: (x['fecha'], -(x['costo'] or 0)))
+
+        return jsonify({'ok': True, 'codigo': codigo, 'nombre': nombre,
+                        'unidad': unidad, 'desde': desde, 'hasta': hasta,
+                        'movimientos': movs})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)[:300]}), 500
+    finally:
+        if conn: fc_release_movimientos_db(conn)
+
+
+# =====================================================================
+#  PANEL DE COSTOS  -  un solo endpoint para todo el tablero
+# =====================================================================
+# Todo sale de costos_diario, que trae los movimientos valorizados contra el
+# costo real (costo_vigente_producto) y con los traslados por partida doble.
+#
+# Un solo endpoint, y no uno por bloque, para que el filtro mueva el tablero
+# entero de una vez. Antes cada bloque consultaba por su lado y podian acabar
+# mostrando periodos distintos sin que se notara.
+#
+# Los cuatro filtros -desde, hasta, bodega, categoria- se aplican a todo.
+
+PN_DIAS = 90
+
+# --- desfases de costo ------------------------------------------------
+# Un desfase es un tramo en el que el producto costo algo distinto de lo que
+# suele costar. La referencia no es un promedio -que se ensucia con el propio
+# desfase- sino el costo que MAS DIAS estuvo vigente en el periodo: lo que ese
+# producto vale normalmente.
+#
+# El daño es la cantidad que se movio durante el tramo, valorada contra la
+# diferencia. Contifico no reprocesa hacia atras: lo que salio mientras el
+# costo estuvo mal, salio mal, y ya no se corrige solo.
+PN_DESVIO = 0.15     # 15% de separacion para considerarlo desfase
+
+PN_SQL_DESFASES = """
+WITH lim AS (SELECT %(d)s::date AS d, %(h)s::date AS h),
+tramo AS (
+    SELECT v.producto_id, v.codigo_prod, v.costo, v.fuente, v.confianza,
+           greatest(v.desde, lim.d) AS ini,
+           least(v.hasta, lim.h)   AS fin
+    FROM costo_vigente_producto v, lim
+    WHERE v.desde <= lim.h AND v.hasta >= lim.d AND v.costo > 0
+),
+condias AS (SELECT *, (fin - ini + 1) AS dias FROM tramo),
+-- Lo que ese producto vale normalmente: la MEDIANA de los dias, no el
+-- tramo mas largo. Con "el mas largo" el filete de carne tomaba 3,25 como
+-- referencia -su tramo mas duradero- y marcaba como desfase los diez tramos
+-- normales de 0,87 a 1,68. La mediana ponderada por dias parte la serie por
+-- la mitad y no se deja arrastrar por un solo tramo, dure lo que dure.
+acumulado AS (
+    SELECT producto_id, costo, dias,
+           sum(dias) OVER (PARTITION BY producto_id ORDER BY costo,
+                           costo ROWS UNBOUNDED PRECEDING) AS acum,
+           sum(dias) OVER (PARTITION BY producto_id)        AS total
+    FROM condias
+),
+refer AS (
+    SELECT DISTINCT ON (producto_id) producto_id, costo AS ref
+    FROM acumulado WHERE acum >= total / 2.0
+    ORDER BY producto_id, costo
+),
+fuera AS (
+    SELECT c.*, r.ref
+    FROM condias c JOIN refer r USING (producto_id)
+    WHERE r.ref > 0
+      AND (c.costo / r.ref > 1 + %(desvio)s OR r.ref / c.costo > 1 + %(desvio)s)
+),
+movido AS (
+    SELECT f.codigo_prod, f.ini,
+           sum(d.cantidad) AS qty, sum(d.valor) AS val,
+           max(d.nombre_prod) AS nombre, max(d.categoria) AS categoria,
+           max(d.unidad) AS unidad, count(DISTINCT d.fecha) AS dias_mov
+    FROM fuera f
+    JOIN costos_diario d ON d.codigo_prod = f.codigo_prod
+     AND d.tipo IN ('EGR', 'TRA_SALE')
+     AND d.fecha BETWEEN f.ini AND f.fin
+     ___FILTRO___
+    GROUP BY 1, 2
+)
+SELECT f.codigo_prod, m.nombre, m.categoria, m.unidad,
+       f.ini, f.fin, f.dias, f.ref, f.costo,
+       (f.costo / f.ref - 1) * 100 AS desvio,
+       coalesce(m.qty, 0), coalesce(m.dias_mov, 0),
+       (f.costo - f.ref) * coalesce(m.qty, 0) AS dano,
+       f.fuente, f.confianza
+FROM fuera f JOIN movido m ON m.codigo_prod = f.codigo_prod AND m.ini = f.ini
+ORDER BY abs((f.costo - f.ref) * coalesce(m.qty, 0)) DESC
+LIMIT 40
+"""
+
+
+
+
+def pn_filtro(bodega, categoria, producto='', centro='', alias='d'):
+    """El filtro comun, como SQL y parametros. Vacio si no filtran nada."""
+    sql, p = '', {}
+    if bodega:
+        sql += ' AND %s.bodega = %%(bodega)s' % alias
+        p['bodega'] = bodega
+    if categoria:
+        sql += ' AND %s.categoria = %%(categoria)s' % alias
+        p['categoria'] = categoria
+    if producto:
+        sql += ' AND %s.codigo_prod = %%(producto)s' % alias
+        p['producto'] = producto
+    if centro:
+        sql += ' AND %s.centro_costo = %%(centro)s' % alias
+        p['centro'] = centro
+    return sql, p
+
+
+@app.route('/api/costos/panel', methods=['GET'])
+def costos_panel():
+    conn = None
+    try:
+        hasta = co_dia(request.args.get('hasta'), co_ultimo_dia_completo())
+        desde = co_dia(request.args.get('desde'), hasta - timedelta(days=PN_DIAS))
+        if desde > hasta:
+            desde, hasta = hasta, desde
+        bodega = (request.args.get('bodega') or '').strip()
+        categoria = (request.args.get('categoria') or '').strip()
+        producto = (request.args.get('producto') or '').strip().upper()
+
+        centro = (request.args.get('centro') or '').strip()
+
+        f, fp = pn_filtro(bodega, categoria, producto, centro)
+        p = {'d': desde, 'h': hasta}
+        p.update(fp)
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '120s'")
+
+        # --- que se puede filtrar --------------------------------------
+        cur.execute("""SELECT DISTINCT bodega FROM costos_diario
+                       WHERE bodega <> '(SIN BODEGA)' ORDER BY 1""")
+        bodegas = [r[0] for r in cur.fetchall()]
+        cur.execute("""SELECT DISTINCT categoria FROM costos_diario
+                       WHERE categoria <> '(SIN CATEGORIA)' ORDER BY 1""")
+        categorias = [r[0] for r in cur.fetchall()]
+        cur.execute("""SELECT DISTINCT centro_costo FROM costos_diario
+                       WHERE centro_costo IS NOT NULL ORDER BY 1""")
+        centros = [r[0] for r in cur.fetchall()]
+        # La lista completa alimenta el buscador del filtro. Son unos 450
+        # productos: cabe de sobra en la respuesta y evita un viaje aparte.
+        cur.execute("""SELECT codigo_prod, max(nombre_prod), max(categoria)
+                       FROM costos_diario WHERE codigo_prod <> 'SIN_CODIGO'
+                       GROUP BY 1 ORDER BY 2""")
+        productos = [{'codigo': r[0], 'nombre': r[1], 'categoria': r[2]}
+                     for r in cur.fetchall()]
+        cur.execute("SELECT min(fecha), max(fecha), max(actualizado_en) FROM costos_diario")
+        rmin, rmax, actualizado = cur.fetchone()
+
+        # --- lo que se consumio ----------------------------------------
+        cur.execute("""
+            SELECT coalesce(sum(d.valor), 0), count(DISTINCT d.codigo_prod),
+                   coalesce(sum(d.cantidad) FILTER (WHERE d.sin_costo > 0), 0),
+                   count(DISTINCT d.codigo_prod) FILTER (WHERE d.sin_costo > 0)
+            FROM costos_diario d
+            WHERE d.tipo = 'EGR' AND d.fecha BETWEEN %(d)s AND %(h)s""" + f, p)
+        consumo, n_prod, cant_sin, prod_sin = cur.fetchone()
+
+        # --- los cambios de costo, con lo que costaron -----------------
+        # Un cambio de costo no es noticia por si mismo. Lo es por la cantidad
+        # que salio despues, valorada a la diferencia: eso es plata que se fue
+        # al costo nuevo. Por ahi se ordena la lista.
+        cur.execute("""
+            WITH tr AS (
+                SELECT producto_id, codigo_prod, desde, hasta, costo, fuente,
+                       confianza, lag(costo) OVER w AS antes
+                FROM costo_vigente_producto
+                WINDOW w AS (PARTITION BY producto_id ORDER BY desde)
+            ),
+            camb AS (
+                SELECT * FROM tr
+                WHERE antes IS NOT NULL AND antes > 0 AND costo > 0
+                  AND desde BETWEEN %(d)s AND %(h)s
+            ),
+            cons AS (
+                SELECT c.codigo_prod, c.desde, sum(d.cantidad) AS qty,
+                       max(d.nombre_prod) AS nombre, max(d.categoria) AS categoria,
+                       max(d.unidad) AS unidad
+                FROM camb c
+                JOIN costos_diario d ON d.codigo_prod = c.codigo_prod
+                 AND d.tipo = 'EGR'
+                 AND d.fecha BETWEEN greatest(c.desde, %(d)s) AND least(c.hasta, %(h)s)
+                 """ + f + """
+                GROUP BY 1, 2
+            )
+            SELECT c.codigo_prod, o.nombre, o.categoria, o.unidad, c.desde,
+                   c.antes, c.costo, coalesce(o.qty, 0),
+                   (c.costo - c.antes) * coalesce(o.qty, 0) AS impacto,
+                   c.fuente, c.confianza
+            -- INNER, no LEFT: un cambio de costo entra en la lista solo si
+            -- ese producto salio de verdad dentro de lo que se esta mirando.
+            -- Con LEFT, filtrar por bodega no quitaba ningun cambio: seguian
+            -- los 60 en pantalla, solo que con cantidad cero.
+            FROM camb c JOIN cons o
+              ON o.codigo_prod = c.codigo_prod AND o.desde = c.desde
+            ORDER BY abs((c.costo - c.antes) * coalesce(o.qty, 0)) DESC
+            LIMIT 60""", p)
+        cambios = [{'codigo': r[0], 'nombre': r[1], 'categoria': r[2], 'unidad': r[3],
+                    'fecha': r[4].isoformat(), 'antes': float(r[5]), 'ahora': float(r[6]),
+                    'pct': (float(r[6]) / float(r[5]) - 1) * 100 if r[5] else None,
+                    'cantidad': float(r[7] or 0), 'impacto': float(r[8] or 0),
+                    'fuente': r[9], 'confianza': r[10]} for r in cur.fetchall()]
+        impacto = sum(c['impacto'] for c in cambios)
+
+        # --- los desfases de costo -------------------------------------
+        p['desvio'] = PN_DESVIO
+        cur.execute(PN_SQL_DESFASES.replace('___FILTRO___', f), p)
+        desfases = [{'codigo': r[0], 'nombre': r[1], 'categoria': r[2], 'unidad': r[3],
+                     'desde': r[4].isoformat(), 'hasta': r[5].isoformat(), 'dias': r[6],
+                     'normal': float(r[7]), 'costo': float(r[8]), 'desvio': float(r[9]),
+                     'cantidad': float(r[10] or 0), 'dias_mov': r[11],
+                     'dano': float(r[12] or 0), 'fuente': r[13], 'confianza': r[14]}
+                    for r in cur.fetchall()]
+        dano_total = sum(abs(x['dano']) for x in desfases)
+
+        # --- consumo dia a dia -----------------------------------------
+        # Con un producto elegido la serie lleva ademas su costo unitario de
+        # cada dia: es la linea que muestra como vario el costo.
+        cur.execute("""
+            SELECT d.fecha, sum(d.valor), count(DISTINCT d.codigo_prod),
+                   CASE WHEN sum(d.cantidad) <> 0
+                        THEN sum(d.valor) / sum(d.cantidad) END
+            FROM costos_diario d
+            WHERE d.tipo = 'EGR' AND d.fecha BETWEEN %(d)s AND %(h)s""" + f + """
+            GROUP BY 1 ORDER BY 1""", p)
+        serie = [{'fecha': r[0].isoformat(), 'valor': float(r[1] or 0), 'prods': r[2],
+                  'costo': float(r[3]) if r[3] is not None else None}
+                 for r in cur.fetchall()]
+
+        # --- por bodega y por categoria --------------------------------
+        cur.execute("""
+            SELECT d.bodega, sum(d.valor), count(DISTINCT d.codigo_prod)
+            FROM costos_diario d
+            WHERE d.tipo = 'EGR' AND d.fecha BETWEEN %(d)s AND %(h)s""" + f + """
+            GROUP BY 1 ORDER BY 2 DESC""", p)
+        por_bodega = [{'nombre': r[0], 'valor': float(r[1] or 0), 'prods': r[2]}
+                      for r in cur.fetchall()]
+
+        # El centro de costo agrupa bodegas -Principal y Pulmon son uno solo-,
+        # asi que no es la misma vista con otro nombre.
+        cur.execute("""
+            SELECT d.centro_costo, sum(d.valor), count(DISTINCT d.codigo_prod)
+            FROM costos_diario d
+            WHERE d.tipo = 'EGR' AND d.fecha BETWEEN %(d)s AND %(h)s""" + f + """
+            GROUP BY 1 ORDER BY 2 DESC""", p)
+        por_centro = [{'nombre': r[0], 'valor': float(r[1] or 0), 'prods': r[2]}
+                      for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT d.categoria, sum(d.valor), count(DISTINCT d.codigo_prod)
+            FROM costos_diario d
+            WHERE d.tipo = 'EGR' AND d.fecha BETWEEN %(d)s AND %(h)s""" + f + """
+            GROUP BY 1 ORDER BY 2 DESC LIMIT 14""", p)
+        por_categoria = [{'nombre': r[0], 'valor': float(r[1] or 0), 'prods': r[2]}
+                         for r in cur.fetchall()]
+
+        # --- en que se va la plata -------------------------------------
+        cur.execute("""
+            SELECT d.codigo_prod, max(d.nombre_prod), max(d.categoria), max(d.unidad),
+                   sum(d.valor), sum(d.cantidad), min(d.confianza)
+            FROM costos_diario d
+            WHERE d.tipo = 'EGR' AND d.fecha BETWEEN %(d)s AND %(h)s""" + f + """
+            GROUP BY 1 ORDER BY 5 DESC LIMIT 25""", p)
+        top = [{'codigo': r[0], 'nombre': r[1], 'categoria': r[2], 'unidad': r[3],
+                'valor': float(r[4] or 0), 'cantidad': float(r[5] or 0),
+                'confianza': r[6]} for r in cur.fetchall()]
+
+        # --- lo que se mueve sin costo ---------------------------------
+        cur.execute("""
+            SELECT d.codigo_prod, max(d.nombre_prod), max(d.categoria), max(d.unidad),
+                   sum(d.cantidad), count(DISTINCT d.fecha)
+            FROM costos_diario d
+            WHERE d.tipo = 'EGR' AND d.fecha BETWEEN %(d)s AND %(h)s
+              AND d.sin_costo > 0""" + f + """
+            GROUP BY 1 ORDER BY 6 DESC, 5 DESC LIMIT 25""", p)
+        sin_costo = [{'codigo': r[0], 'nombre': r[1], 'categoria': r[2], 'unidad': r[3],
+                      'cantidad': float(r[4] or 0), 'dias': r[5]} for r in cur.fetchall()]
+
+        # Con un producto elegido, su historia de costo es lo primero que se
+        # quiere ver, asi que va en la misma respuesta y no en un segundo viaje.
+        tramos = []
+        if producto:
+            cur.execute("""SELECT desde, hasta, costo, fuente, confianza
+                           FROM costo_vigente_producto
+                           WHERE codigo_prod = %s ORDER BY desde""", (producto,))
+            tramos = [{'desde': r[0].isoformat(), 'hasta': r[1].isoformat(),
+                       'costo': float(r[2]), 'fuente': r[3], 'confianza': r[4]}
+                      for r in cur.fetchall()]
+
+        cur.close()
+        return jsonify({
+            'ok': True,
+            'desde': desde.isoformat(), 'hasta': hasta.isoformat(),
+            'bodega': bodega, 'categoria': categoria, 'producto': producto,
+            'centro': centro,
+            'tramos': tramos,
+            'filtros': {'bodegas': bodegas, 'categorias': categorias,
+                        'productos': productos, 'centros': centros,
+                        'min': rmin.isoformat() if rmin else None,
+                        'max': rmax.isoformat() if rmax else None,
+                        'actualizado': actualizado.isoformat() if actualizado else None},
+            'kpi': {'consumo': float(consumo or 0), 'productos': n_prod or 0,
+                    'cambios': len(cambios), 'impacto': impacto,
+                    'desfases': len(desfases), 'dano': dano_total,
+                    'prod_desfase': len(set(x['codigo'] for x in desfases)),
+                    'sin_costo_prod': prod_sin or 0,
+                    'sin_costo_cant': float(cant_sin or 0)},
+            'serie': serie, 'bodegas': por_bodega, 'centros': por_centro,
+            'categorias': por_categoria,
+            'top': top, 'cambios': cambios, 'sin_costo': sin_costo,
+            'desfases': desfases, 'desvio': PN_DESVIO,
+        })
+    except Exception as e:
+        app.logger.exception('costos_panel')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/panel/movimientos', methods=['GET'])
+def costos_panel_movimientos():
+    """Lo que abre el popup: los dias, los documentos y los tramos de costo."""
+    conn = None
+    try:
+        codigo = (request.args.get('codigo') or '').strip().upper()
+        if not codigo:
+            return jsonify({'ok': False, 'error': 'falta el codigo'}), 400
+        hasta = co_dia(request.args.get('hasta'), co_ultimo_dia_completo())
+        desde = co_dia(request.args.get('desde'), hasta - timedelta(days=PN_DIAS))
+        bodega = (request.args.get('bodega') or '').strip()
+        f, fp = pn_filtro(bodega, '')  # el codigo ya viene aparte
+        p = {'c': codigo, 'd': desde, 'h': hasta}
+        p.update(fp)
+
+        conn = fc_get_movimientos_db()
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '60s'")
+        cur.execute("""
+            SELECT d.fecha, d.bodega, d.tipo, d.cantidad, d.costo_unitario,
+                   d.valor, d.docs, d.confianza, d.sin_costo, d.unidad, d.nombre_prod
+            FROM costos_diario d
+            WHERE d.codigo_prod = %(c)s AND d.fecha BETWEEN %(d)s AND %(h)s""" + f + """
+            ORDER BY d.fecha DESC, d.valor DESC LIMIT 300""", p)
+        filas = [{'fecha': r[0].isoformat(), 'bodega': r[1], 'tipo': r[2],
+                  'cantidad': float(r[3] or 0),
+                  'costo': float(r[4]) if r[4] is not None else None,
+                  'valor': float(r[5] or 0), 'docs': r[6], 'confianza': r[7],
+                  'sin_costo': r[8], 'unidad': r[9], 'nombre': r[10]}
+                 for r in cur.fetchall()]
+
+        cur.execute("""SELECT desde, hasta, costo, fuente, confianza
+                       FROM costo_vigente_producto
+                       WHERE codigo_prod = %s ORDER BY desde""", (codigo,))
+        tramos = [{'desde': r[0].isoformat(), 'hasta': r[1].isoformat(),
+                   'costo': float(r[2]), 'fuente': r[3], 'confianza': r[4]}
+                  for r in cur.fetchall()]
+        cur.close()
+        return jsonify({'ok': True, 'codigo': codigo, 'filas': filas, 'tramos': tramos,
+                        'nombre': filas[0]['nombre'] if filas else codigo})
+    except Exception as e:
+        app.logger.exception('costos_panel_movimientos')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            fc_release_movimientos_db(conn)
+
+
+@app.route('/api/costos/panel/refrescar', methods=['POST'])
+def costos_panel_refrescar():
+    """Rehace el costo vigente y revaloriza los ultimos dias.
+
+    Hay que dispararlo despues de que la sincronizacion de movimientos
+    termine. Sin esto el tablero se queda con la ultima foto: el resumen
+    anterior llevaba parado desde el 26-ago porque nadie llamaba a su
+    refresco.
+
+    Los dias van hacia atras porque un dia no queda completo el mismo dia:
+    la sincronizacion sigue trayendo movimientos suyos durante un par de
+    dias mas.
+    """
+    conn = None
+    try:
+        cuerpo = request.get_json(silent=True) or {}
+        dias = min(int(cuerpo.get('dias', 7)), 60)
+        rehacer = bool(cuerpo.get('rehacer_costos', True))
+
+        import costo_vigente
+        import costos_diario as cd
+
+        hasta = datetime.now(TZ_ECUADOR).date() + timedelta(days=1)
+        desde = hasta - timedelta(days=dias)
+
+        conn = fc_get_movimientos_db()
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '600s'")
+
+        pasos = []
+        if rehacer:
+            # El costo vigente se rearma entero: son tramos encadenados, y
+            # recalcular solo el ultimo trozo dejaria el enlace roto.
+            tramos = costo_vigente.construir(
+                cur, costo_vigente.DESDE_DEFECTO, log=lambda s: pasos.append(s.strip()))
+        else:
+            tramos = None
+
+        filas = cd.refrescar(cur, desde, hasta, log=None)
+        return jsonify({'ok': True, 'desde': desde.isoformat(),
+                        'hasta': (hasta - timedelta(days=1)).isoformat(),
+                        'tramos_costo': tramos, 'filas': filas, 'pasos': pasos})
+    except Exception as e:
+        app.logger.exception('costos_panel_refrescar')
+        return jsonify({'ok': False, 'error': str(e)[:300]}), 500
+    finally:
+        if conn:
+            try:
+                conn.autocommit = False
+            except Exception:
+                pass
             fc_release_movimientos_db(conn)
 
 
