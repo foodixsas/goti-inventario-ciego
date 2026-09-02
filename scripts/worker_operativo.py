@@ -514,6 +514,7 @@ def parsear_saldos(ruta_excel, nombre_bodega_esperado):
 def calcular_cruce(toma, equivs, contifico):
     """Cruza toma fisica vs contifico aplicando equivalencias."""
     detalle = []
+    sin_equivalencia = []
     for cod, t in toma.items():
         eq = equivs.get(cod)
         cont = contifico.get(cod)
@@ -529,10 +530,13 @@ def calcular_cruce(toma, equivs, contifico):
             unidad_destino = eq['unidad_destino']
             cant_conv = float(t['total'] or 0) * factor
         else:
+            # No hay equivalencia cargada: la cantidad va tal cual. Se anota
+            # para avisar, porque la diferencia que salga aqui no es real.
             factor = None
             unidad_toma = (t['unidad'] or '').strip()
             unidad_destino = unidad_c or unidad_toma
             cant_conv = float(t['total'] or 0)
+            sin_equivalencia.append((cod, nombre))
 
         diferencia = cant_conv - stock_c
         valor_dif = diferencia * costo
@@ -563,11 +567,47 @@ def calcular_cruce(toma, equivs, contifico):
         'total_cruzados': cruzados,
         'total_con_diferencia': con_dif,
         'valor_total_dif': round(valor_total, 2),
+        'sin_equivalencia': sin_equivalencia,
     }
     return detalle, resumen
 
 # ============ PROCESAR UNA TAREA ============
 # Retorna (driver_sigue_vivo_bool, ok_bool)
+def avisar_sin_equivalencia(proceso, bodega, faltantes):
+    """Avisa por Telegram de los productos que salieron sin equivalencia.
+
+    Sin este aviso el hueco es invisible. La conversion no falla con un error:
+    se saltea, la cantidad viaja en la unidad de la toma y la fila cuadra
+    contra un Contifico que habla en otra unidad. El descuadre que aparece se
+    lee como faltante de mercaderia y no lo es.
+
+    Paso con SORBETES EXTRAGRUESOS el 31-ago-2026: 7 paquetes contra 700
+    unidades en Contifico, -34,28 USD que no existian. El producto estaba en la
+    toma fisica pero nadie lo habia dado de alta en Config Productos. Un
+    producto nuevo tiene que gritar, no pasar de largo.
+    """
+    if not faltantes:
+        return
+    nombre = BODEGA_TELEGRAM.get(bodega, bodega.upper())
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from notificar_telegram import notificar_error
+
+        lineas = ['{} - {}'.format(c, n) for c, n in faltantes[:15]]
+        if len(faltantes) > 15:
+            lineas.append('... y {} mas'.format(len(faltantes) - 15))
+        detalle = '{}: {} producto(s) sin equivalencia{}{}'.format(
+            proceso, len(faltantes), chr(10), chr(10).join(lineas))
+        notificar_error(
+            'Equivalencias', nombre, detalle,
+            'La cantidad va SIN convertir: la diferencia que salga en estos '
+            'productos no es real. Cargar el factor en Config Productos y '
+            'volver a correr.')
+        log('  aviso enviado: {} producto(s) sin equivalencia'.format(len(faltantes)), 'WARN')
+    except Exception as e:
+        log('  aviso de equivalencias fallo: {}'.format(str(e)[:120]), 'WARN')
+
+
 def avisar_cruce_operativo(bodega, fecha_toma, resumen, error=None):
     """Avisa por Telegram del resultado del cruce operativo.
 
@@ -647,6 +687,11 @@ def procesar_tarea(tarea, driver):
         log('  - Calculando cruce...')
         detalle, resumen = calcular_cruce(toma, equivs, contifico)
         log(f'    cruzados={resumen["total_cruzados"]}  con_dif={resumen["total_con_diferencia"]}  valor_total={resumen["valor_total_dif"]}')
+        faltantes = resumen.get('sin_equivalencia') or []
+        if faltantes:
+            log(f'    SIN EQUIVALENCIA: {len(faltantes)} -> '
+                + ', '.join(c for c, _ in faltantes[:10]), 'WARN')
+            avisar_sin_equivalencia('Cruce operativo', bodega, faltantes)
 
         log('  - Subiendo resultado al backend...')
         ok = post_resultado({
@@ -702,6 +747,7 @@ def cargar_toma_para_contifico(tabla, fecha, equivs):
         (fecha,)
     )
     productos = []
+    sin_equivalencia = []
     for r in rows:
         cod = r['codigo']
         total = float(r['total'] or 0)
@@ -709,13 +755,17 @@ def cargar_toma_para_contifico(tabla, fecha, equivs):
         if eq:
             cantidad = total * float(eq['factor'])
         else:
+            # Aqui el hueco es mas caro que en el cruce: esta cantidad se
+            # ESCRIBE en Contifico y una toma fisica fija el saldo. Subir
+            # 7 donde van 700 declara un faltante que nadie tuvo.
             cantidad = total
+            sin_equivalencia.append((cod, r['producto']))
         productos.append({
             'codigo': cod,
             'nombre': r['producto'],
             'cantidad': cantidad,
         })
-    return productos
+    return productos, sin_equivalencia
 
 
 def cerrar_modales(driver):
@@ -1152,8 +1202,12 @@ def procesar_tarea_carga(tarea, driver):
     try:
         log('  - Cargando equivalencias y toma fisica...')
         equivs = cargar_equivalencias(bodega)
-        productos = cargar_toma_para_contifico(cfg['tabla_toma'], fecha_toma, equivs)
+        productos, faltantes = cargar_toma_para_contifico(cfg['tabla_toma'], fecha_toma, equivs)
         log(f'    equivalencias={len(equivs)}  productos_a_cargar={len(productos)}')
+        if faltantes:
+            log(f'    SIN EQUIVALENCIA: {len(faltantes)} -> '
+                + ', '.join(c for c, _ in faltantes[:10]), 'WARN')
+            avisar_sin_equivalencia('Carga de toma fisica a Contifico', bodega, faltantes)
 
         if not productos:
             post_resultado_carga({'id': ejec_id, 'estado': 'error',
@@ -1360,6 +1414,7 @@ def procesar_tarea_conteo_op(tarea, driver):
         for r in db_query("SELECT codigo, nombre, unidad FROM goti.productos_por_marca WHERE marca = %s AND activo = TRUE", (marca,)):
             datos_marca[r['codigo']] = r
 
+        sin_equivalencia = []
         for cod in codigos_seleccionados:
             if cod in contifico:
                 c = contifico[cod]
@@ -1369,8 +1424,15 @@ def procesar_tarea_conteo_op(tarea, driver):
                 if eq:
                     factor = float(eq.get('factor', 1))
                     if factor and factor != 0:
-                        stock = stock * factor
+                        # El stock viene en la unidad de Contifico y aqui se
+                        # expresa en la unidad en que cuenta la persona, que es
+                        # la direccion contraria a la del cruce: se DIVIDE.
+                        # Multiplicando, CREMA DE LECHE quedaba en 74.480.000 Kg
+                        # cuando Contifico tenia 74.480 g, o sea 74,48 Kg.
+                        stock = stock / factor
                     unidad = eq.get('unidad_toma', unidad)
+                else:
+                    sin_equivalencia.append((cod, c['nombre']))
                 productos_final.append({
                     'codigo': cod, 'nombre': c['nombre'],
                     'unidad': unidad, 'cantidad': stock, 'costo': c['costo']
@@ -1385,6 +1447,11 @@ def procesar_tarea_conteo_op(tarea, driver):
                     'unidad': unidad, 'cantidad': 0, 'costo': 0
                 })
                 log(f'    {cod} no en Contifico -> insertado con stock=0')
+
+        if sin_equivalencia:
+            log(f'    SIN EQUIVALENCIA: {len(sin_equivalencia)} -> '
+                + ', '.join(c for c, _ in sin_equivalencia[:10]), 'WARN')
+            avisar_sin_equivalencia('Conteo operativo', bodega, sin_equivalencia)
 
         n_fijos = len(productos_final) if bodega == 'bodega_principal' else 0
         n_aleatorios = len(productos_final) if bodega != 'bodega_principal' else 0
