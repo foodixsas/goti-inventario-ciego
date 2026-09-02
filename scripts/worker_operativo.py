@@ -515,6 +515,7 @@ def calcular_cruce(toma, equivs, contifico):
     """Cruza toma fisica vs contifico aplicando equivalencias."""
     detalle = []
     sin_equivalencia = []
+    stock_negativo = []
     for cod, t in toma.items():
         eq = equivs.get(cod)
         cont = contifico.get(cod)
@@ -537,6 +538,12 @@ def calcular_cruce(toma, equivs, contifico):
             unidad_destino = unidad_c or unidad_toma
             cant_conv = float(t['total'] or 0)
             sin_equivalencia.append((cod, nombre))
+
+        # Un saldo negativo no existe fisicamente: o falta registrar ingresos o
+        # hay movimientos mal cargados. Ademas envenena el cruce, porque la
+        # diferencia contra un negativo suma en vez de restar.
+        if stock_c < 0:
+            stock_negativo.append((cod, nombre, stock_c, unidad_c, stock_c * costo))
 
         diferencia = cant_conv - stock_c
         valor_dif = diferencia * costo
@@ -568,6 +575,10 @@ def calcular_cruce(toma, equivs, contifico):
         'total_con_diferencia': con_dif,
         'valor_total_dif': round(valor_total, 2),
         'sin_equivalencia': sin_equivalencia,
+        # Por valor y no por cantidad: las unidades se mezclan (lo que va en
+        # gramos siempre daria el numero mas grande) y lo que interesa
+        # primero es el negativo que mas plata representa.
+        'stock_negativo': sorted(stock_negativo, key=lambda x: x[4]),
     }
     return detalle, resumen
 
@@ -606,6 +617,57 @@ def avisar_sin_equivalencia(proceso, bodega, faltantes):
         log('  aviso enviado: {} producto(s) sin equivalencia'.format(len(faltantes)), 'WARN')
     except Exception as e:
         log('  aviso de equivalencias fallo: {}'.format(str(e)[:120]), 'WARN')
+
+
+def avisar_stock_negativo(bodega, fecha_toma, negativos):
+    """Avisa, marcado como importante, de los productos con saldo negativo.
+
+    Un stock negativo no existe: nadie tiene menos veinte kilos en una percha.
+    Significa que Contifico descargo consumo que nunca se ingreso, o que hay
+    movimientos cargados contra el producto equivocado. Va aparte del aviso
+    normal del cruce y con otro encabezado porque no es el resultado del dia:
+    es un dato de Contifico que hay que ir a corregir a mano, y hasta que se
+    corrija la diferencia de ese producto no significa nada.
+    """
+    if not negativos:
+        return
+    nombre = BODEGA_TELEGRAM.get(bodega, bodega.upper())
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from notificar_telegram import destinatarios_para, enviar_mensaje
+
+        try:
+            f = datetime.strptime(str(fecha_toma)[:10], '%Y-%m-%d').strftime('%d/%m/%Y')
+        except Exception:
+            f = str(fecha_toma)
+
+        lineas = []
+        for cod, prod, stock, unidad, valor in negativos[:20]:
+            lineas.append('• <b>{}</b> {}: {:,.2f} {} ({:+,.2f} USD)'.format(
+                cod, (prod or '')[:38], stock, (unidad or '').strip(), valor))
+        if len(negativos) > 20:
+            lineas.append('... y {} mas'.format(len(negativos) - 20))
+
+        total = sum(n[4] for n in negativos)
+        mensaje = (
+            '‼️ <b>IMPORTANTE — STOCK NEGATIVO EN CONTIFICO</b>\n'
+            '📍 {}\n'
+            'Cruce de la toma del {}\n\n'
+            '<b>{}</b> producto(s) con saldo negativo, {:+,.2f} USD en total:\n\n'
+            '{}\n\n'
+            '⚠️ Un saldo negativo no existe fisicamente: falta registrar '
+            'ingresos o hay movimientos cargados contra el producto '
+            'equivocado. Mientras siga negativo, la diferencia del cruce en '
+            'esos productos no significa nada.'
+        ).format(nombre, f, len(negativos), total, chr(10).join(lineas))
+
+        enviados = destinatarios_para(nombre, 'Stock negativo', 'error')
+        for chat_id in enviados:
+            enviar_mensaje(chat_id, mensaje)
+        log('  aviso enviado: {} producto(s) con stock negativo -> {} chats'.format(
+            len(negativos), len(enviados)), 'WARN')
+    except Exception as e:
+        log('  aviso de stock negativo fallo: {}'.format(str(e)[:120]), 'WARN')
 
 
 def avisar_cruce_operativo(bodega, fecha_toma, resumen, error=None):
@@ -692,6 +754,12 @@ def procesar_tarea(tarea, driver):
             log(f'    SIN EQUIVALENCIA: {len(faltantes)} -> '
                 + ', '.join(c for c, _ in faltantes[:10]), 'WARN')
             avisar_sin_equivalencia('Cruce operativo', bodega, faltantes)
+
+        negativos = resumen.get('stock_negativo') or []
+        if negativos:
+            log(f'    STOCK NEGATIVO: {len(negativos)} -> '
+                + ', '.join(n[0] for n in negativos[:10]), 'WARN')
+            avisar_stock_negativo(bodega, fecha_toma, negativos)
 
         log('  - Subiendo resultado al backend...')
         ok = post_resultado({
