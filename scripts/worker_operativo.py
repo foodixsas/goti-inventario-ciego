@@ -619,22 +619,21 @@ def avisar_sin_equivalencia(proceso, bodega, faltantes):
         log('  aviso de equivalencias fallo: {}'.format(str(e)[:120]), 'WARN')
 
 
-def avisar_toma_incompleta(bodega, fecha_toma, cargados, sin_contar):
-    """Avisa cuando la toma fisica llega con productos en blanco.
+def avisar_toma_incompleta(bodega, fecha_toma, cargados, sin_contar, total):
+    """Avisa que parte de la toma llego en blanco y subio en cero.
 
-    A Contifico solo sube lo que alguien conto, y eso esta bien: una toma
-    fisica FIJA el saldo, asi que subir en cero lo que nadie miro seria
-    declararlo agotado. Lo que estaba mal era el silencio. El panel decia
-    '31/31 productos OK' -cierto, pero sobre el total equivocado- y los otros
-    193 productos de la toma de Planta no aparecian por ningun lado.
+    Sube toda la toma, la misma lista que lee el cruce, y lo que nadie conto va
+    en cero: si no se conto, el inventario de ese producto queda en cero. El
+    aviso no es para frenar nada, es para que quede escrito cuales fueron.
+    Poner en cero el saldo de 193 productos es un hecho grande y no puede pasar
+    sin registro.
 
     La fila existe en la toma, con su producto y su usuario; lo que no tiene es
-    nada tecleado en 'cantidades'. Eso no es un cero, es un no contado.
+    nada tecleado en 'cantidades'.
     """
     if not sin_contar:
         return
     nombre = BODEGA_TELEGRAM.get(bodega, bodega.upper())
-    total = cargados + len(sin_contar)
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from notificar_telegram import destinatarios_para, enviar_mensaje
@@ -650,24 +649,24 @@ def avisar_toma_incompleta(bodega, fecha_toma, cargados, sin_contar):
             lineas.append('... y {} mas'.format(len(sin_contar) - 15))
 
         mensaje = (
-            '⚠️ <b>TOMA FISICA INCOMPLETA</b>\n'
+            '⚠️ <b>TOMA FISICA CON PRODUCTOS EN CERO</b>\n'
             '📍 {}\n'
             'Toma del {}\n\n'
             'Se cargaron <b>{}</b> de <b>{}</b> productos ({:.0f}%).\n'
-            '<b>{}</b> llegaron sin contar y NO se subieron a Contifico:\n\n'
+            '<b>{}</b> llegaron sin contar y se subieron <b>EN CERO</b>:\n\n'
             '{}\n\n'
-            'Estos productos quedan en Contifico con el saldo que ya tenian. '
-            'No se suben en cero a proposito: una toma fisica fija el saldo y '
-            'declararia agotado lo que nadie verifico.'
+            'El saldo de estos productos en Contifico queda en cero. Si alguno '
+            'tenia existencia y no se conto, hay que volver a contarlo y cargar '
+            'la toma de nuevo.'
         ).format(nombre, f, cargados, total, pct, len(sin_contar), chr(10).join(lineas))
 
         enviados = destinatarios_para(nombre, 'Toma fisica', 'error')
         for chat_id in enviados:
             enviar_mensaje(chat_id, mensaje)
-        log('  aviso enviado: toma incompleta {}/{} -> {} chats'.format(
-            cargados, total, len(enviados)), 'WARN')
+        log('  aviso enviado: {} de {} productos en cero -> {} chats'.format(
+            len(sin_contar), total, len(enviados)), 'WARN')
     except Exception as e:
-        log('  aviso de toma incompleta fallo: {}'.format(str(e)[:120]), 'WARN')
+        log('  aviso de productos en cero fallo: {}'.format(str(e)[:120]), 'WARN')
 
 
 def avisar_stock_negativo(bodega, fecha_toma, negativos):
@@ -859,10 +858,18 @@ def cargar_toma_para_contifico(tabla, fecha, equivs):
     saldo, asi que subir en cero un producto que nadie miro seria declararlo
     agotado. En Planta serian 197 productos de golpe.
     """
-    # Se traen TODAS las filas de la fecha y se separan aca, no en el WHERE:
-    # el filtro decide igual que antes, pero ademas queda la lista de lo que no
-    # se conto. Sin esa lista el resultado dice '31/31 productos OK' y nadie se
-    # entera de que 193 quedaron afuera.
+    # Entra TODA la toma, la misma lista que lee el cruce. Lo que nadie conto
+    # sube en cero.
+    #
+    # Antes se filtraba y solo subia lo contado, para no declarar agotado lo que
+    # nadie miro. En Planta eso dejaba fuera 193 de 224 productos y partia el
+    # inventario en dos: el cruce medido contra la toma completa y Contifico
+    # ajustado solo en una fraccion. Medido sobre la toma del 31-ago, de los 177
+    # que quedaban afuera 130 ya estaban en cero, 17 estaban en NEGATIVO -y
+    # subirlos en cero los corrige- y 30 tenian saldo, 2.157,49 USD.
+    #
+    # CARGA_SOLO_CONTADOS=1 vuelve al camino viejo si hiciera falta.
+    solo_contados = os.environ.get('CARGA_SOLO_CONTADOS', '0') == '1'
     rows = db_query(
         f"SELECT codigo, producto, total, unidad, cantidades FROM {tabla} "
         f"WHERE fecha = %s",
@@ -875,8 +882,11 @@ def cargar_toma_para_contifico(tabla, fecha, equivs):
         cod = r['codigo']
         total = float(r['total'] or 0)
         if not (total > 0 or (total == 0 and re.search(r'[0-9]', r['cantidades'] or ''))):
+            # Se anota igual: subir 193 productos en cero es un hecho que tiene
+            # que avisarse, aunque ahora si se suban.
             sin_contar.append((cod, r['producto']))
-            continue
+            if solo_contados:
+                continue
         eq = equivs.get(cod)
         if eq:
             cantidad = total * float(eq['factor'])
@@ -891,7 +901,9 @@ def cargar_toma_para_contifico(tabla, fecha, equivs):
             'nombre': r['producto'],
             'cantidad': cantidad,
         })
-    return productos, sin_equivalencia, sin_contar
+    # len(rows) aparte: con el modo por defecto coincide con len(productos),
+    # pero con CARGA_SOLO_CONTADOS=1 no, y el panel necesita el total real.
+    return productos, sin_equivalencia, sin_contar, len(rows)
 
 
 def cerrar_modales(driver):
@@ -1328,15 +1340,14 @@ def procesar_tarea_carga(tarea, driver):
     try:
         log('  - Cargando equivalencias y toma fisica...')
         equivs = cargar_equivalencias(bodega)
-        productos, faltantes, sin_contar = cargar_toma_para_contifico(
+        productos, faltantes, sin_contar, total_toma = cargar_toma_para_contifico(
             cfg['tabla_toma'], fecha_toma, equivs)
-        total_toma = len(productos) + len(sin_contar)
         log(f'    equivalencias={len(equivs)}  productos_a_cargar={len(productos)}'
             f'  sin_contar={len(sin_contar)}  total_en_la_toma={total_toma}')
         if sin_contar:
-            log(f'    NO SE CUENTAN: {len(sin_contar)} de {total_toma} productos '
-                f'llegaron en blanco desde el conteo', 'WARN')
-            avisar_toma_incompleta(bodega, fecha_toma, len(productos), sin_contar)
+            log(f'    EN CERO: {len(sin_contar)} de {total_toma} productos llegaron '
+                f'en blanco desde el conteo y suben en cero', 'WARN')
+            avisar_toma_incompleta(bodega, fecha_toma, len(productos), sin_contar, total_toma)
         if faltantes:
             log(f'    SIN EQUIVALENCIA: {len(faltantes)} -> '
                 + ', '.join(c for c, _ in faltantes[:10]), 'WARN')

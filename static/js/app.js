@@ -8239,8 +8239,9 @@ async function cargaCargarFechas() {
 
 // Texto del resultado de la carga a Contifico.
 // Decia "31/31 productos OK" y era cierto pero sobre el total equivocado: los
-// 31 eran los contados, no los 224 que tiene la toma de Planta. Los otros 193
-// no aparecian por ningun lado y la carga se leia como completa.
+// 31 eran los contados, no los 224 que tiene la toma de Planta. Ahora sube la
+// toma entera y lo que llego en blanco va en cero, asi que el aviso de abajo
+// dice cuantos fueron: poner 193 saldos en cero no puede pasar sin registro.
 function cargaTextoResultado(d, conListaErrores) {
     const ok = d.productos_ok || 0;
     const enToma = d.total_en_toma || 0;
@@ -8256,7 +8257,7 @@ function cargaTextoResultado(d, conListaErrores) {
     }
     if (sinContar > 0) {
         txt += `<br><span class="carga-sin-contar"><i class="fas fa-exclamation-triangle"></i> `
-             + `${sinContar} sin contar: no se subieron a Contifico</span>`;
+             + `${sinContar} llegaron sin contar y se subieron en CERO</span>`;
     }
     return txt;
 }
