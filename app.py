@@ -2752,6 +2752,7 @@ MOTIVOS_CRUCE = [
     'Bajas mal ejecutadas',
     'Traslados mal ejecutado de bodega Principal',
     'Traslado mal ejecutado por Planta de Produccion',
+    'Traslado mal ejecutado desde Materia Prima',
     'Traslado entre tiendas Erroneo',
     'Produccion mal ejecutada',
     'Cruce de productos',
