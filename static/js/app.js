@@ -8237,6 +8237,30 @@ async function cargaCargarFechas() {
     }
 }
 
+// Texto del resultado de la carga a Contifico.
+// Decia "31/31 productos OK" y era cierto pero sobre el total equivocado: los
+// 31 eran los contados, no los 224 que tiene la toma de Planta. Los otros 193
+// no aparecian por ningun lado y la carga se leia como completa.
+function cargaTextoResultado(d, conListaErrores) {
+    const ok = d.productos_ok || 0;
+    const enToma = d.total_en_toma || 0;
+    const sinContar = d.productos_sin_contar || 0;
+    // total_en_toma solo viene de las cargas nuevas; en las viejas se cae al
+    // texto de antes en vez de mostrar "31 de 0".
+    let txt = enToma
+        ? `Cargado a Contifico &nbsp;·&nbsp; ${ok} de ${enToma} productos`
+        : `Cargado a Contifico &nbsp;·&nbsp; ${ok}/${d.total_productos || 0} productos OK`;
+    if (d.productos_error > 0) {
+        txt += ` &nbsp;·&nbsp; ${d.productos_error} con error`;
+        if (conListaErrores && d.productos_error_lista) txt += ` (${d.productos_error_lista})`;
+    }
+    if (sinContar > 0) {
+        txt += `<br><span class="carga-sin-contar"><i class="fas fa-exclamation-triangle"></i> `
+             + `${sinContar} sin contar: no se subieron a Contifico</span>`;
+    }
+    return txt;
+}
+
 async function cargaVerificarEstado() {
     const bodega = getCruceBodegaGlobal();
     const fecha = document.getElementById('carga-fecha')?.value;
@@ -8271,7 +8295,7 @@ async function cargaVerificarEstado() {
             const fechaFin = data.timestamp_fin ? new Date(data.timestamp_fin).toLocaleString('es-EC') : '';
             status.innerHTML = `<div class="cuadrar-status-ok">
                 <i class="fas fa-check-circle"></i>
-                <span>Cargado a Contifico &nbsp;·&nbsp; ${data.productos_ok || 0}/${data.total_productos || 0} productos OK${data.productos_error > 0 ? ` &nbsp;·&nbsp; ${data.productos_error} con error` : ''} &nbsp;·&nbsp; ${fechaFin}</span>
+                <span>${cargaTextoResultado(data, false)} &nbsp;·&nbsp; ${fechaFin}</span>
             </div>`;
         } else if (data.existe && (data.estado === 'pendiente' || data.estado === 'en_proceso')) {
             btn.disabled = true;
@@ -8372,7 +8396,7 @@ function cargaPollEstado(ejecId) {
                 btn.style.opacity = '0.6';
                 status.innerHTML = `<div class="cuadrar-status-ok">
                     <i class="fas fa-check-circle"></i>
-                    <span>Cargado a Contifico &nbsp;·&nbsp; ${d.productos_ok || 0}/${d.total_productos || 0} productos OK${d.productos_error > 0 ? ` &nbsp;·&nbsp; ${d.productos_error} con error (${d.productos_error_lista || ''})` : ''}</span>
+                    <span>${cargaTextoResultado(d, true)}</span>
                 </div>`;
                 setTimeout(() => prog.classList.add('hidden'), 2000);
             } else if (d.estado === 'error') {

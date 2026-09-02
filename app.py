@@ -5424,6 +5424,7 @@ def carga_contifico_resultado():
             SET estado = %s, timestamp_fin = NOW(),
                 total_productos = %s, productos_ok = %s,
                 productos_error = %s, productos_error_lista = %s,
+                productos_sin_contar = %s, total_en_toma = %s,
                 error_msg = %s
             WHERE id = %s
         """, (
@@ -5432,6 +5433,8 @@ def carga_contifico_resultado():
             data.get('productos_ok'),
             data.get('productos_error'),
             data.get('productos_error_lista'),
+            data.get('productos_sin_contar'),
+            data.get('total_en_toma'),
             error_msg,
             ejec_id
         ))
@@ -5455,7 +5458,8 @@ def carga_contifico_estado(ejec_id):
         cur.execute("""
             SELECT id, bodega, fecha_toma, estado, solicitado_at,
                    timestamp_inicio, timestamp_fin, error_msg,
-                   total_productos, productos_ok, productos_error, productos_error_lista
+                   total_productos, productos_ok, productos_error, productos_error_lista,
+                   productos_sin_contar, total_en_toma
             FROM goti.carga_contifico_ejecuciones WHERE id = %s
         """, (ejec_id,))
         r = cur.fetchone()
@@ -5474,6 +5478,8 @@ def carga_contifico_estado(ejec_id):
             'productos_ok': r['productos_ok'],
             'productos_error': r['productos_error'],
             'productos_error_lista': r['productos_error_lista'],
+            'productos_sin_contar': r['productos_sin_contar'],
+            'total_en_toma': r['total_en_toma'],
         })
     except Exception as e:
         print(f"Error en /api/carga-contifico/estado: {e}")

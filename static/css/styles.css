@@ -6051,6 +6051,15 @@ tr.cruce-solo-cont { background: #F1F5F9; }
     flex-wrap: wrap;
 }
 .cuadrar-status-ok span { flex: 1; min-width: 200px; }
+/* La carga salio bien, pero parte de la toma llego sin contar: se avisa dentro
+   del mismo cartel verde, en ambar, para que no se lea como completa. */
+.carga-sin-contar {
+    display: inline-block;
+    margin-top: 4px;
+    color: #b45309;
+    font-weight: 600;
+}
+body.dark .carga-sin-contar { color: #fbbf24; }
 .btn-ver-detalle {
     background: #059669;
     color: #fff;
