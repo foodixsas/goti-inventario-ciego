@@ -2742,6 +2742,141 @@ def cruce_ejecuciones():
             release_db(conn)
 
 
+MOTIVOS_CRUCE = [
+    'Error de sistema',
+    'Mal conteo',
+    'Mal tipeo',
+    'Facturacion cargada fuera de tiempo',
+    'Factura mal cargada',
+    'Baja cargada fuera de tiempo',
+    'Bajas mal ejecutadas',
+    'Traslados mal ejecutado de bodega Principal',
+    'Traslado entre tiendas Erroneo',
+    'Produccion mal ejecutada',
+    'Cruce de productos',
+    'Compra Extraordinaria',
+    'Descuento a trabajador',
+    'Producto sin justificacion',
+]
+
+
+def _asegurar_tabla_obs_cruce(cur):
+    """La tabla de observaciones del cruce, creada si aun no existe.
+
+    Vive aparte del detalle a proposito: cada CUADRAR borra y reescribe
+    goti.cruce_operativo_detalle, asi que una nota guardada ahi se perderia
+    en el siguiente cruce. Amarrada a bodega+fecha_toma+codigo sobrevive a
+    todos los recruces del mismo dia, que es justo lo que hace falta para ir
+    cuadrando: se anota, se vuelve a cruzar, y la nota sigue al lado de la
+    diferencia ya actualizada.
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS goti.cruce_operativo_observaciones (
+            id SERIAL PRIMARY KEY,
+            bodega VARCHAR(50) NOT NULL,
+            fecha_toma DATE NOT NULL,
+            codigo VARCHAR(50) NOT NULL,
+            nombre TEXT,
+            motivo TEXT,
+            observaciones TEXT,
+            diferencia_al_anotar NUMERIC(18,4),
+            valor_al_anotar NUMERIC(18,4),
+            creado_por VARCHAR(150),
+            creado_at TIMESTAMP DEFAULT NOW(),
+            modificado_por VARCHAR(150),
+            modificado_at TIMESTAMP,
+            UNIQUE (bodega, fecha_toma, codigo)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_cruce_obs_bod_fecha
+        ON goti.cruce_operativo_observaciones (bodega, fecha_toma)
+    """)
+
+
+@app.route('/api/cruce-op/motivos', methods=['GET'])
+def cruce_op_motivos():
+    """Los mismos motivos que usan los locales, para que los dos informes se
+    lean con el mismo criterio."""
+    return jsonify(MOTIVOS_CRUCE)
+
+
+@app.route('/api/cruce-op/observacion', methods=['POST'])
+def cruce_op_observacion():
+    """Guarda el motivo y el comentario de un producto del cruce.
+
+    Se guarda contra (bodega, fecha_toma, codigo) y no contra la ejecucion,
+    para que sobreviva a los recruces. Junto con el texto queda la diferencia
+    que habia en ese momento: si un cruce posterior la cambia, se puede ver
+    que la nota hablaba de otro numero.
+    """
+    data = request.json or {}
+    ejec_id = data.get('ejecucion_id')
+    codigo = (data.get('codigo') or '').strip()
+    motivo = (data.get('motivo') or '').strip() or None
+    obs = (data.get('observaciones') or '').strip() or None
+    usuario = (data.get('usuario') or '').strip() or 'panel'
+
+    if not ejec_id or not codigo:
+        return jsonify({'error': 'ejecucion_id y codigo requeridos'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        _asegurar_tabla_obs_cruce(cur)
+
+        cur.execute("""
+            SELECT e.bodega, e.fecha_toma, d.nombre, d.diferencia, d.valor_diferencia
+            FROM goti.cruce_operativo_ejecuciones e
+            LEFT JOIN goti.cruce_operativo_detalle d
+                   ON d.ejecucion_id = e.id AND d.codigo = %s
+            WHERE e.id = %s
+        """, (codigo, ejec_id))
+        ctx = cur.fetchone()
+        if not ctx:
+            return jsonify({'error': 'Ejecucion no encontrada'}), 404
+
+        # Una nota vacia es un borrado: si le quitan el motivo y el texto, la
+        # fila no tiene por que quedarse ocupando lugar.
+        if not motivo and not obs:
+            cur.execute("""
+                DELETE FROM goti.cruce_operativo_observaciones
+                WHERE bodega = %s AND fecha_toma = %s AND codigo = %s
+            """, (ctx['bodega'], ctx['fecha_toma'], codigo))
+            conn.commit()
+            return jsonify({'ok': True, 'borrado': True})
+
+        cur.execute("""
+            INSERT INTO goti.cruce_operativo_observaciones
+                (bodega, fecha_toma, codigo, nombre, motivo, observaciones,
+                 diferencia_al_anotar, valor_al_anotar, creado_por)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (bodega, fecha_toma, codigo) DO UPDATE SET
+                motivo = EXCLUDED.motivo,
+                observaciones = EXCLUDED.observaciones,
+                diferencia_al_anotar = EXCLUDED.diferencia_al_anotar,
+                valor_al_anotar = EXCLUDED.valor_al_anotar,
+                modificado_por = EXCLUDED.creado_por,
+                modificado_at = NOW()
+            RETURNING COALESCE(modificado_por, creado_por) AS por,
+                      COALESCE(modificado_at, creado_at) AS cuando
+        """, (ctx['bodega'], ctx['fecha_toma'], codigo, ctx['nombre'], motivo,
+              obs, ctx['diferencia'], ctx['valor_diferencia'], usuario))
+        r = cur.fetchone()
+        conn.commit()
+        return jsonify({'ok': True, 'por': r['por'],
+                        'cuando': r['cuando'].isoformat() if r['cuando'] else None})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Error en /api/cruce-op/observacion: {e}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 @app.route('/api/cruce/detalle', methods=['GET'])
 def cruce_detalle():
     """Detalle producto por producto de un cruce"""
@@ -2753,11 +2888,21 @@ def cruce_detalle():
     try:
         conn = get_db()
         cur = conn.cursor()
-        sql = """SELECT * FROM goti.cruce_operativo_detalle
-                 WHERE ejecucion_id = %s"""
+        _asegurar_tabla_obs_cruce(cur)
+        sql = """SELECT d.*, o.motivo, o.observaciones,
+                        o.diferencia_al_anotar,
+                        COALESCE(o.modificado_por, o.creado_por) AS obs_por,
+                        COALESCE(o.modificado_at, o.creado_at) AS obs_at
+                 FROM goti.cruce_operativo_detalle d
+                 JOIN goti.cruce_operativo_ejecuciones e ON e.id = d.ejecucion_id
+                 LEFT JOIN goti.cruce_operativo_observaciones o
+                        ON o.bodega = e.bodega
+                       AND o.fecha_toma = e.fecha_toma
+                       AND o.codigo = d.codigo
+                 WHERE d.ejecucion_id = %s"""
         if solo_dif:
-            sql += " AND diferencia != 0"
-        sql += " ORDER BY ABS(valor_diferencia) DESC"
+            sql += " AND d.diferencia != 0"
+        sql += " ORDER BY ABS(d.valor_diferencia) DESC"
         cur.execute(sql, (ejec_id,))
         rows = cur.fetchall()
         result = []
@@ -2775,6 +2920,18 @@ def cruce_detalle():
                 'valor_diferencia': float(r['valor_diferencia']) if r['valor_diferencia'] is not None else 0,
                 'tipo_abc': r['tipo_abc'],
                 'origen': r['origen'],
+                'motivo': r['motivo'],
+                'observaciones': r['observaciones'],
+                'obs_por': r['obs_por'],
+                'obs_at': r['obs_at'].isoformat() if r['obs_at'] else None,
+                # si el cruce se volvio a correr despues de la nota, la
+                # diferencia de la que hablaba ya no es la de ahora
+                'obs_desactualizada': (
+                    r['motivo'] is not None
+                    and r['diferencia_al_anotar'] is not None
+                    and r['diferencia'] is not None
+                    and abs(float(r['diferencia_al_anotar']) - float(r['diferencia'])) > 0.01
+                ),
             })
         return jsonify(result)
     except Exception as e:
@@ -2849,8 +3006,16 @@ def cruce_exportar_excel():
             return jsonify({'error': 'Ejecucion no encontrada'}), 404
 
         # Detalle
-        cur.execute("""SELECT * FROM goti.cruce_operativo_detalle
-                       WHERE ejecucion_id = %s ORDER BY ABS(valor_diferencia) DESC""", (ejec_id,))
+        _asegurar_tabla_obs_cruce(cur)
+        cur.execute("""SELECT d.*, o.motivo, o.observaciones
+                       FROM goti.cruce_operativo_detalle d
+                       JOIN goti.cruce_operativo_ejecuciones e ON e.id = d.ejecucion_id
+                       LEFT JOIN goti.cruce_operativo_observaciones o
+                              ON o.bodega = e.bodega
+                             AND o.fecha_toma = e.fecha_toma
+                             AND o.codigo = d.codigo
+                       WHERE d.ejecucion_id = %s
+                       ORDER BY ABS(d.valor_diferencia) DESC""", (ejec_id,))
         rows = cur.fetchall()
 
         wb = Workbook()
@@ -2871,7 +3036,8 @@ def cruce_exportar_excel():
             top=Side(style='thin'), bottom=Side(style='thin'))
 
         headers = ['Codigo', 'Producto', 'Categoria', 'Tipo', 'Unidad',
-                   'Fisico', 'Sistema', 'Diferencia', 'Costo Unit.', 'Valor Dif.', 'Origen']
+                   'Fisico', 'Sistema', 'Diferencia', 'Costo Unit.', 'Valor Dif.', 'Origen',
+                   'Motivo', 'Observacion']
         for col, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=h)
             cell.font = header_font
@@ -2886,7 +3052,7 @@ def cruce_exportar_excel():
                     float(r['diferencia']) if r['diferencia'] is not None else 0,
                     float(r['costo_unitario']) if r['costo_unitario'] is not None else 0,
                     float(r['valor_diferencia']) if r['valor_diferencia'] is not None else 0,
-                    r['origen']]
+                    r['origen'], r['motivo'] or '', r['observaciones'] or '']
             for col, v in enumerate(vals, 1):
                 cell = ws.cell(row=i, column=col, value=v)
                 cell.border = thin_border

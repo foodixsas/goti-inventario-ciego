@@ -4494,6 +4494,7 @@ async function verCruceDetalle(ejecId) {
     const btn = document.getElementById('btn-cruce-solo-dif');
     if (btn) btn.classList.remove('active');
 
+    await cruceCargarMotivos();
     await cargarCruceDetalleData(ejecId, false);
 
     document.getElementById('cruce-detalle-panel').classList.remove('hidden');
@@ -4517,18 +4518,89 @@ async function cargarCruceDetalleData(ejecId, soloDif) {
     }
 }
 
+let _cruceMotivos = null;
+
+async function cruceCargarMotivos() {
+    if (_cruceMotivos) return _cruceMotivos;
+    try {
+        const r = await fetch(`${CONFIG.API_URL}/api/cruce-op/motivos`);
+        _cruceMotivos = r.ok ? await r.json() : [];
+    } catch (e) {
+        _cruceMotivos = [];
+    }
+    return _cruceMotivos;
+}
+
+// Cuantas diferencias siguen sin explicacion. Se recalcula desde el DOM para
+// no tener que recargar la tabla entera cada vez que alguien anota una.
+function cruceActualizarPendientes() {
+    const cont = document.getElementById('cruce-obs-pendientes');
+    if (!cont) return;
+    const sel = document.querySelectorAll('#cruce-detalle-contenido select[data-obs-cod]');
+    const total = sel.length;
+    let sin = 0;
+    sel.forEach(s => { if (!s.value) sin++; });
+    if (!total) { cont.innerHTML = ''; return; }
+    cont.innerHTML = sin === 0
+        ? `<span style="color:#059669;font-weight:600;">
+             <i class="fas fa-check-circle"></i> Las ${total} diferencias tienen motivo</span>`
+        : `<i class="fas fa-pen"></i> <strong>${sin}</strong> de ${total}
+           diferencias sin motivo`;
+}
+
+// Guarda contra bodega+fecha+producto, no contra la ejecucion: asi la nota
+// sigue ahi despues de volver a cuadrar.
+async function cruceGuardarObs(fila) {
+    const codigo = fila.dataset.obsFila;
+    const sel = fila.querySelector('select[data-obs-cod]');
+    const txt = fila.querySelector('input[data-obs-cod]');
+    const marca = fila.querySelector('.cruce-obs-marca');
+    if (marca) marca.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    try {
+        const r = await fetch(`${CONFIG.API_URL}/api/cruce-op/observacion`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                ejecucion_id: state.cruceDetalleId,
+                codigo: codigo,
+                motivo: sel ? sel.value : '',
+                observaciones: txt ? txt.value : '',
+                usuario: state.user ? (state.user.username || '') : ''
+            })
+        });
+        if (!r.ok) throw new Error('no se pudo guardar');
+        if (marca) {
+            marca.innerHTML = '<i class="fas fa-check" style="color:#059669;"></i>';
+            setTimeout(() => { marca.innerHTML = ''; }, 2000);
+        }
+        // una nota nueva ya no habla de una diferencia vieja
+        const av = fila.querySelector('.cruce-obs-vieja');
+        if (av) av.remove();
+        cruceActualizarPendientes();
+    } catch (e) {
+        if (marca) marca.innerHTML = '<i class="fas fa-times" style="color:#b91c1c;"></i>';
+        showToast('No se pudo guardar la observacion', 'error');
+    }
+}
+
 function renderCruceDetalle(datos) {
     const container = document.getElementById('cruce-detalle-contenido');
 
     if (!datos || datos.length === 0) {
         container.innerHTML = '<div class="empty-state"><i class="fas fa-check-circle"></i><p>Sin diferencias</p></div>';
+        const pend = document.getElementById('cruce-obs-pendientes');
+        if (pend) pend.innerHTML = '';
         return;
     }
+
+    const puedeAnotar = _puede('cruce', 'editar');
+    const motivos = _cruceMotivos || [];
 
     let html = `<div class="tabla-cruce-wrapper"><table class="tabla-cruce">
         <thead><tr>
             <th>Codigo</th><th>Producto</th><th>Cat.</th><th>Tipo</th>
             <th>Fisico</th><th>Sistema</th><th>Dif.</th><th>%</th><th>Valor $</th><th>Origen</th>
+            <th style="min-width:170px;">Motivo</th><th style="min-width:220px;">Observacion</th>
         </tr></thead><tbody>`;
 
     datos.forEach(d => {
@@ -4538,7 +4610,39 @@ function renderCruceDetalle(datos) {
         const origenClass = d.origen === 'solo_toma' ? 'cruce-solo-toma' :
                             d.origen === 'solo_contifico' ? 'cruce-solo-cont' : '';
 
-        html += `<tr class="${origenClass}">
+        let celdas;
+        if (dif === 0) {
+            // lo que cuadra no hay que explicarlo
+            celdas = '<td style="color:#94a3b8;">-</td><td style="color:#94a3b8;">-</td>';
+        } else if (!puedeAnotar) {
+            celdas = `<td>${escapeHtml(d.motivo || '')}</td>
+                      <td>${escapeHtml(d.observaciones || '')}</td>`;
+        } else {
+            const ops = motivos.map(m =>
+                `<option value="${escapeHtml(m)}"${d.motivo === m ? ' selected' : ''}>${escapeHtml(m)}</option>`
+            ).join('');
+            // el motivo guardado puede no estar en la lista (viene de antes o
+            // se renombro): se agrega para no perderlo al abrir la fila
+            const extra = (d.motivo && !motivos.includes(d.motivo))
+                ? `<option value="${escapeHtml(d.motivo)}" selected>${escapeHtml(d.motivo)}</option>` : '';
+            const aviso = d.obs_desactualizada
+                ? `<span class="cruce-obs-vieja" title="Esta nota se escribio cuando la diferencia era otra. Vuelve a revisarla."
+                     style="color:#d97706;margin-left:4px;"><i class="fas fa-exclamation-triangle"></i></span>` : '';
+            const quien = d.obs_por ? ` title="Anotado por ${escapeHtml(d.obs_por)}"` : '';
+            celdas = `
+              <td><select data-obs-cod="${escapeHtml(d.codigo)}"${quien}
+                     style="width:100%;padding:3px;font-size:12px;">
+                    <option value="">- sin motivo -</option>${extra}${ops}
+                  </select>${aviso}</td>
+              <td style="white-space:nowrap;">
+                  <input type="text" data-obs-cod="${escapeHtml(d.codigo)}"
+                     value="${escapeHtml(d.observaciones || '')}" placeholder="Que paso"
+                     style="width:82%;padding:3px;font-size:12px;">
+                  <span class="cruce-obs-marca" style="margin-left:4px;"></span>
+              </td>`;
+        }
+
+        html += `<tr class="${origenClass}" data-obs-fila="${escapeHtml(d.codigo)}">
             <td>${escapeHtml(d.codigo)}</td>
             <td>${escapeHtml(d.nombre || '')}</td>
             <td>${d.categoria || ''}</td>
@@ -4549,11 +4653,18 @@ function renderCruceDetalle(datos) {
             <td class="${difClass}">${pct}%</td>
             <td>$${(d.valor_diferencia || 0).toFixed(2)}</td>
             <td><span class="cruce-origen-badge ${origenClass}">${d.origen}</span></td>
+            ${celdas}
         </tr>`;
     });
 
     html += '</tbody></table></div>';
     container.innerHTML = html;
+
+    // sin onclick en el HTML: el codigo del producto viaja en data-obs-fila
+    container.querySelectorAll('[data-obs-cod]').forEach(el => {
+        el.addEventListener('change', () => cruceGuardarObs(el.closest('tr')));
+    });
+    cruceActualizarPendientes();
 }
 
 async function cruceFiltrarSoloDiferencias() {
