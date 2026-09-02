@@ -7811,7 +7811,7 @@ async function guardarEvalSemanal() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 local: bodega, semana_inicio: semanaInicio, semana_fin: semanaFin,
-                evaluaciones, evaluado_por: state.usuario?.username || 'admin'
+                evaluaciones, evaluado_por: state.user?.username || 'admin'
             })
         });
         const data = await r.json();
@@ -8110,8 +8110,8 @@ async function cuadrarSolicitar() {
             body: JSON.stringify({
                 bodega, fecha_toma: fecha,
                 fecha_corte_contifico: fechaCorte,
-                usuario: state.usuario?.username || 'panel',
-                rol: state.usuario?.rol || ''
+                usuario: state.user?.username || 'panel',
+                rol: state.user?.rol || ''
             })
         });
         const data = await r.json();
@@ -8282,7 +8282,11 @@ async function cargaVerificarEstado() {
         const data = await r.json();
 
         if (data.cargado) {
-            const esAdmin = state.usuario?.rol === 'admin';
+            // _esAdmin() y no state.user.rol a secas: es el mismo criterio que
+            // usa el resto del panel (contempla el usuario 'admin' y la
+            // suplantacion), asi que lo que se ofrece coincide con lo que el
+            // backend acepta.
+            const esAdmin = _esAdmin();
             if (esAdmin) {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fas fa-redo"></i> <span>RE-CARGAR</span>';
@@ -8340,8 +8344,10 @@ async function cargaSolicitar() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 bodega, fecha_toma: fecha,
-                usuario: state.usuario?.username || 'panel',
-                rol: state.usuario?.rol || ''
+                usuario: state.user?.username || 'panel',
+                // El mismo criterio con el que se decidio mostrar RE-CARGAR:
+                // si el boton se ofrece, la solicitud tiene que pasar.
+                rol: _esAdmin() ? 'admin' : (state.user?.rol || '')
             })
         });
         const data = await r.json();
@@ -8392,9 +8398,19 @@ function cargaPollEstado(ejecId) {
                 clearInterval(cargaPollHandle);
                 progBar.style.width = '100%';
                 progMsg.textContent = 'Carga completada';
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fas fa-check-circle"></i> <span>YA CARGADO</span>';
-                btn.style.opacity = '0.6';
+                // Al admin le queda el boton listo para volver a cargar. Antes
+                // quedaba en 'YA CARGADO' deshabilitado y habia que recargar la
+                // pagina para que apareciera RE-CARGAR.
+                if (_esAdmin()) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-redo"></i> <span>RE-CARGAR</span>';
+                    btn.style.opacity = '1';
+                    btn.style.background = 'linear-gradient(135deg, #d97706, #f59e0b)';
+                } else {
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fas fa-check-circle"></i> <span>YA CARGADO</span>';
+                    btn.style.opacity = '0.6';
+                }
                 status.innerHTML = `<div class="cuadrar-status-ok">
                     <i class="fas fa-check-circle"></i>
                     <span>${cargaTextoResultado(d, true)}</span>

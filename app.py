@@ -5274,7 +5274,8 @@ def carga_contifico_solicitar():
                     UPDATE goti.carga_contifico_ejecuciones
                     SET estado='pendiente', solicitado_por=%s, solicitado_at=NOW(),
                         worker_lock=NULL, error_msg=NULL, timestamp_inicio=NULL, timestamp_fin=NULL,
-                        total_productos=NULL, productos_ok=NULL, productos_error=NULL, productos_error_lista=NULL
+                        total_productos=NULL, productos_ok=NULL, productos_error=NULL, productos_error_lista=NULL,
+                        productos_sin_contar=NULL, total_en_toma=NULL
                     WHERE id = %s
                 """, (usuario, existente['id']))
                 conn.commit()
@@ -5286,7 +5287,8 @@ def carga_contifico_solicitar():
                 UPDATE goti.carga_contifico_ejecuciones
                 SET estado='pendiente', solicitado_por=%s, solicitado_at=NOW(),
                     worker_lock=NULL, error_msg=NULL, timestamp_inicio=NULL, timestamp_fin=NULL,
-                    total_productos=NULL, productos_ok=NULL, productos_error=NULL, productos_error_lista=NULL
+                    total_productos=NULL, productos_ok=NULL, productos_error=NULL, productos_error_lista=NULL,
+                        productos_sin_contar=NULL, total_en_toma=NULL
                 WHERE id = %s
             """, (usuario, existente['id']))
             conn.commit()
