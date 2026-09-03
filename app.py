@@ -2879,6 +2879,187 @@ def cruce_op_observacion():
             release_db(conn)
 
 
+def _consultar_observaciones(cur, bodega=None, desde=None, hasta=None):
+    """Todas las notas del rango, leidas de SU tabla y no del cruce.
+
+    Las dos vistas que ya existian -el detalle y su Excel- arrancan de
+    cruce_operativo_detalle, asi que solo muestran la nota de un producto que
+    siga apareciendo en el ultimo cruce. Eso alcanza para trabajar el dia a dia
+    pero no sirve como respaldo: el detalle se reescribe en cada CUADRAR y hoy
+    hubo dos ejecuciones que quedaron sin detalle. Una nota en esa situacion
+    seguiria guardada y no se veria en ninguna pantalla.
+
+    Esta consulta no depende de que el cruce exista. La diferencia que trae es
+    la del ultimo cruce si lo hay, para poder mostrar que se corrigio y quedo
+    en cero, pero la nota se lista igual cuando no hay con que compararla.
+    """
+    _asegurar_tabla_obs_cruce(cur)
+    sql = """
+        SELECT o.bodega, o.fecha_toma, o.codigo, o.nombre, o.motivo, o.observaciones,
+               o.diferencia_al_anotar, o.valor_al_anotar,
+               COALESCE(o.modificado_por, o.creado_por) AS anotado_por,
+               COALESCE(o.modificado_at, o.creado_at) AS anotado_at,
+               d.diferencia AS diferencia_actual,
+               d.valor_diferencia AS valor_actual,
+               d.unidad_destino AS unidad
+        FROM goti.cruce_operativo_observaciones o
+        -- LATERAL con LIMIT 1 y no un JOIN suelto: hoy hay una sola ejecucion
+        -- por bodega y fecha, pero si alguna vez hubiera dos la nota saldria
+        -- repetida y un duplicado en un reporte no se nota hasta que ya se uso.
+        LEFT JOIN LATERAL (
+            SELECT d2.diferencia, d2.valor_diferencia, d2.unidad_destino
+            FROM goti.cruce_operativo_ejecuciones e2
+            JOIN goti.cruce_operativo_detalle d2 ON d2.ejecucion_id = e2.id
+            WHERE e2.bodega = o.bodega
+              AND e2.fecha_toma = o.fecha_toma
+              AND d2.codigo = o.codigo
+            ORDER BY e2.id DESC
+            LIMIT 1
+        ) d ON TRUE
+        WHERE 1=1
+    """
+    params = []
+    if bodega:
+        sql += " AND o.bodega = %s"
+        params.append(bodega)
+    if desde:
+        sql += " AND o.fecha_toma >= %s"
+        params.append(desde)
+    if hasta:
+        sql += " AND o.fecha_toma <= %s"
+        params.append(hasta)
+    sql += " ORDER BY o.fecha_toma DESC, o.bodega, o.codigo"
+    cur.execute(sql, params)
+    return cur.fetchall()
+
+
+@app.route('/api/cruce-op/observaciones', methods=['GET'])
+def cruce_op_observaciones_listar():
+    """Respaldo de lo anotado: las notas del rango, con o sin cruce detras."""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        rows = _consultar_observaciones(
+            cur,
+            request.args.get('bodega'),
+            request.args.get('desde'),
+            request.args.get('hasta'))
+        salida = []
+        for r in rows:
+            dif_act = r['diferencia_actual']
+            salida.append({
+                'bodega': r['bodega'],
+                'fecha_toma': r['fecha_toma'].isoformat() if r['fecha_toma'] else None,
+                'codigo': r['codigo'],
+                'nombre': r['nombre'],
+                'unidad': r['unidad'],
+                'motivo': r['motivo'],
+                'observaciones': r['observaciones'],
+                'diferencia_al_anotar': float(r['diferencia_al_anotar'] or 0),
+                'valor_al_anotar': float(r['valor_al_anotar'] or 0),
+                'diferencia_actual': float(dif_act) if dif_act is not None else None,
+                'valor_actual': float(r['valor_actual']) if r['valor_actual'] is not None else None,
+                # Para el reporte: si ya cuadra, la correccion se hizo.
+                'corregido': dif_act is not None and abs(float(dif_act)) < 0.01,
+                'sin_cruce': dif_act is None,
+                'anotado_por': r['anotado_por'],
+                'anotado_at': r['anotado_at'].isoformat() if r['anotado_at'] else None,
+            })
+        return jsonify(salida)
+    except Exception as e:
+        print(f"Error en /api/cruce-op/observaciones: {e}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
+@app.route('/api/cruce-op/observaciones/excel', methods=['GET'])
+def cruce_op_observaciones_excel():
+    """El mismo respaldo en Excel, para armar los reportes."""
+    conn = None
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        bodega = request.args.get('bodega')
+        desde = request.args.get('desde')
+        hasta = request.args.get('hasta')
+        rows = _consultar_observaciones(cur, bodega, desde, hasta)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Observaciones'
+        header_font = Font(bold=True, color='FFFFFF', size=11)
+        header_fill = PatternFill(start_color='1E3A5F', end_color='1E3A5F', fill_type='solid')
+        thin = Border(left=Side(style='thin'), right=Side(style='thin'),
+                      top=Side(style='thin'), bottom=Side(style='thin'))
+        verde = PatternFill(start_color='ECFDF5', end_color='ECFDF5', fill_type='solid')
+        ambar = PatternFill(start_color='FFFBEB', end_color='FFFBEB', fill_type='solid')
+
+        headers = ['Bodega', 'Fecha toma', 'Codigo', 'Producto', 'Unidad', 'Motivo',
+                   'Observacion', 'Diferencia al anotar', 'Valor al anotar',
+                   'Diferencia hoy', 'Estado', 'Anotado por', 'Anotado el']
+        for col, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+            cell.border = thin
+
+        for i, r in enumerate(rows, 2):
+            dif_act = r['diferencia_actual']
+            if dif_act is None:
+                estado = 'Sin cruce'
+            elif abs(float(dif_act)) < 0.01:
+                estado = 'Corregido'
+            else:
+                estado = 'Pendiente'
+            vals = [
+                BODEGAS_OPERATIVAS.get(r['bodega'], r['bodega']),
+                r['fecha_toma'].strftime('%d/%m/%Y') if r['fecha_toma'] else '',
+                r['codigo'], r['nombre'] or '', r['unidad'] or '',
+                r['motivo'] or '', r['observaciones'] or '',
+                float(r['diferencia_al_anotar'] or 0),
+                float(r['valor_al_anotar'] or 0),
+                float(dif_act) if dif_act is not None else '',
+                estado,
+                r['anotado_por'] or '',
+                r['anotado_at'].strftime('%d/%m/%Y %H:%M') if r['anotado_at'] else '',
+            ]
+            for col, v in enumerate(vals, 1):
+                cell = ws.cell(row=i, column=col, value=v)
+                cell.border = thin
+                if estado == 'Corregido':
+                    cell.fill = verde
+                elif estado == 'Pendiente':
+                    cell.fill = ambar
+
+        anchos = [22, 12, 10, 34, 12, 34, 52, 18, 16, 14, 12, 14, 18]
+        for col, w in enumerate(anchos, 1):
+            ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = w
+        ws.freeze_panes = 'A2'
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        nombre = 'observaciones_cruce'
+        if bodega:
+            nombre += f'_{bodega}'
+        if desde or hasta:
+            nombre += f'_{desde or "inicio"}_a_{hasta or "hoy"}'
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True, download_name=f'{nombre}.xlsx')
+    except Exception as e:
+        print(f"Error en /api/cruce-op/observaciones/excel: {e}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    finally:
+        if conn:
+            release_db(conn)
+
+
 @app.route('/api/cruce/detalle', methods=['GET'])
 def cruce_detalle():
     """Detalle producto por producto de un cruce"""
