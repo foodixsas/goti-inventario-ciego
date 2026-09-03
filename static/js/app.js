@@ -4537,15 +4537,30 @@ function cruceActualizarPendientes() {
     const cont = document.getElementById('cruce-obs-pendientes');
     if (!cont) return;
     const sel = document.querySelectorAll('#cruce-detalle-contenido select[data-obs-cod]');
-    const total = sel.length;
-    let sin = 0;
-    sel.forEach(s => { if (!s.value) sin++; });
-    if (!total) { cont.innerHTML = ''; return; }
-    cont.innerHTML = sin === 0
-        ? `<span style="color:#059669;font-weight:600;">
-             <i class="fas fa-check-circle"></i> Las ${total} diferencias tienen motivo</span>`
-        : `<i class="fas fa-pen"></i> <strong>${sin}</strong> de ${total}
-           diferencias sin motivo`;
+    // Las filas que ya cuadran no cuentan como diferencia pendiente: estan en
+    // la tabla solo porque tienen nota. Meterlas en el total daria "30 de 41",
+    // como si hubiera 41 descuadres cuando hay 30.
+    let total = 0, sin = 0, corregidas = 0;
+    sel.forEach(s => {
+        const cero = s.closest('tr')?.dataset.obsCero === '1';
+        if (cero) { corregidas++; return; }
+        total++;
+        if (!s.value) sin++;
+    });
+    if (!total && !corregidas) { cont.innerHTML = ''; return; }
+    const partes = [];
+    if (total) {
+        partes.push(sin === 0
+            ? `<span style="color:#059669;font-weight:600;">
+                 <i class="fas fa-check-circle"></i> Las ${total} diferencias tienen motivo</span>`
+            : `<i class="fas fa-pen"></i> <strong>${sin}</strong> de ${total} diferencias sin motivo`);
+    }
+    if (corregidas) {
+        partes.push(`<span style="color:#059669;">
+            <i class="fas fa-clipboard-check"></i> ${corregidas} ya corregida${corregidas === 1 ? '' : 's'}
+            con nota</span>`);
+    }
+    cont.innerHTML = partes.join(' &nbsp;·&nbsp; ');
 }
 
 // Guarda contra bodega+fecha+producto, no contra la ejecucion: asi la nota
@@ -4611,8 +4626,12 @@ function renderCruceDetalle(datos) {
                             d.origen === 'solo_contifico' ? 'cruce-solo-cont' : '';
 
         let celdas;
-        if (dif === 0) {
-            // lo que cuadra no hay que explicarlo
+        const tieneNota = !!(d.motivo || d.observaciones);
+        if (dif === 0 && !tieneNota) {
+            // Lo que cuadra y nunca se anoto no hay que explicarlo. Pero si ya
+            // tiene nota se muestra igual: quedar en cero es el resultado de
+            // haber corregido el movimiento, y la nota es el registro de que
+            // paso. Pintar guiones ahi borraba de la vista el respaldo.
             celdas = '<td style="color:#94a3b8;">-</td><td style="color:#94a3b8;">-</td>';
         } else if (!puedeAnotar) {
             celdas = `<td>${escapeHtml(d.motivo || '')}</td>
@@ -4642,7 +4661,8 @@ function renderCruceDetalle(datos) {
               </td>`;
         }
 
-        html += `<tr class="${origenClass}" data-obs-fila="${escapeHtml(d.codigo)}">
+        html += `<tr class="${origenClass}" data-obs-fila="${escapeHtml(d.codigo)}"
+            data-obs-cero="${dif === 0 ? '1' : '0'}">
             <td>${escapeHtml(d.codigo)}</td>
             <td>${escapeHtml(d.nombre || '')}</td>
             <td>${d.categoria || ''}</td>
