@@ -2758,6 +2758,10 @@ MOTIVOS_CRUCE = [
     'Cruce de productos',
     'Compra Extraordinaria',
     'Descuento a trabajador',
+    # Para los descuadres chicos que no hay que ir a buscar: el producto rinde
+    # distinto o pierde peso con el uso. Es una diferencia justificada, no un
+    # error que alguien tenga que corregir.
+    'Variacion minima por rendimiento o pesaje',
     'Producto sin justificacion',
 ]
 
