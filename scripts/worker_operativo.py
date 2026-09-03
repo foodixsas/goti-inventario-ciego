@@ -257,8 +257,13 @@ def cargar_toma_fisica(tabla, fecha):
 # Configuracion de timeouts (en segundos) - REDUCIDOS para evitar cuelgues
 TIMEOUT_PAGE_LOAD = 90   # antes: 300
 TIMEOUT_SCRIPT = 180     # aumentado para exportarExcel()
-TIMEOUT_DESCARGA = 120   # antes: 300
+TIMEOUT_DESCARGA = int(os.environ.get('TIMEOUT_DESCARGA', '300'))  # ver nota abajo
 TIMEOUT_WAIT = 45        # antes: 120
+
+# La espera del archivo estaba en 120s y no daba: las corridas que fallaron el
+# 3-sep tardaron 219s y 381s de punta a punta. Como ahora exportarExcel() no
+# bloquea, este es el unico reloj que decide si la descarga salio o no, asi que
+# tiene que cubrir lo que Contifico tarda de verdad en generar el reporte.
 
 # Timeout de la conexion HTTP entre Selenium y chromedriver. urllib3 lo pone en
 # 120s y ese corte no lo cambia ningun set_*_timeout: la tarea 249 murio con
@@ -376,7 +381,37 @@ def _esperar_archivo_xls(antes, download_dir, timeout=None):
     log(f'    TIMEOUT: No se descargo archivo en {timeout}s', 'ERROR')
     return None
 
-def descargar_saldos(driver, nombre_bodega_contifico, fecha_iso):
+def descargar_saldos(driver, nombre_bodega_contifico, fecha_iso, intentos=2):
+    """Descarga el Excel de saldos, con un segundo intento si el primero falla.
+
+    Contifico tarda distinto cada vez en armar el reporte y a veces no lo
+    entrega. Antes eso mataba la tarea entera: el cruce quedaba en error y
+    alguien tenia que volver a pedirlo a mano desde el panel. Reintentar sale
+    mucho mas barato que eso.
+
+    No se reintenta si lo que murio fue el navegador: ahi el driver ya no sirve
+    y el que tiene que rearmarlo es el bucle de tareas, no esta funcion.
+    """
+    ultimo = None
+    for intento in range(1, intentos + 1):
+        try:
+            return _descargar_saldos_una_vez(driver, nombre_bodega_contifico, fecha_iso)
+        except Exception as e:
+            ultimo = e
+            msg = str(e).lower()
+            if any(k in msg for k in ('invalid session', 'disconnected', 'not connected',
+                                      'no such window', 'connection refused',
+                                      'target closed', 'chrome not reachable')):
+                log('    El navegador se cayo: no tiene sentido reintentar aqui', 'ERROR')
+                raise
+            if intento < intentos:
+                log(f'    Descarga fallida (intento {intento} de {intentos}): '
+                    f'{str(e)[:100]}. Reintentando...', 'WARN')
+                time.sleep(5)
+    raise ultimo
+
+
+def _descargar_saldos_una_vez(driver, nombre_bodega_contifico, fecha_iso):
     """Descarga el Excel de saldos para una bodega y una fecha (YYYY-MM-DD).
     Devuelve la ruta al archivo Excel descargado."""
     # Usar carpeta de descarga del driver (puede ser específica por worker)
@@ -435,12 +470,23 @@ def descargar_saldos(driver, nombre_bodega_contifico, fecha_iso):
     log('    Llamando exportarExcel()...')
     log(f'    Carpeta descargas: {download_dir}')
     log(f'    Archivos antes: {len(antes)}')
+    # setTimeout y no la llamada directa: execute_script es sincrono y espera a
+    # que el renderer conteste. exportarExcel() deja al renderer ocupado
+    # generando el archivo, asi que la respuesta no llega hasta que Contifico
+    # termina; si tarda mas que TIMEOUT_SCRIPT, chromedriver corta con
+    # "Timed out receiving message from renderer" aunque la descarga vaya bien.
+    # Agendandolo en el bucle de eventos, el script retorna en el acto y quien
+    # espera es el polling del archivo, que para eso esta.
     try:
-        driver.execute_script('exportarExcel();')
-        log('    exportarExcel() ejecutado, esperando archivo...')
+        driver.execute_script('setTimeout(function(){ exportarExcel(); }, 0);')
+        log('    exportarExcel() disparado, esperando archivo...')
     except Exception as e:
-        log(f'    ERROR en exportarExcel(): {e}', 'ERROR')
-        raise
+        # Un timeout aqui no dice que la exportacion fallara: dice que el
+        # renderer no contesto a tiempo. El archivo puede estar bajando igual,
+        # asi que en vez de abortar se pasa a mirar la carpeta. Si de verdad no
+        # baja, el polling lo detecta y ahi si se falla.
+        log(f'    exportarExcel() no respondio a tiempo ({str(e)[:80]}); '
+            f'se revisa igual la carpeta de descargas', 'WARN')
     archivo = _esperar_archivo_xls(antes, download_dir)
     if archivo:
         return archivo
