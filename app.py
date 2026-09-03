@@ -2903,7 +2903,14 @@ def cruce_detalle():
                        AND o.codigo = d.codigo
                  WHERE d.ejecucion_id = %s"""
         if solo_dif:
-            sql += " AND d.diferencia != 0"
+            # Lo que tiene nota escrita NO se oculta, aunque ya cuadre en cero.
+            # Corregir el movimiento en Contifico deja la diferencia en 0, y con
+            # el filtro puesto la fila desaparecia llevandose de la vista la
+            # observacion que explicaba justamente por que estaba descuadrada.
+            # La nota seguia guardada, pero se leia como si se hubiera borrado.
+            sql += """ AND (d.diferencia != 0
+                            OR o.motivo IS NOT NULL
+                            OR o.observaciones IS NOT NULL)"""
         sql += " ORDER BY ABS(d.valor_diferencia) DESC"
         cur.execute(sql, (ejec_id,))
         rows = cur.fetchall()
