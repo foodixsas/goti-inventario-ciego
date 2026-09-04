@@ -1023,6 +1023,28 @@ def reporte_motivos():
         if conn:
             release_db(conn)
 
+# Los administradores no entran en el analisis de conteos: sus registros son
+# pruebas del sistema, no trabajo de bodega. Se nota en la forma que tienen —
+# tandas de un solo producto, o de once productos con once errores— y aun asi
+# pesaban en el ranking: 'admin' figuraba tercero con 40,1% sobre 187 conteos.
+# Se excluye por ROL y no por nombre para que valga tambien para el que venga.
+SQL_SIN_ADMINS = """
+    AND contado_por NOT IN (
+        SELECT username FROM goti.usuarios WHERE rol = 'admin'
+    )
+"""
+
+# Este dashboard mide el conteo diario de las bodegas de venta. Las operativas
+# -Bodega Principal, Materia Prima y Planta- cuentan una vez por semana, con
+# otra gente y otro circuito, y se miden en el Cruce Operativo. Mezclarlas
+# deformaba el tablero: 'bodegamp' encabezaba el ranking de error con 100%
+# sobre 30 conteos, contra los miles de conteos de un local.
+LOCALES_OPERATIVOS = ('bodega_principal', 'materia_prima', 'planta')
+SQL_SIN_OPERATIVAS = (
+    " AND local NOT IN (" + ",".join("'%s'" % b for b in LOCALES_OPERATIVOS) + ")"
+)
+
+
 @app.route('/api/reportes/personas-errores', methods=['GET'])
 def reporte_personas_errores():
     fecha_desde = request.args.get('fecha_desde')
@@ -1052,7 +1074,7 @@ def reporte_personas_errores():
             WHERE fecha >= %s AND fecha <= %s
               AND contado_por IS NOT NULL AND contado_por != ''
               AND cantidad_contada IS NOT NULL
-        """
+        """ + SQL_SIN_ADMINS + SQL_SIN_OPERATIVAS
         params = [fecha_desde, fecha_hasta]
 
         if len(bodegas) == 1:
@@ -2333,8 +2355,9 @@ def reporte_dashboard():
         conn = get_db()
         cur = conn.cursor()
 
-        # Filtros comunes
-        filtro_extra = ""
+        # Filtros comunes. La exclusion de las operativas va primero para que
+        # la hereden todas las consultas del tablero, no solo el ranking.
+        filtro_extra = SQL_SIN_OPERATIVAS
         params = [fecha_desde, fecha_hasta]
         if len(bodegas) == 1:
             filtro_extra += " AND local = %s"
@@ -2478,6 +2501,7 @@ def reporte_dashboard():
             JOIN goti.usuarios u ON u.username = c.contado_por
             WHERE c.fecha >= %s AND c.fecha <= %s
               AND c.contado_por IS NOT NULL
+              AND u.rol <> 'admin'
         """ + filtro_extra + """
             GROUP BY u.nombre, c.contado_por
             ORDER BY total_items DESC

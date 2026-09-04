@@ -79,9 +79,11 @@ const _TODAS_BODEGAS = [
     { value: 'santo_cachon_real',    label: 'Santo Cachon Real',     marca: 'santo_cachon' },
     { value: 'santo_cachon_portugal',label: 'Santo Cachon Portugal', marca: 'santo_cachon' },
     { value: 'simon_bolon',          label: 'Simon Bolon',           marca: 'simon_bolon' },
-    { value: 'bodega_principal',     label: 'Bodega Principal',      marca: 'operaciones' },
-    { value: 'materia_prima',        label: 'Materia Prima',         marca: 'operaciones' },
-    { value: 'planta',               label: 'Planta de Produccion',  marca: 'operaciones' },
+    // Sin las bodegas operativas: este tablero mide el conteo diario de los
+    // locales de venta. Bodega Principal, Materia Prima y Planta cuentan una
+    // vez por semana, con otra gente y otro circuito, y se miden en el Cruce
+    // Operativo. Dejarlas aca ofrecia filtrar por algo que el tablero ya no
+    // muestra, que es peor que no ofrecerlo.
 ];
 
 function filtrarBodegasPorMarca() {
