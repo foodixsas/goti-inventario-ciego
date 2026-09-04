@@ -562,28 +562,44 @@ def calcular_cruce(toma, equivs, contifico):
     detalle = []
     sin_equivalencia = []
     stock_negativo = []
-    for cod, t in toma.items():
+    no_contados = []
+    # Se recorre la UNION de los dos lados, no solo la toma. Antes se iteraba
+    # unicamente sobre lo contado, asi que un producto con stock en Contifico
+    # que nadie conto no salia por ningun lado: ni como diferencia ni como
+    # cero, simplemente no existia para el cruce. En Bodega Principal eso
+    # dejaba fuera ~60 productos por ejecucion (210 contados contra 276 en
+    # Contifico). Si no se conto, la cantidad contada es cero y la diferencia
+    # es todo el stock del sistema, que es justo lo que hay que ver.
+    for cod in sorted(set(toma) | set(contifico)):
+        t = toma.get(cod)
+        contado = t is not None
         eq = equivs.get(cod)
         cont = contifico.get(cod)
         # Si no aparece en Contifico = stock 0 (Contifico oculta los stock=0)
         stock_c = float(cont['stock']) if cont else 0.0
         costo = float(cont['costo']) if cont else 0.0
         unidad_c = cont['unidad'] if cont else None
-        nombre = (cont['nombre'] if cont else None) or t['producto']
+        nombre = (cont['nombre'] if cont else None) or (t['producto'] if contado else cod)
+        total_toma = float((t['total'] if contado else 0) or 0)
 
         if eq:
             factor = float(eq['factor'])
             unidad_toma = eq['unidad_toma']
             unidad_destino = eq['unidad_destino']
-            cant_conv = float(t['total'] or 0) * factor
+            cant_conv = total_toma * factor
         else:
             # No hay equivalencia cargada: la cantidad va tal cual. Se anota
             # para avisar, porque la diferencia que salga aqui no es real.
             factor = None
-            unidad_toma = (t['unidad'] or '').strip()
+            unidad_toma = ((t['unidad'] if contado else None) or '').strip()
             unidad_destino = unidad_c or unidad_toma
-            cant_conv = float(t['total'] or 0)
+            cant_conv = total_toma
             sin_equivalencia.append((cod, nombre))
+
+        # Producto que existe en Contifico y nadie conto: se cruza igual con
+        # cantidad cero y se anota aparte para avisar.
+        if not contado:
+            no_contados.append((cod, nombre, stock_c, unidad_c, stock_c * costo))
 
         # Un saldo negativo no existe fisicamente: o falta registrar ingresos o
         # hay movimientos mal cargados. Ademas envenena el cruce, porque la
@@ -597,7 +613,7 @@ def calcular_cruce(toma, equivs, contifico):
         detalle.append({
             'codigo': cod,
             'nombre': nombre,
-            'categoria': t.get('categoria'),
+            'categoria': t.get('categoria') if contado else None,
             'unidad_toma': unidad_toma,
             'factor': factor,
             'unidad_destino': unidad_destino,
@@ -606,8 +622,10 @@ def calcular_cruce(toma, equivs, contifico):
             'diferencia': diferencia,
             'costo_unitario': costo,
             'valor_diferencia': valor_dif,
-            'tipo_abc': t.get('tipo_abc'),
-            'origen': 'cruce_operativo',
+            'tipo_abc': t.get('tipo_abc') if contado else None,
+            # El origen distingue las filas que nadie conto, para que en el
+            # panel se puedan separar de las diferencias de un conteo real.
+            'origen': 'cruce_operativo' if contado else 'cruce_operativo_no_contado',
         })
 
     # Resumen
@@ -625,6 +643,9 @@ def calcular_cruce(toma, equivs, contifico):
         # gramos siempre daria el numero mas grande) y lo que interesa
         # primero es el negativo que mas plata representa.
         'stock_negativo': sorted(stock_negativo, key=lambda x: x[4]),
+        # Productos con stock en Contifico que la toma no incluyo. Se cruzan
+        # con cantidad cero; van aparte para poder avisarlos.
+        'no_contados': sorted(no_contados, key=lambda x: -abs(x[4])),
     }
     return detalle, resumen
 
@@ -766,6 +787,61 @@ def avisar_stock_negativo(bodega, fecha_toma, negativos):
         log('  aviso de stock negativo fallo: {}'.format(str(e)[:120]), 'WARN')
 
 
+def avisar_no_contados(bodega, fecha_toma, faltantes):
+    """Avisa de los productos que Contifico tiene y la toma no incluyo.
+
+    No es lo mismo que un producto contado en cero: aqui no hay fila en la
+    toma, el contador nunca vio el producto. Antes esto no salia por ningun
+    lado, porque el cruce solo recorria lo contado. En Bodega Principal son
+    del orden de 60 productos por ejecucion (210 contados contra 276 en
+    Contifico), y cada uno arrastra su stock completo como diferencia.
+
+    Puede significar dos cosas y las dos hay que resolverlas a mano: o el
+    producto falta en la plantilla de conteo de esa bodega, o quedo con saldo
+    residual en Contifico en una bodega que ya no lo maneja.
+    """
+    if not faltantes:
+        return
+    nombre = BODEGA_TELEGRAM.get(bodega, bodega.upper())
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from notificar_telegram import destinatarios_para, enviar_mensaje
+
+        try:
+            f = datetime.strptime(str(fecha_toma)[:10], '%Y-%m-%d').strftime('%d/%m/%Y')
+        except Exception:
+            f = str(fecha_toma)
+
+        lineas = []
+        for cod, prod, stock, unidad, valor in faltantes[:20]:
+            lineas.append('• <b>{}</b> {}: {:,.2f} {} ({:+,.2f} USD)'.format(
+                cod, (prod or '')[:38], stock, (unidad or '').strip(), valor))
+        if len(faltantes) > 20:
+            lineas.append('... y {} mas'.format(len(faltantes) - 20))
+
+        total = sum(x[4] for x in faltantes)
+        mensaje = (
+            '📋 <b>PRODUCTOS NO CONTADOS</b>\n'
+            '📍 {}\n'
+            'Cruce de la toma del {}\n\n'
+            '<b>{}</b> producto(s) con stock en Contifico que la toma no '
+            'incluyo, {:+,.2f} USD en total:\n\n'
+            '{}\n\n'
+            'ℹ️ Se cruzaron con cantidad <b>cero</b>, asi que la diferencia '
+            'que muestran es todo el stock del sistema. Revisar si falta '
+            'agregarlos a la plantilla de conteo de la bodega o si es saldo '
+            'residual de una bodega que ya no maneja el producto.'
+        ).format(nombre, f, len(faltantes), total, chr(10).join(lineas))
+
+        enviados = destinatarios_para(nombre, 'Productos no contados', 'error')
+        for chat_id in enviados:
+            enviar_mensaje(chat_id, mensaje)
+        log('  aviso enviado: {} producto(s) no contados -> {} chats'.format(
+            len(faltantes), len(enviados)), 'WARN')
+    except Exception as e:
+        log('  aviso de no contados fallo: {}'.format(str(e)[:120]), 'WARN')
+
+
 def avisar_cruce_operativo(bodega, fecha_toma, resumen, error=None):
     """Avisa por Telegram del resultado del cruce operativo.
 
@@ -856,6 +932,12 @@ def procesar_tarea(tarea, driver):
             log(f'    STOCK NEGATIVO: {len(negativos)} -> '
                 + ', '.join(n[0] for n in negativos[:10]), 'WARN')
             avisar_stock_negativo(bodega, fecha_toma, negativos)
+
+        nocont = resumen.get('no_contados') or []
+        if nocont:
+            log(f'    NO CONTADOS (en Contifico, fuera de la toma): {len(nocont)} -> '
+                + ', '.join(n[0] for n in nocont[:10]), 'WARN')
+            avisar_no_contados(bodega, fecha_toma, nocont)
 
         log('  - Subiendo resultado al backend...')
         ok = post_resultado({
