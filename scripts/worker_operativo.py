@@ -998,6 +998,52 @@ def js_set_value_and_trigger(driver, element_id, value):
     """)
 
 
+def _esperar_tfi(driver, timeout=150):
+    """Espera a que Contifico muestre el numero de la toma fisica.
+
+    Antes eran 9 segundos fijos y una sola mirada a la pantalla. Contifico tarda
+    lo que tarda en procesar el Excel -en Planta son 224 productos- y si a los 9
+    segundos todavia no habia contestado, se daba por fallida una carga que
+    muchas veces si se estaba creando. Eso es lo peor que puede pasar aca: el
+    panel dice error, alguien vuelve a cargar, y quedan dos tomas fisicas del
+    mismo dia ajustando el inventario dos veces.
+
+    Devuelve (numero, texto_de_pantalla). Numero en None si nunca aparecio.
+    """
+    patron = re.compile(r'TFI\s+\d+')
+    fin = time.time() + timeout
+    cuerpo = ''
+    while time.time() < fin:
+        try:
+            cuerpo = driver.find_element(By.TAG_NAME, 'body').text
+        except Exception:
+            cuerpo = ''
+        m = patron.search(cuerpo)
+        if m:
+            return m.group(0), cuerpo
+        time.sleep(2)
+    return None, cuerpo
+
+
+def _esperar_generado(driver, url_doc, timeout=90):
+    """Espera a que el documento quede en estado Generado.
+
+    Registrar la toma no ajusta nada: el que mueve el inventario es Generar.
+    Tambien estaba con espera fija, asi que una demora se leia como que no se
+    habia generado.
+    """
+    fin = time.time() + timeout
+    while time.time() < fin:
+        try:
+            driver.get(url_doc)
+            if 'Generado' in driver.find_element(By.TAG_NAME, 'body').text:
+                return True
+        except Exception:
+            pass
+        time.sleep(5)
+    return False
+
+
 def registrar_toma_por_archivo(driver, bodega_contifico, productos, fecha_form):
     """Sube la toma fisica como Excel por la pestana 'Carga Masiva'.
 
@@ -1075,15 +1121,16 @@ def registrar_toma_por_archivo(driver, bodega_contifico, productos, fecha_form):
     time.sleep(2)
     log('    Archivo adjuntado, guardando...')
     driver.execute_script("registrarMovimiento();")
-    time.sleep(9)
 
     # 4. Sin numero TFI no hay documento
-    cuerpo = driver.find_element(By.TAG_NAME, 'body').text
-    m = re.search(r'TFI\s+\d+', cuerpo)
-    if not m:
+    num_tfi, cuerpo = _esperar_tfi(driver)
+    if not num_tfi:
         resumen = ' | '.join(l.strip() for l in cuerpo.splitlines()[:12] if l.strip())
-        raise Exception(f'Contifico no devolvio numero TFI. Pantalla: {resumen[:300]}')
-    num_doc = m.group(0)
+        raise Exception(
+            f'Contifico no devolvio numero TFI en 150s. REVISAR EN CONTIFICO '
+            f'ANTES DE VOLVER A CARGAR: la toma pudo quedar creada. '
+            f'Pantalla: {resumen[:250]}')
+    num_doc = num_tfi
     url_doc = driver.current_url
     log(f'    Registrado: {num_doc}  (Pendiente)')
 
@@ -1095,13 +1142,10 @@ def registrar_toma_por_archivo(driver, bodega_contifico, productos, fecha_form):
             EC.element_to_be_clickable((By.ID, 'btndlgContinuar'))).click()
     except Exception:
         driver.execute_script("generarMovimiento();")
-    time.sleep(8)
 
-    # 6. Confirmar releyendo el documento
-    driver.get(url_doc)
-    time.sleep(3)
-    cuerpo = driver.find_element(By.TAG_NAME, 'body').text
-    if 'Generado' not in cuerpo:
+    # 6. Confirmar releyendo el documento. Con espera activa: Generar tambien
+    # tarda, y con el sleep fijo una demora se leia como que no se genero.
+    if not _esperar_generado(driver, url_doc):
         raise Exception(f'{num_doc} se registro pero NO quedo Generado '
                         f'(no ajusta inventario). Revisar en Contifico.')
     log(f'    {num_doc} GENERADO: el inventario quedo ajustado')
@@ -2001,15 +2045,16 @@ def procesar_toma_fisica_local(tarea, driver):
         time.sleep(2)
         log('  - Archivo adjuntado, guardando...')
         driver.execute_script("registrarMovimiento();")
-        time.sleep(9)
 
         # 5. VERIFICAR que se creo: sin numero TFI no hay documento
-        cuerpo = driver.find_element(By.TAG_NAME, 'body').text
-        m = re.search(r'TFI\s+\d+', cuerpo)
-        if not m:
+        num_tfi, cuerpo = _esperar_tfi(driver)
+        if not num_tfi:
             resumen = ' | '.join(l.strip() for l in cuerpo.split('\n')[:12] if l.strip())
-            raise Exception(f'Contifico no devolvio numero TFI. Pantalla: {resumen[:300]}')
-        num_doc = m.group(0)
+            raise Exception(
+                f'Contifico no devolvio numero TFI en 150s. REVISAR EN CONTIFICO '
+                f'ANTES DE VOLVER A CARGAR: la toma pudo quedar creada. '
+                f'Pantalla: {resumen[:250]}')
+        num_doc = num_tfi
         url_doc = driver.current_url
         log(f'  - Registrado: {num_doc}  (Pendiente)')
 
@@ -2021,13 +2066,9 @@ def procesar_toma_fisica_local(tarea, driver):
                 EC.element_to_be_clickable((By.ID, 'btndlgContinuar'))).click()
         except Exception:
             driver.execute_script("generarMovimiento();")
-        time.sleep(8)
 
         # 7. VERIFICAR el estado final releyendo el documento
-        driver.get(url_doc)
-        time.sleep(3)
-        cuerpo = driver.find_element(By.TAG_NAME, 'body').text
-        if 'Generado' not in cuerpo:
+        if not _esperar_generado(driver, url_doc):
             raise Exception(f'{num_doc} se registro pero NO quedo Generado '
                             f'(no ajusta inventario). Revisar en Contifico.')
         log(f'  - {num_doc} GENERADO: el inventario quedo ajustado')
