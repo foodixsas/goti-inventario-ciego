@@ -1279,26 +1279,23 @@ function showMainScreen() {
     const userModulos = (state.user && state.user.modulos) || [];
     const isAdmin = _esAdmin();
 
+    // Que ve cada quien sale de sus modulos, no de una lista escrita aca.
+    // Antes habia seis pantallas fijadas a mano como "solo admin" y por eso no
+    // se podia dar Flujo de Caja o Costos sin volver administrador a alguien.
     document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
         const mod = btn.dataset.view;
-        if (isAdmin) {
-            btn.style.display = '';  // Admin ve todo
-        } else if (mod === 'usuarios' || mod === 'config-productos' || mod === 'flujo-caja' || mod === 'costos') {
-            btn.style.display = 'none';  // admin-only views
-        } else {
-            btn.style.display = userModulos.includes(mod) ? '' : 'none';
-        }
+        btn.style.display = (isAdmin || userModulos.includes(mod)) ? '' : 'none';
     });
 
-    // Ocultar modulos admin-only completos para no-admins
-    const moduloFlujoCaja = document.querySelector('.nav-module[data-module="flujocaja"]');
-    if (moduloFlujoCaja) moduloFlujoCaja.style.display = isAdmin ? '' : 'none';
-
-    const moduloNomina = document.querySelector('.nav-module[data-module="nomina"]');
-    if (moduloNomina) moduloNomina.style.display = isAdmin ? '' : 'none';
-
-    const moduloCostos = document.querySelector('.nav-module[data-module="costos"]');
-    if (moduloCostos) moduloCostos.style.display = isAdmin ? '' : 'none';
+    // Un grupo del menu se muestra si alguna de sus pantallas quedo visible.
+    // Antes cuatro grupos estaban clavados a "solo admin" por su nombre, asi
+    // que dar permiso a una pantalla de adentro no servia de nada: el grupo
+    // seguia oculto y la pantalla era inalcanzable.
+    document.querySelectorAll('.nav-module[data-module]').forEach(grupo => {
+        const visibles = Array.from(grupo.querySelectorAll('.nav-btn[data-view]'))
+            .some(b => b.style.display !== 'none');
+        grupo.style.display = visibles ? '' : 'none';
+    });
 
     // Recargar bodegas filtradas segun usuario
     cargarBodegas();
@@ -1310,12 +1307,31 @@ function showMainScreen() {
     filtrarBodegasPorMarca();
     _cargarContadoresDash();
 
-    // Restaurar la vista donde estaba (por pestaña, independiente de otras tabs)
-    const vistaGuardada = sessionStorage.getItem('vista_activa');
-    if (vistaGuardada && document.getElementById(`view-${vistaGuardada}`)) {
-        cambiarVista(vistaGuardada);
-    } else {
-        cambiarVista('dash-general');
+    // Que vista abrir. Manda la URL: si alguien entro a /conteo o compartio ese
+    // enlace, tiene que caer ahi aunque su pestaña recuerde otra cosa.
+    const existe = v => v && document.getElementById(`view-${v}`);
+    const puedeVerla = v => {
+        const btn = document.querySelector(`.nav-btn[data-view="${v}"]`);
+        return !btn || btn.style.display !== 'none';
+    };
+
+    const deLaUrl = rutaDeVista();
+    const guardada = sessionStorage.getItem('vista_activa');
+
+    let destino = 'dash-general';
+    if (existe(deLaUrl) && puedeVerla(deLaUrl))      destino = deLaUrl;
+    else if (existe(guardada) && puedeVerla(guardada)) destino = guardada;
+
+    cambiarVista(destino, true);          // true: no apilar, ya estamos en esa URL
+    try { history.replaceState({ vista: destino }, '', '/' + destino); } catch (e) {}
+
+    // Atras y Adelante del navegador cambian de pantalla
+    if (!window._navegacionEnganchada) {
+        window._navegacionEnganchada = true;
+        window.addEventListener('popstate', () => {
+            const v = rutaDeVista();
+            if (existe(v) && puedeVerla(v)) cambiarVista(v, true);
+        });
     }
 }
 
@@ -1334,7 +1350,27 @@ function toggleSidebar() {
     overlay.classList.toggle('open');
 }
 
-function cambiarVista(viewName) {
+// Vistas que solo redirigen a otra: no tienen que dejar su propia entrada en
+// el historial, o el boton Atras te devuelve a una pantalla que vuelve a
+// redirigir y parece que quedaste trabado.
+const VISTAS_REDIRIGEN = ['dashboard', 'dep-dashboard', 'cuadre-dashboard',
+                          'del-dashboard', 'fac-dashboard'];
+
+function rutaDeVista() {
+    return (location.pathname || '/').replace(/^\/+|\/+$/g, '');
+}
+
+function cambiarVista(viewName, sinHistorial) {
+    // La URL sigue a la pantalla: /conteo, /matriz-productos, /retenciones.
+    // Asi se puede compartir el enlace de una vista y el boton Atras funciona.
+    if (!sinHistorial && VISTAS_REDIRIGEN.indexOf(viewName) === -1) {
+        try {
+            if (rutaDeVista() !== viewName) {
+                history.pushState({ vista: viewName }, '', '/' + viewName);
+            }
+        } catch (e) { /* file:// y similares no dejan tocar el historial */ }
+    }
+
     // Cerrar sidebar en móvil
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebar-overlay');
@@ -1523,6 +1559,21 @@ function cambiarVista(viewName) {
     // Auto-cargar config productos
     if (viewName === 'config-productos') {
         cprodCargar();
+    }
+
+    // Auto-cargar la matriz general de productos
+    if (viewName === 'matriz-productos') {
+        matrizInit();
+    }
+
+    // Auto-cargar el catalogo de bodegas
+    if (viewName === 'bodegas') {
+        bodegasInit();
+    }
+
+    // Auto-cargar retenciones (trae el catalogo de conceptos del SRI)
+    if (viewName === 'retenciones') {
+        retInit();
     }
 
     // Redireccionar vistas de dashboard vacías al módulo unificado
@@ -8628,6 +8679,7 @@ const MODULOS_NOMBRES = {
     'bajas': 'Bajas', 'semanal': 'Semanal', 'correccion': 'Corregir Conteos',
     'usuarios': 'Admin Usuarios'
 };
+// MODULOS_LISTA quedo sin uso: el catalogo ahora lo manda /api/admin/modulos
 const MODULOS_LISTA = ['conteo','observaciones','historico','dashboard','cruce','bajas','semanal','correccion','usuarios'];
 
 function usuariosRenderTabla() {
@@ -8793,50 +8845,168 @@ function usuariosSelOperativas() {
 
 // ==================== CONFIGURACION PERMISOS POR ROL ====================
 
+// El catalogo lo manda el backend (permisos.py). Antes esta pantalla tenia
+// nueve modulos escritos a mano y las otras 26 pantallas de la app no se
+// administraban desde ningun lado.
+//
+// La disposicion sigue la de Contifico: un rol por vez, barra de contexto,
+// grupos en dos columnas plegables y "Seleccionar todo" por grupo.
+let _catalogoModulos = null;
+let _rolesPermisos = null;
+let _rolActivo = 'gerente';
+let _gruposCerrados = new Set();
+
+// Las acciones viven en una lista para que sumar "agregar" y "aprobar" (la
+// fase 2) sea agregar dos entradas y nada mas.
+const ACCIONES = [
+    { id: 'ver',      etiqueta: 'Consultar' },
+    { id: 'editar',   etiqueta: 'Modificar' },
+    { id: 'eliminar', etiqueta: 'Eliminar'  },
+];
+
+const ROL_ETIQUETA = {
+    subgerente: 'Subgerente', supervisor: 'Supervisor',
+    gerente: 'Gerente', admin: 'Administrador',
+};
+
+function usuariosTab(cual) {
+    document.querySelectorAll('#view-usuarios .fd-tab').forEach(t => {
+        t.classList.toggle('activo', t.dataset.tab === cual);
+    });
+    const pu = document.getElementById('tab-usuarios');
+    const pr = document.getElementById('tab-roles');
+    if (pu) pu.style.display = cual === 'usuarios' ? '' : 'none';
+    if (pr) pr.style.display = cual === 'roles' ? '' : 'none';
+    if (cual === 'roles' && !_catalogoModulos) rolesCargar();
+}
+
 async function rolesCargar() {
     const container = document.getElementById('roles-config');
     if (!container) return;
-    try {
-        const res = await fetch(`${CONFIG.API_URL}/api/admin/roles`);
-        if (!res.ok) return;
-        const rolesData = await res.json();
-        const roles = ['subgerente', 'supervisor', 'gerente', 'admin'];
-        const rolIcons = { subgerente: 'fa-user', supervisor: 'fa-user-check', gerente: 'fa-user-tie', admin: 'fa-user-shield' };
-        const rolColors = { subgerente: '#3B82F6', supervisor: '#8B5CF6', gerente: '#D97706', admin: '#059669' };
+    container.innerHTML = '<div class="fd-vacio">Cargando accesos...</div>';
 
-        container.innerHTML = roles.map(rol => {
-            const mods = rolesData[rol] || {};
-            const rows = MODULOS_LISTA.map(m => {
-                const p = mods[m] || { ver: false, editar: false, eliminar: false };
-                return `<tr>
-                    <td style="font-size:12px;padding:4px 8px;font-weight:500;">${MODULOS_NOMBRES[m] || m}</td>
-                    <td style="text-align:center;padding:4px;"><input type="checkbox" data-mod="${m}" data-perm="ver" ${p.ver ? 'checked' : ''}></td>
-                    <td style="text-align:center;padding:4px;"><input type="checkbox" data-mod="${m}" data-perm="editar" ${p.editar ? 'checked' : ''}></td>
-                    <td style="text-align:center;padding:4px;"><input type="checkbox" data-mod="${m}" data-perm="eliminar" ${p.eliminar ? 'checked' : ''}></td>
-                </tr>`;
-            }).join('');
-            return `<div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:16px;">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-                    <i class="fas ${rolIcons[rol]}" style="color:${rolColors[rol]};font-size:18px;"></i>
-                    <strong style="color:#123450;text-transform:capitalize;font-size:15px;">${rol}</strong>
-                </div>
-                <table id="rol-perms-${rol}" style="width:100%;border-collapse:collapse;">
-                    <thead>
-                        <tr style="border-bottom:1px solid #E2E8F0;">
-                            <th style="text-align:left;padding:4px 8px;font-size:11px;color:#64748B;">Modulo</th>
-                            <th style="text-align:center;padding:4px;font-size:11px;color:#64748B;">Ver</th>
-                            <th style="text-align:center;padding:4px;font-size:11px;color:#64748B;">Editar</th>
-                            <th style="text-align:center;padding:4px;font-size:11px;color:#64748B;">Eliminar</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                </table>
-                <button class="btn-sm btn-primary" onclick="rolGuardar('${rol}')" style="margin-top:12px;width:100%;">
-                    <i class="fas fa-save"></i> Guardar ${rol}
-                </button>
-            </div>`;
+    try {
+        const [rc, rp] = await Promise.all([
+            fetch(`${CONFIG.API_URL}/api/admin/modulos`),
+            fetch(`${CONFIG.API_URL}/api/admin/roles`),
+        ]);
+        const cat = await rc.json();
+        if (!cat.success) throw new Error(cat.error || 'No se pudo leer el catalogo');
+        _catalogoModulos = cat;
+        _rolesPermisos = await rp.json();
+        if (!cat.roles.includes(_rolActivo)) _rolActivo = cat.roles[0];
+        rolesPintar();
+        if (cat.sembrados && cat.sembrados.length) {
+            console.log('[accesos] modulos dados de alta:', cat.sembrados.join(', '));
+        }
+    } catch (e) {
+        container.innerHTML = `<div class="fd-error">No se pudieron cargar los accesos: ${e.message}</div>`;
+    }
+}
+
+function rolesElegir(rol) {
+    _rolActivo = rol;
+    rolesPintar();
+}
+
+function rolesGrupoAlternar(id) {
+    if (_gruposCerrados.has(id)) _gruposCerrados.delete(id);
+    else _gruposCerrados.add(id);
+    rolesPintar();
+}
+
+// Marca o desmarca todas las casillas de un grupo de una vez. Sin esto, dar
+// acceso a Inventario son 36 clics.
+function rolesGrupoTodo(idGrupo, marcar) {
+    document.querySelectorAll(
+        `#grupo-${idGrupo} input[type="checkbox"][data-mod]:not(:disabled)`
+    ).forEach(cb => { cb.checked = marcar; });
+    rolesActualizarConteos();
+}
+
+function rolesActualizarConteos() {
+    (_catalogoModulos ? _catalogoModulos.grupos : []).forEach(g => {
+        const caja = document.getElementById(`grupo-${g.id}`);
+        if (!caja) return;
+        const vistas = caja.querySelectorAll('input[data-perm="ver"]:checked').length;
+        const etiqueta = document.getElementById(`conteo-${g.id}`);
+        if (etiqueta) etiqueta.textContent = `${vistas} de ${g.modulos.length}`;
+    });
+    const total = document.querySelectorAll(
+        '#roles-config input[data-perm="ver"]:checked').length;
+    const marca = document.getElementById('roles-total');
+    if (marca) marca.textContent = total;
+}
+
+function rolesPintar() {
+    const container = document.getElementById('roles-config');
+    const cat = _catalogoModulos;
+    if (!container || !cat) return;
+
+    const esAdmin = _rolActivo === 'admin';
+    const mods = (_rolesPermisos || {})[_rolActivo] || {};
+    const vistas = cat.grupos.reduce((n, g) => n + g.modulos.filter(
+        m => (mods[m.id] || {}).ver).length, 0);
+
+    const pills = cat.roles.map(rol => {
+        const n = cat.resumen[rol] || 0;
+        return `<button type="button" class="fd-rol-pill${rol === _rolActivo ? ' activo' : ''}"
+                        onclick="rolesElegir('${rol}')">
+            ${ROL_ETIQUETA[rol] || rol}
+            <span class="cuenta">${n}</span></button>`;
+    }).join('');
+
+    const grupos = cat.grupos.map(g => {
+        const abierto = !_gruposCerrados.has(g.id);
+        const nVistas = g.modulos.filter(m => (mods[m.id] || {}).ver).length;
+
+        const encabezados = ACCIONES.map(a => `<th>${a.etiqueta}</th>`).join('');
+        const filas = g.modulos.map(m => {
+            const p = mods[m.id] || {};
+            // Los catalogos maestros y el reparto de accesos no se le pueden dar
+            // a nadie que no sea admin. Se muestran, pero bloqueados.
+            const trabado = m.solo_admin && !esAdmin;
+            const celdas = ACCIONES.map(a => `<td>
+                <input type="checkbox" data-mod="${m.id}" data-perm="${a.id}"
+                       ${p[a.id] ? 'checked' : ''} ${trabado ? 'disabled' : ''}
+                       onchange="rolesActualizarConteos()"></td>`).join('');
+            return `<tr class="${trabado ? 'trabado' : ''}"
+                        title="${trabado ? 'Solo un administrador puede tener este modulo' : ''}">
+                <td>${m.etiqueta}</td>${celdas}</tr>`;
         }).join('');
-    } catch (e) { console.log('Error cargando roles:', e); }
+
+        return `<div class="fd-perm-grupo" id="grupo-${g.id}">
+            <div class="fd-perm-head" onclick="rolesGrupoAlternar('${g.id}')">
+                <span class="fd-chev" style="transform:rotate(${abierto ? 90 : 0}deg);">&#9654;</span>
+                <span class="fd-perm-titulo">${g.etiqueta}</span>
+                <span class="fd-perm-conteo" id="conteo-${g.id}">${nVistas} de ${g.modulos.length}</span>
+            </div>
+            ${abierto ? `<table class="fd-perm-tabla">
+                <thead><tr>
+                    <th><span class="fd-sel-todo">
+                        <input type="checkbox" onclick="event.stopPropagation();
+                               rolesGrupoTodo('${g.id}', this.checked)">
+                        Seleccionar todo</span></th>
+                    ${encabezados}
+                </tr></thead>
+                <tbody>${filas}</tbody></table>` : ''}
+        </div>`;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="fd-ctx">
+            <span><b>Rol:</b> ${ROL_ETIQUETA[_rolActivo] || _rolActivo}</span>
+            <span class="sep">|</span>
+            <span><b>Pantallas:</b> <span id="roles-total">${vistas}</span> de ${cat.total_modulos}</span>
+            <span class="sep">|</span>
+            <span><b>Grupos:</b> ${cat.grupos.length}</span>
+            <button class="btn-primary btn-sm" onclick="rolGuardar('${_rolActivo}')"
+                    style="margin-left:auto;padding:0 22px;">Guardar cambios</button>
+        </div>
+
+        <div class="fd-rol-pills">${pills}</div>
+
+        <div class="fd-perm-grid">${grupos}</div>`;
 }
 
 async function rolGuardar(rol) {

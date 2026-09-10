@@ -1,29 +1,76 @@
 /* Variables - FOODIX Design System v1.0 */
 :root {
+    /* ====================================================================
+       Tokens alineados al toolkit FOODIX v2 (skills/foodix-design).
+       Los nombres se mantienen para no romper las reglas que ya existen;
+       lo que cambio son los valores que contradecian las reglas duras.
+       ==================================================================== */
+
+    /* --- navy de MARCA: logo, h1, nav activa. NO es el color del texto --- */
     --primary: #123450;
-    --primary-light: #1a4a6e;
-    --primary-dark: #0d2438;
+    --primary-light: #185FA5;
+    --primary-dark: #042C53;
+
+    /* --- rosa: es ACENTO ("lo actual"), no significa "malo" --- */
     --accent: #F43F5E;
     --accent-light: #FB7185;
-    --accent-dark: #E11D48;
-    --success: #22c55e;
-    --warning: #f59e0b;
-    --danger: #F43F5E;
+    --accent-dark: #BE1B3D;
+
+    /* --- semantica cerrada: cada color dice una sola cosa --- */
+    --success: #0F6E56;   /* positivo real (era #22c55e) */
+    --warning: #BA7517;   /* alerta        (era #f59e0b) */
+    --danger:  #E24B4A;   /* negativo      (era #F43F5E, el mismo que --accent) */
+    --info:    #378ADD;   /* neutro-informativo */
+    --action:  #2563EB;   /* CTA y focus de formulario */
+
+    /* --- superficies --- */
     --bg-light: #F8FAFC;
-    --bg-alt: #EFF1F5;
+    --bg-alt: #F1F5F9;
     --bg-white: #FFFFFF;
-    --text-dark: #123450;
-    --text-gray: #64748B;
-    --text-light: #94A3B8;
+
+    /* --- texto: navy de TEXTO, distinto al de marca --- */
+    --text-dark: #1A3A5C;   /* era #123450, que es el navy de marca */
+    --text-gray: #888780;   /* era #64748B */
+    --text-light: #B4B2A9;
+
+    /* --- lineas --- */
     --border: #CBD5E1;
     --border-light: #E2E8F0;
-    --shadow: 0 2px 8px rgba(15,23,42,0.04);
-    --shadow-md: 0 4px 16px rgba(15,23,42,0.08);
-    --shadow-lg: 0 8px 24px rgba(15,23,42,0.10);
+    --border-card: rgba(203,213,225,0.30);
+    --line: #E8E6E0;         /* borde de fila de tabla */
+    --line-strong: #D3D1C7;  /* borde de cabecera de tabla */
+    --row-hover: #F9FAFB;
+
+    /* --- sombras del toolkit --- */
+    --shadow-subtle: 0 1px 3px rgba(15,23,42,.04), 0 1px 2px rgba(15,23,42,.03);
+    --shadow: 0 1px 3px rgba(15,23,42,.04), 0 1px 2px rgba(15,23,42,.03);
+    --shadow-md: 0 1px 4px rgba(0,0,0,.10);
+    --shadow-lg: 0 8px 30px rgba(0,0,0,.25);
+
+    /* --- radios: card analitica 12, hero 24, pill --- */
     --radius: 12px;
     --radius-sm: 8px;
     --radius-lg: 16px;
     --radius-xl: 20px;
+    --radius-card: 12px;
+    --radius-hero: 24px;
+    --radius-pill: 9999px;
+
+    /* --- alias con los nombres canonicos del toolkit --- */
+    --navy-700: #123450;
+    --navy-600: #185FA5;
+    --navy-500: #378ADD;
+    --navy-100: #E6F1FB;
+    --slate-50: #F8FAFC;
+    --slate-100: #F1F5F9;
+    --slate-200: #E2E8F0;
+    --slate-300: #CBD5E1;
+    --color-text: #1A3A5C;
+    --color-muted: #888780;
+    --color-positive: #0F6E56;
+    --color-negative: #E24B4A;
+    --color-warning: #BA7517;
+    --color-action: #2563EB;
 }
 
 /* Reset */
@@ -6909,3 +6956,415 @@ body.dark #view-dashboard .chart-card { background: #1e293b !important; border-c
 .cl-badge-ok        { background: #dcfce7; color: #166534; }
 .cl-badge-err       { background: #fee2e2; color: #991b1b; }
 .cl-badge-cancelado { background: #e2e8f0; color: #475569; }
+
+
+/* ========================================================================
+   CAPA TOOLKIT FOODIX
+   Va al final a proposito: corrige por cascada lo que choca con las reglas
+   duras, sin tocar las reglas viejas una por una. Para revertir, se borra
+   de aqui hasta el final del archivo.
+   ======================================================================== */
+
+/* --- Regla 11: sin gradientes decorativos. El primario es azul solido.
+   Antes era un degradado rosa con sombra de color, que ademas usaba el
+   acento como si fuera un CTA. --- */
+.btn-primary {
+    background: var(--action);
+    box-shadow: none;
+    border-radius: var(--radius-pill);
+    letter-spacing: 0;
+    font-weight: 600;
+    min-height: 44px;
+    transition: background .15s ease;
+}
+.btn-primary:hover  { background: #1D4ED8; box-shadow: none; transform: none; }
+.btn-primary:active { background: #1E40AF; }
+.btn-primary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.13);
+}
+.btn-primary.btn-sm { min-height: 40px; }
+
+/* --- Regla 4: inputs pill de 44px, focus azul de accion --- */
+.form-group input,
+.form-group select {
+    min-height: 44px;
+    padding: 0 18px;
+    border-radius: var(--radius-pill);
+    border-color: #E5E7EB;
+    font-size: 14px;
+    color: #111827;
+}
+.form-group textarea { border-radius: 16px; }   /* el textarea NO es pill */
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--action);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+}
+.form-group label {
+    font-size: 13px; font-weight: 600; color: var(--color-text);
+}
+
+/* --- Regla 2: card analitica = 12px + sombra sutil + borde slate al 30% --- */
+.panel-section {
+    border-radius: var(--radius-card);
+    border-color: var(--border-card);
+    box-shadow: var(--shadow-subtle);
+}
+
+/* --- Seccion 8: tabla de datos --- */
+.panel-section table th {
+    color: var(--color-text);
+    border-bottom-color: var(--line-strong);
+}
+.panel-section table td {
+    color: var(--color-text);
+    border-bottom-color: var(--line);
+}
+.panel-section table tbody tr:hover { background: var(--row-hover); }
+
+/* --- Regla 6: tabular-nums en todo numero --- */
+table, .kpi-valor, .kpi-value, input[type="number"] {
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- Seccion 10: el h1 de pagina va en navy de MARCA, no en el de texto --- */
+.view-header h2 { color: var(--primary); }
+
+/* --- Seccion 13: estados del sistema --- */
+.fd-vacio {
+    padding: 34px; text-align: center;
+    color: var(--color-muted); font-size: 13px;
+}
+.fd-error {
+    background: #FCEBEB; border: 1px solid #F7C1C1;
+    color: var(--color-negative); font-size: 12px; font-weight: 500;
+    border-radius: var(--radius-sm); padding: 10px 14px;
+}
+
+/* --- Regla 12: nada de movimiento si el sistema pide no moverse --- */
+@media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+
+/* ------------------------------------------------------------------------
+   Componentes .fd-* (COMPONENTS.md). Clases nuevas: no pisan nada existente.
+   ------------------------------------------------------------------------ */
+
+/* --- Card analitica (seccion 1, nivel analitica) --- */
+.fd-card {
+    background: #fff;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-subtle);
+    margin-bottom: 10px;
+    overflow: hidden;
+    min-width: 0;
+}
+
+/* --- Cabecera plegable de una card (patron del listado agrupado) --- */
+.fd-card-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 18px; cursor: pointer; user-select: none;
+    background: #fff; transition: background .12s ease; min-width: 0;
+}
+.fd-card-head:hover { background: var(--row-hover); }
+.fd-card.abierta .fd-card-head { border-bottom: 1px solid var(--line); }
+.fd-chev {
+    width: 14px; font-size: 9px; color: var(--color-muted);
+    transition: transform .15s ease; display: inline-block; flex: none;
+}
+.fd-card.abierta .fd-chev { transform: rotate(90deg); }
+.fd-card-titulo {
+    font-size: 15px; font-weight: 600; color: var(--primary);
+    flex: 1; min-width: 0;
+}
+.fd-card-meta {
+    font-size: 12px; color: var(--color-muted); font-weight: 400;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.fd-card-meta b { color: var(--color-warning); font-weight: 600; }
+
+/* --- Tabla de datos (seccion 8) --- */
+.fd-tabla { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.fd-tabla th {
+    height: 48px; padding: 0 16px; text-align: left;
+    font-size: 15px; font-weight: 600; color: var(--color-text);
+    border-bottom: 1px solid var(--line-strong);
+    background: var(--slate-50); white-space: nowrap;
+}
+.fd-tabla td {
+    padding: 11px 16px; font-size: 15px; font-weight: 400;
+    color: var(--color-text); border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+}
+.fd-tabla tbody tr:last-child td { border-bottom: none; }
+.fd-tabla tbody tr:hover { background: var(--row-hover); }
+.fd-tabla tr.fd-off td { opacity: .5; }
+.fd-tabla .fd-num { text-align: right; font-weight: 500; }
+.fd-mono {
+    font-family: 'DM Mono', 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px; font-weight: 500; color: var(--color-muted);
+    white-space: nowrap;
+}
+.fd-tenue { color: var(--color-muted); font-size: 13px; }
+.fd-der { text-align: right; white-space: nowrap; }
+.fd-centro { text-align: center; }
+
+/* --- Badges familia B: fondo del color al 8%, texto pleno (seccion 3/4) --- */
+.fd-badge {
+    display: inline-block; padding: 2px 10px;
+    border-radius: var(--radius-pill);
+    font-size: 11px; font-weight: 600;
+}
+.fd-badge-ok    { background: rgba(15,110,86,0.08);  color: var(--color-positive); }
+.fd-badge-mal   { background: rgba(226,75,74,0.08);  color: var(--color-negative); }
+.fd-badge-alerta{ background: rgba(186,117,23,0.10); color: var(--color-warning); }
+.fd-badge-info  { background: rgba(55,138,221,0.10); color: var(--info); }
+
+/* --- Chips compactos (marcado / sin marcar) --- */
+.fd-chip {
+    display: inline-block; min-width: 26px; text-align: center;
+    padding: 2px 6px; margin: 1px; border-radius: 5px;
+    font-size: 10px; font-weight: 700;
+    background: var(--slate-100); color: var(--slate-300);
+}
+.fd-chip.on { background: rgba(55,138,221,0.10); color: var(--navy-500); }
+
+/* --- Botones de fila (seccion 6, achicados para tablas densas) --- */
+.fd-accion {
+    height: 32px; padding: 0 14px; border-radius: var(--radius-pill);
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    font-family: inherit; border: 1px solid transparent;
+    transition: filter .12s ease;
+}
+.fd-accion:hover { filter: brightness(1.08); }
+.fd-accion:focus-visible { outline: 2px solid #1D9E75; outline-offset: 2px; }
+.fd-accion-primaria { background: var(--action); color: #fff; }
+.fd-accion-peligro {
+    background: #fff; color: var(--color-negative);
+    border-color: #FCA5A5; margin-left: 8px;
+}
+.fd-accion-peligro:hover { background: #FEF2F2; filter: none; }
+.fd-btn-ghost {
+    height: 32px; padding: 0 14px; font-size: 12px; font-weight: 600;
+    color: var(--color-text); background: #fff; font-family: inherit;
+    border: 1px solid var(--border-card); border-radius: var(--radius-pill);
+    cursor: pointer;
+}
+.fd-btn-ghost:hover { background: var(--row-hover); }
+.fd-btn-ghost:disabled { opacity: .45; cursor: default; }
+
+/* --- Barra de filtros (seccion 9) --- */
+.fd-filtros {
+    background: #fff; border: 1px solid var(--border-card);
+    border-radius: var(--radius-card); box-shadow: var(--shadow-subtle);
+    padding: 14px 16px; margin-bottom: 14px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    min-width: 0;
+}
+.fd-input, .fd-select {
+    height: 40px; padding: 0 14px; font-size: 13px; font-weight: 500;
+    color: var(--color-text); background: #fff; min-width: 0;
+    border: 1px solid var(--border-card); border-radius: var(--radius-pill);
+    outline: none; font-family: inherit;
+}
+.fd-select { cursor: pointer; padding-right: 30px; }
+.fd-input:focus, .fd-select:focus {
+    border-color: var(--action);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.10);
+}
+.fd-barra {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 10px; padding: 0 2px 12px; min-width: 0;
+}
+.fd-conteo {
+    font-size: 12px; color: var(--color-muted); font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- RESPONSIVE.md: filtros en 2 columnas bajo 640px --- */
+@media (max-width: 640px) {
+    .fd-filtros {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+    }
+    .fd-filtros .fd-ancho { grid-column: 1 / -1; }
+    .fd-select { width: 100%; }
+}
+
+/* --- Etiquetas y avisos de formulario (seccion 7 / 13) --- */
+.fd-etiqueta {
+    display: block; font-size: 13px; font-weight: 600;
+    color: var(--color-text); margin-bottom: 6px;
+}
+.fd-aviso {
+    margin-top: 8px; background: var(--navy-100);
+    border: 1px solid #B5D4F4; border-radius: var(--radius-sm);
+    padding: 10px 14px; font-size: 12px; color: var(--navy-600);
+    line-height: 1.5;
+}
+.fd-vacio {
+    padding: 34px; text-align: center;
+    color: var(--color-muted); font-size: 13px;
+}
+
+/* ------------------------------------------------------------------------
+   Pantalla de accesos, con el patron de Contifico y los tokens de FOODIX.
+   ------------------------------------------------------------------------ */
+
+/* --- Pestanas horizontales, activa con subrayado --- */
+.fd-tabs {
+    display: flex; gap: 4px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--line); margin-bottom: 16px;
+}
+.fd-tab {
+    padding: 10px 18px; background: none; border: none; cursor: pointer;
+    font-family: inherit; font-size: 14px; font-weight: 500;
+    color: var(--color-muted); border-bottom: 2px solid transparent;
+    margin-bottom: -1px; white-space: nowrap;
+}
+.fd-tab:hover { color: var(--color-text); }
+.fd-tab.activo { color: var(--action); font-weight: 600; border-bottom-color: var(--action); }
+
+/* --- Barra de contexto: etiquetas en negrita, valores normales --- */
+.fd-ctx {
+    background: #fff; border: 1px solid var(--border-card);
+    border-radius: var(--radius-card); box-shadow: var(--shadow-subtle);
+    padding: 13px 18px; margin-bottom: 16px;
+    font-size: 13px; color: var(--color-text);
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+.fd-ctx b { font-weight: 600; }
+.fd-ctx .sep { color: var(--slate-300); }
+
+/* --- Selector de rol: pastillas --- */
+.fd-rol-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.fd-rol-pill {
+    height: 40px; padding: 0 18px; border-radius: var(--radius-pill);
+    border: 1px solid var(--border-card); background: #fff; cursor: pointer;
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    color: var(--color-text); display: inline-flex; align-items: center; gap: 8px;
+}
+.fd-rol-pill:hover { background: var(--row-hover); }
+.fd-rol-pill.activo { background: var(--action); color: #fff; border-color: var(--action); }
+.fd-rol-pill .cuenta { font-weight: 400; opacity: .75; font-size: 12px; }
+
+/* --- Grupos de permisos en dos columnas --- */
+.fd-perm-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 16px; align-items: start;
+}
+.fd-perm-grupo {
+    background: #fff; border: 1px solid var(--border-card);
+    border-radius: var(--radius-card); box-shadow: var(--shadow-subtle);
+    overflow: hidden;
+}
+.fd-perm-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 16px; cursor: pointer; user-select: none;
+}
+.fd-perm-head:hover { background: var(--row-hover); }
+.fd-perm-head .fd-chev { color: var(--action); }
+.fd-perm-titulo {
+    font-size: 15px; font-weight: 500; color: var(--color-muted); flex: 1;
+}
+.fd-perm-conteo {
+    font-size: 12px; color: var(--color-muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* --- Tabla de permisos del grupo --- */
+.fd-perm-tabla { width: 100%; border-collapse: collapse; }
+.fd-perm-tabla thead tr { background: var(--slate-50); }
+.fd-perm-tabla th {
+    padding: 9px 12px; font-size: 12px; font-weight: 500;
+    color: var(--color-muted); text-align: center; white-space: nowrap;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.fd-perm-tabla th:first-child { text-align: left; font-weight: 600; color: var(--color-text); }
+.fd-perm-tabla td {
+    padding: 8px 12px; font-size: 13.5px; color: var(--color-text);
+    border-bottom: 1px solid var(--line); text-align: center;
+}
+.fd-perm-tabla td:first-child { text-align: left; }
+.fd-perm-tabla td + td { border-left: 1px solid var(--line); }
+.fd-perm-tabla th + th { border-left: 1px solid var(--line); }
+.fd-perm-tabla tbody tr:hover { background: var(--row-hover); }
+.fd-perm-tabla tbody tr:last-child td { border-bottom: none; }
+.fd-perm-tabla input[type="checkbox"] {
+    width: 16px; height: 16px; cursor: pointer; accent-color: var(--action);
+}
+.fd-perm-tabla tr.trabado { opacity: .45; }
+.fd-perm-tabla tr.trabado input { cursor: not-allowed; }
+.fd-sel-todo {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    font-size: 12px; font-weight: 500; color: var(--color-muted);
+}
+
+/* --- Correcciones de la pantalla de accesos (10-sep) ---
+   Tres problemas que se vieron recien en pantalla:
+
+   1. La grilla usaba auto-fit y en un monitor ancho armaba CUATRO columnas.
+      Con cuatro, cada card queda tan angosta que la columna Eliminar se corta
+      y no se ve. Contifico usa dos y por eso le entran las acciones. Se fija
+      en dos y se baja a una recien cuando no caben.
+   2. Las columnas de accion no tenian ancho propio y las comia el nombre del
+      modulo. Ahora miden fijo.
+   3. .btn-primary es width:100% para los formularios, asi que "Guardar
+      cambios" se estiraba de lado a lado de la barra. Dentro de la barra de
+      contexto va al ancho de su texto. */
+
+.fd-perm-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 1240px) {
+    .fd-perm-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.fd-perm-tabla { table-layout: fixed; }
+.fd-perm-tabla th:first-child,
+.fd-perm-tabla td:first-child { width: auto; }
+.fd-perm-tabla th + th,
+.fd-perm-tabla td + td { width: 88px; }
+.fd-perm-tabla td:first-child { line-height: 1.35; }
+
+.fd-ctx .btn-primary {
+    width: auto;
+    min-width: 0;
+    flex: none;
+    height: 40px;
+    min-height: 40px;
+}
+
+/* --- El hueco entre General y Depositos ---
+   Con grilla, una fila mide lo que mide su tarjeta mas alta: General tiene 1
+   modulo e Inventario 12, asi que General dejaba un vacio enorme debajo antes
+   de que empezara la fila siguiente.
+
+   Se cambia a columnas de texto (column-count). Las tarjetas fluyen y se
+   acomodan pegadas, sin filas que igualar. break-inside evita que una tarjeta
+   se parta al final de una columna. */
+.fd-perm-grid {
+    display: block;
+    column-count: 2;
+    column-gap: 16px;
+    grid-template-columns: none;
+}
+@media (max-width: 1240px) {
+    .fd-perm-grid { column-count: 1; }
+}
+.fd-perm-grupo {
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid;
+    page-break-inside: avoid;
+    width: 100%;
+    margin-bottom: 16px;
+}
+
+/* --- La calculadora de Retenciones viene de la app que estaba en Render y
+   traia su propio .page a pantalla completa. Adentro de Control Contable el
+   fondo y el alto los pone el layout. --- */
+#view-retenciones .page-ret { min-height: 0; background: transparent; padding: 0; }

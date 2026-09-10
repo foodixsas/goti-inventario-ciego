@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GFC - Control Contable | FOODIX</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260317a">
+    <link rel="stylesheet" href="css/styles.css?v=20260910d">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -545,13 +545,16 @@
                 </div>
 
                 <!-- MODULO: CUADRES DE CAJA -->
-                <div class="nav-module" data-module="cuadres">
+                <div class="nav-module collapsed" data-module="cuadres">
                     <button class="nav-module-header" onclick="toggleModule('cuadres')">
                         <i class="fas fa-cash-register"></i>
                         <span>Cuadres de Caja</span>
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
-                    <div class="nav-module-items" style="display:none;">
+                    <div class="nav-module-items">
+                        <button class="nav-btn" data-view="caja-chica" style="display:none;">
+                            <i class="fas fa-receipt"></i><span>Caja Chica</span>
+                        </button>
                         <button class="nav-btn" data-view="cuadre-registro" style="display:none;">
                             <i class="fas fa-edit"></i><span>Registro</span>
                         </button>
@@ -565,41 +568,34 @@
                 </div>
 
                 <!-- MODULO: PLATAFORMAS DELIVERY -->
-                <div class="nav-module" data-module="delivery">
+                <div class="nav-module collapsed" data-module="delivery">
                     <button class="nav-module-header" onclick="toggleModule('delivery')">
-                        <i class="fas fa-motorcycle"></i>
-                        <span>Delivery</span>
+                        <i class="fas fa-truck-ramp-box"></i>
+                        <span>Logistica</span>
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
-                    <div class="nav-module-items" style="display:none;">
-                        <button class="nav-btn" data-view="del-registro" style="display:none;">
-                            <i class="fas fa-edit"></i><span>Registro</span>
+                    <div class="nav-module-items">
+                        <button class="nav-btn" data-view="mov-solicitud" style="display:none;">
+                            <i class="fas fa-truck-ramp-box"></i>
+                            <span>Solicitar Movimiento</span>
                         </button>
-                        <button class="nav-btn" data-view="del-historial" style="display:none;">
-                            <i class="fas fa-list"></i><span>Historial</span>
-                        </button>
-                        <button class="nav-btn" data-view="del-dashboard" style="display:none;">
-                            <i class="fas fa-chart-bar"></i><span>Dashboard</span>
+                        <button class="nav-btn" data-view="mov-historial" style="display:none;">
+                            <i class="fas fa-clipboard-list"></i>
+                            <span>Movimientos Solicitados</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- MODULO: REGISTRO DE FACTURAS -->
-                <div class="nav-module" data-module="facturas">
-                    <button class="nav-module-header" onclick="toggleModule('facturas')">
+                <!-- MODULO: RETENCIONES SRI -->
+                <div class="nav-module" data-module="retenciones">
+                    <button class="nav-module-header" onclick="toggleModule('retenciones')">
                         <i class="fas fa-file-invoice-dollar"></i>
-                        <span>Facturas</span>
+                        <span>Retenciones</span>
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
-                    <div class="nav-module-items" style="display:none;">
-                        <button class="nav-btn" data-view="fac-registro" style="display:none;">
-                            <i class="fas fa-edit"></i><span>Registro</span>
-                        </button>
-                        <button class="nav-btn" data-view="fac-historial" style="display:none;">
-                            <i class="fas fa-list"></i><span>Historial</span>
-                        </button>
-                        <button class="nav-btn" data-view="fac-dashboard" style="display:none;">
-                            <i class="fas fa-chart-bar"></i><span>Dashboard</span>
+                    <div class="nav-module-items">
+                        <button class="nav-btn" data-view="retenciones" style="display:none;">
+                            <i class="fas fa-percent"></i><span>Consulta de RUC</span>
                         </button>
                     </div>
                 </div>
@@ -666,16 +662,29 @@
                     </div>
                 </div>
 
-                <!-- ADMIN -->
+                <!-- MODULO: CONFIGURACION (admin) -->
                 <div class="nav-module-separator"></div>
-                <button class="nav-btn" data-view="usuarios" style="display:none;">
-                    <i class="fas fa-users-cog"></i>
-                    <span>Usuarios</span>
-                </button>
-                <button class="nav-btn" data-view="config-productos" style="display:none;">
-                    <i class="fas fa-boxes-stacked"></i>
-                    <span>Productos</span>
-                </button>
+                <div class="nav-module collapsed" data-module="configuracion">
+                    <button class="nav-module-header" onclick="toggleModule('configuracion')">
+                        <i class="fas fa-sliders"></i>
+                        <span>Configuracion</span>
+                        <i class="fas fa-chevron-down nav-module-arrow"></i>
+                    </button>
+                    <div class="nav-module-items">
+                        <button class="nav-btn" data-view="matriz-productos" style="display:none;">
+                            <i class="fas fa-table-list"></i><span>Matriz de Productos</span>
+                        </button>
+                        <button class="nav-btn" data-view="bodegas" style="display:none;">
+                            <i class="fas fa-warehouse"></i><span>Bodegas</span>
+                        </button>
+                        <button class="nav-btn" data-view="config-productos" style="display:none;">
+                            <i class="fas fa-boxes-stacked"></i><span>Productos por Marca</span>
+                        </button>
+                        <button class="nav-btn" data-view="usuarios" style="display:none;">
+                            <i class="fas fa-users-cog"></i><span>Usuarios y Accesos</span>
+                        </button>
+                    </div>
+                </div>
             </nav>
 
             <main>
@@ -1165,6 +1174,142 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Vista Solicitar Movimiento entre Bodegas -->
+                <div id="view-mov-solicitud" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-truck-ramp-box"></i> Solicitar Movimiento entre Bodegas</h2>
+                    </div>
+                    <div class="merma-form-card">
+                        <div id="mov-aviso" class="error-msg hidden" style="margin-bottom:12px;"></div>
+                        <div class="merma-form-grid">
+                            <div class="form-group">
+                                <label>Fecha de Registro *</label>
+                                <input type="date" id="mov-fecha" class="input-merma">
+                            </div>
+                            <div class="form-group">
+                                <label>Origen *</label>
+                                <select id="mov-origen" class="input-merma">
+                                    <option value="">Seleccionar...</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Destino *</label>
+                                <select id="mov-destino" class="input-merma">
+                                    <option value="">Seleccionar...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="merma-form-grid" style="margin-top:12px;">
+                            <div class="form-group" style="position:relative;">
+                                <label>Quien Envia *</label>
+                                <input type="text" id="mov-envia-busca" class="input-merma" autocomplete="off"
+                                       placeholder="Escribe el nombre o clic para ver el personal...">
+                                <i class="fas fa-chevron-down" id="mov-envia-flecha"
+                                   style="position:absolute;right:12px;top:38px;color:#64748b;cursor:pointer;font-size:12px;"></i>
+                                <div id="mov-envia-lista" class="hidden"
+                                     style="position:absolute;z-index:50;top:100%;left:0;right:0;max-height:260px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);"></div>
+                                <div id="mov-envia-elegido" class="hidden"
+                                     style="padding:8px 10px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;"></div>
+                                <input type="hidden" id="mov-envia">
+                            </div>
+                            <div class="form-group" style="position:relative;">
+                                <label>Quien Recibe *</label>
+                                <input type="text" id="mov-recibe-busca" class="input-merma" autocomplete="off"
+                                       placeholder="Escribe el nombre o clic para ver el personal...">
+                                <i class="fas fa-chevron-down" id="mov-recibe-flecha"
+                                   style="position:absolute;right:12px;top:38px;color:#64748b;cursor:pointer;font-size:12px;"></i>
+                                <div id="mov-recibe-lista" class="hidden"
+                                     style="position:absolute;z-index:50;top:100%;left:0;right:0;max-height:260px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);"></div>
+                                <div id="mov-recibe-elegido" class="hidden"
+                                     style="padding:8px 10px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;"></div>
+                                <input type="hidden" id="mov-recibe">
+                            </div>
+                        </div>
+                        <div class="merma-form-grid" style="margin-top:12px;">
+                            <div class="form-group" style="position:relative;">
+                                <label>Producto *</label>
+                                <input type="text" id="mov-producto-busca" class="input-merma" autocomplete="off"
+                                       placeholder="Clic para ver los productos disponibles...">
+                                <i class="fas fa-chevron-down" id="mov-producto-flecha"
+                                   style="position:absolute;right:12px;top:38px;color:#64748b;cursor:pointer;font-size:12px;"></i>
+                                <div id="mov-producto-lista" class="hidden"
+                                     style="position:absolute;z-index:50;top:100%;left:0;right:0;max-height:260px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.12);"></div>
+                                <div id="mov-producto-elegido" class="hidden"
+                                     style="margin-top:6px;padding:8px 10px;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;font-size:13px;"></div>
+                            </div>
+                            <div class="form-group">
+                                <label>Cantidad *</label>
+                                <input type="text" inputmode="decimal" id="mov-cantidad" class="input-merma"
+                                       placeholder="0" autocomplete="off">
+                            </div>
+                            <div class="form-group">
+                                <label>Unidad</label>
+                                <input type="text" id="mov-unidad" class="input-merma" readonly
+                                       style="background:#f1f5f9;" placeholder="Se toma del producto">
+                            </div>
+                        </div>
+                        <div class="merma-form-grid" style="margin-top:12px;">
+                            <div class="form-group">
+                                <label>Motivo *</label>
+                                <select id="mov-motivo" class="input-merma">
+                                    <option value="">Seleccionar...</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="grid-column:1/-1;">
+                                <label>Observacion</label>
+                                <textarea id="mov-observacion" class="input-merma" rows="3"
+                                          placeholder="Detalle de por que se solicita el movimiento..."></textarea>
+                            </div>
+                        </div>
+                        <div class="merma-form-actions">
+                            <button class="btn-primary" onclick="movGuardar()">
+                                <i class="fas fa-paper-plane"></i> Enviar Solicitud
+                            </button>
+                            <button class="btn-secondary" onclick="movLimpiar()">
+                                <i class="fas fa-rotate-left"></i> Borrar formulario
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vista Historial de Movimientos Solicitados -->
+                <div id="view-mov-historial" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-clipboard-list"></i> Movimientos Solicitados</h2>
+                    </div>
+                    <div class="obs-filtros" style="margin-top:12px;">
+                        <div class="obs-filtro-grupo">
+                            <label>Desde</label>
+                            <input type="date" id="mov-hist-desde" class="obs-filtro-input">
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label>Hasta</label>
+                            <input type="date" id="mov-hist-hasta" class="obs-filtro-input">
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label>Estado</label>
+                            <select id="mov-hist-estado" class="obs-filtro-input">
+                                <option value="">Todos</option>
+                                <option value="pendiente">Pendiente</option>
+                                <option value="ejecutado">Ejecutado</option>
+                                <option value="error">Error</option>
+                                <option value="anulado">Anulado</option>
+                            </select>
+                        </div>
+                        <div class="obs-filtro-grupo">
+                            <label>Bodega</label>
+                            <select id="mov-hist-bodega" class="obs-filtro-input">
+                                <option value="">Todas</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" onclick="movCargarHistorial()">
+                            <i class="fas fa-search"></i> Buscar
+                        </button>
+                    </div>
+                    <div id="mov-hist-resumen" style="margin-top:12px;"></div>
+                    <div id="mov-hist-tabla" style="margin-top:12px;overflow-x:auto;"></div>
                 </div>
 
                 <!-- Vista Corrección de Conteos (solo admin) -->
@@ -1750,6 +1895,17 @@
                 <!-- ============ MODULO CUADRES DE CAJA ============ -->
 
                 <!-- Vista Cuadre Registro -->
+                <!-- Caja Chica: registros migrados de Airtable, con sus evidencias -->
+                <div id="view-caja-chica" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-receipt"></i> Caja Chica</h2>
+                    </div>
+                    <div style="margin-top:12px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#fff;">
+                        <iframe id="frame-caja-chica" src="about:blank"
+                                style="width:100%;height:calc(100vh - 190px);border:none;display:block;"></iframe>
+                    </div>
+                </div>
+
                 <div id="view-cuadre-registro" class="view">
                     <div class="view-header">
                         <h2><i class="fas fa-cash-register"></i> Registro de Cuadre de Caja</h2>
@@ -2385,11 +2541,20 @@
                 <!-- Vista Usuarios (solo admin) -->
                 <div id="view-usuarios" class="view">
                     <div class="view-header">
-                        <h2><i class="fas fa-users-cog"></i> Administrar Usuarios</h2>
+                        <h2><i class="fas fa-users-cog"></i> Usuarios y Accesos</h2>
                         <button class="btn-primary btn-sm" onclick="usuariosMostrarFormNuevo()">
-                            <i class="fas fa-user-plus"></i> Nuevo Usuario
+                            Nuevo Usuario
                         </button>
                     </div>
+
+                    <div class="fd-tabs">
+                        <button type="button" class="fd-tab activo" data-tab="usuarios"
+                                onclick="usuariosTab('usuarios')">Usuarios</button>
+                        <button type="button" class="fd-tab" data-tab="roles"
+                                onclick="usuariosTab('roles')">Roles y accesos</button>
+                    </div>
+
+                    <div id="tab-usuarios">
                     <div id="usuarios-form" class="panel-section hidden">
                         <div class="panel-section-header">
                             <span class="panel-section-icon panel-icon-blue"><i class="fas fa-user-edit"></i></span>
@@ -2484,18 +2649,10 @@
                         </div>
                     </div>
 
-                    <!-- Configuracion de permisos por rol -->
-                    <div class="panel-section" style="margin-top:16px;">
-                        <div class="panel-section-header">
-                            <span class="panel-section-icon panel-icon-blue"><i class="fas fa-shield-alt"></i></span>
-                            <div>
-                                <h3>Permisos por Rol</h3>
-                                <p style="font-size:12px;color:#64748B;margin:0;">Define que modulos puede ver cada rol</p>
-                            </div>
-                        </div>
-                        <div id="roles-config" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;padding:16px;">
-                            <!-- Se llena con JS -->
-                        </div>
+                    </div><!-- /tab-usuarios -->
+
+                    <div id="tab-roles" style="display:none;">
+                        <div id="roles-config"><!-- lo dibuja rolesCargar() --></div>
                     </div>
                 </div>
 
@@ -3079,6 +3236,481 @@
                     <div id="nom-nomina-detalle" style="display:none;padding:16px;"></div>
                 </div>
 
+
+                <!-- Estilo FOODIX de la Matriz. Todo cuelga de
+                     #view-matriz-productos a proposito: este modulo no puede
+                     pisar el aspecto del resto de la app. -->
+                <style>
+                /* ------------------------------------------------------------
+                   Matriz de Productos - anclado al toolkit FOODIX v2
+                   (skills/foodix-design: tokens de references/preview +
+                   anatomia de components/COMPONENTS.md)
+
+                   Los tokens se declaran en la VISTA y no en :root, y las
+                   clases llevan prefijo mx-: este modulo no puede cambiarle el
+                   aspecto a ninguna otra pantalla de la app.
+                   ------------------------------------------------------------ */
+                #view-matriz-productos {
+                    /* rampa navy (marca) */
+                    --navy-700:#123450;   /* navy de MARCA: titulos, categoria */
+                    --navy-600:#185FA5;
+                    --navy-500:#378ADD;   /* neutro-informativo */
+                    --navy-100:#E6F1FB;
+
+                    /* rampa slate (superficie) */
+                    --slate-50:#F8FAFC;
+                    --slate-100:#F1F5F9;
+                    --slate-300:#CBD5E1;
+                    --slate-400:#94A3B8;
+
+                    /* semanticos: la semantica es cerrada, no se reinterpreta */
+                    --color-text:#1A3A5C;      /* navy de TEXTO, distinto al de marca */
+                    --color-muted:#888780;
+                    --color-positive:#0F6E56;  /* positivo real */
+                    --color-negative:#E24B4A;
+                    --color-warning:#BA7517;
+                    --color-action:#2563EB;    /* CTA y focus de formulario */
+
+                    /* lineas y superficies de tabla */
+                    --line:#E8E6E0;
+                    --line-strong:#D3D1C7;
+                    --row-hover:#F9FAFB;
+
+                    /* card analitica */
+                    --border-card:1px solid rgba(203,213,225,0.30);
+                    --radius-card:12px;
+                    --radius-pill:9999px;
+                    --shadow-subtle:0 1px 3px rgba(15,23,42,.04),
+                                    0 1px 2px rgba(15,23,42,.03);
+
+                    font-family:'Inter', system-ui, sans-serif;
+                }
+
+                /* ---------- filtros (card analitica + inputs pill) ---------- */
+                #view-matriz-productos .mx-filtros {
+                    background:#fff; border:var(--border-card);
+                    border-radius:var(--radius-card); box-shadow:var(--shadow-subtle);
+                    padding:14px 16px; margin-bottom:14px;
+                    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+                    min-width:0;
+                }
+                #view-matriz-productos .mx-input,
+                #view-matriz-productos .mx-select {
+                    height:40px; padding:0 14px; font-size:13px; font-weight:500;
+                    color:var(--color-text); background:#fff; min-width:0;
+                    border:var(--border-card); border-radius:var(--radius-pill);
+                    outline:none; font-family:inherit;
+                }
+                #view-matriz-productos .mx-select { cursor:pointer; padding-right:30px; }
+                #view-matriz-productos .mx-input:focus,
+                #view-matriz-productos .mx-select:focus {
+                    border-color:var(--color-action);
+                    box-shadow:0 0 0 3px rgba(37,99,235,0.10);
+                }
+                #view-matriz-productos .mx-buscar { flex:1; min-width:220px; }
+
+                /* ---------- barra de resumen ---------- */
+                #view-matriz-productos .mx-barra {
+                    display:flex; justify-content:space-between; align-items:center;
+                    flex-wrap:wrap; gap:10px; padding:0 2px 12px; min-width:0;
+                }
+                #view-matriz-productos .mx-conteo {
+                    font-size:12px; color:var(--color-muted); font-weight:500;
+                    font-variant-numeric:tabular-nums;
+                }
+                #view-matriz-productos .mx-btn-ghost {
+                    height:32px; padding:0 14px; font-size:12px; font-weight:600;
+                    color:var(--color-text); background:#fff; font-family:inherit;
+                    border:var(--border-card); border-radius:var(--radius-pill);
+                    cursor:pointer;
+                }
+                #view-matriz-productos .mx-btn-ghost:hover { background:var(--row-hover); }
+                #view-matriz-productos .mx-btn-ghost:disabled { opacity:.45; cursor:default; }
+
+                /* ---------- una card analitica por categoria ---------- */
+                #view-matriz-productos .mx-cat {
+                    background:#fff; border:var(--border-card);
+                    border-radius:var(--radius-card); box-shadow:var(--shadow-subtle);
+                    margin-bottom:10px; overflow:hidden; min-width:0;
+                }
+                #view-matriz-productos .mx-cat-head {
+                    display:flex; align-items:center; gap:10px;
+                    padding:14px 18px; cursor:pointer; user-select:none;
+                    background:#fff; transition:background .12s ease; min-width:0;
+                }
+                #view-matriz-productos .mx-cat-head:hover { background:var(--row-hover); }
+                #view-matriz-productos .mx-cat.abierta .mx-cat-head {
+                    border-bottom:1px solid var(--line);
+                }
+                #view-matriz-productos .mx-chev {
+                    width:14px; font-size:9px; color:var(--color-muted);
+                    transition:transform .15s ease; display:inline-block; flex:none;
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    #view-matriz-productos .mx-chev { transition:none; }
+                }
+                #view-matriz-productos .mx-cat.abierta .mx-chev { transform:rotate(90deg); }
+                #view-matriz-productos .mx-cat-nombre {
+                    font-size:15px; font-weight:600; color:var(--navy-700);
+                    flex:1; min-width:0;
+                }
+                #view-matriz-productos .mx-cat-meta {
+                    font-size:12px; color:var(--color-muted); font-weight:400;
+                    font-variant-numeric:tabular-nums; white-space:nowrap;
+                }
+                #view-matriz-productos .mx-cat-meta b {
+                    color:var(--color-warning); font-weight:600;
+                }
+
+                /* ---------- tabla de datos (COMPONENTS.md, seccion 8) ---------- */
+                #view-matriz-productos .mx-tabla {
+                    width:100%; border-collapse:collapse;
+                    font-variant-numeric:tabular-nums;
+                }
+                #view-matriz-productos .mx-tabla th {
+                    height:48px; padding:0 16px; text-align:left;
+                    font-size:15px; font-weight:600; color:var(--color-text);
+                    border-bottom:1px solid var(--line-strong);
+                    background:var(--slate-50); white-space:nowrap;
+                }
+                #view-matriz-productos .mx-tabla td {
+                    padding:11px 16px; font-size:15px; font-weight:400;
+                    color:var(--color-text); border-bottom:1px solid var(--line);
+                    vertical-align:middle;
+                }
+                #view-matriz-productos .mx-tabla tbody tr:last-child td { border-bottom:none; }
+                #view-matriz-productos .mx-tabla tbody tr:hover { background:var(--row-hover); }
+                #view-matriz-productos .mx-tabla tr.mx-off td { opacity:.5; }
+                #view-matriz-productos .mx-cod {
+                    font-family:'DM Mono', ui-monospace, monospace;
+                    font-size:13px; font-weight:500; color:var(--color-muted);
+                    white-space:nowrap;
+                }
+                #view-matriz-productos .mx-nombre { font-weight:500; }
+                #view-matriz-productos .mx-tenue { color:var(--color-muted); font-size:13px; }
+                #view-matriz-productos .mx-der { text-align:right; white-space:nowrap; }
+                #view-matriz-productos .mx-centro { text-align:center; }
+
+                /* ---------- badges familia B: fondo al 8%, texto pleno ---------- */
+                #view-matriz-productos .mx-badge {
+                    display:inline-block; padding:2px 10px;
+                    border-radius:var(--radius-pill);
+                    font-size:11px; font-weight:600;
+                }
+                #view-matriz-productos .mx-ok {
+                    background:rgba(15,110,86,0.08); color:var(--color-positive);
+                }
+                #view-matriz-productos .mx-no {
+                    background:rgba(226,75,74,0.08); color:var(--color-negative);
+                }
+                #view-matriz-productos .mx-chip {
+                    display:inline-block; min-width:26px; text-align:center;
+                    padding:2px 6px; margin:1px; border-radius:5px;
+                    font-size:10px; font-weight:700;
+                    background:var(--slate-100); color:var(--slate-300);
+                }
+                /* marcado = neutro-informativo (que se cuente no es "bueno") */
+                #view-matriz-productos .mx-chip.on {
+                    background:rgba(55,138,221,0.10); color:var(--navy-500);
+                }
+
+                /* ---------- acciones de fila ----------
+                   32px y no los 40 del "small" del toolkit: con 1264 productos,
+                   8px mas por fila son 10.000px de scroll. Los botones de la
+                   ficha si respetan los 40. */
+                #view-matriz-productos .mx-accion {
+                    height:32px; padding:0 14px; border-radius:var(--radius-pill);
+                    font-size:12px; font-weight:600; cursor:pointer;
+                    font-family:inherit; border:1px solid transparent;
+                    transition:filter .12s ease;
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    #view-matriz-productos .mx-accion { transition:none; }
+                }
+                #view-matriz-productos .mx-accion:hover { filter:brightness(1.08); }
+                #view-matriz-productos .mx-accion:focus-visible {
+                    outline:2px solid #1D9E75; outline-offset:2px;
+                }
+                #view-matriz-productos .mx-editar { background:var(--color-action); color:#fff; }
+                #view-matriz-productos .mx-borrar {
+                    background:#fff; color:var(--color-negative);
+                    border-color:rgba(226,75,74,0.35); margin-left:8px;
+                }
+                #view-matriz-productos .mx-borrar:hover {
+                    background:rgba(226,75,74,0.06); filter:none;
+                }
+
+                #view-matriz-productos .mx-vacio {
+                    padding:34px; text-align:center; color:var(--color-muted);
+                    font-size:15px; background:#fff;
+                    border:var(--border-card); border-radius:var(--radius-card);
+                }
+
+                /* ---------- movil: RESPONSIVE.md, filtros en 2 columnas ---------- */
+                @media (max-width: 640px) {
+                    #view-matriz-productos .mx-filtros {
+                        display:grid; grid-template-columns:repeat(2, minmax(0, 1fr));
+                        gap:8px;
+                    }
+                    #view-matriz-productos .mx-buscar { grid-column:1 / -1; }
+                    #view-matriz-productos .mx-select { min-width:0 !important; width:100%; }
+                    #view-matriz-productos .mx-barra { align-items:flex-start; }
+                }
+                </style>
+
+                <!-- Vista Matriz General de Productos -->
+                <div id="view-matriz-productos" class="view">
+                    <div class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
+                        <h2><i class="fas fa-table-list"></i> Matriz General de Productos</h2>
+                        <button class="btn-primary btn-sm" id="matriz-btn-nuevo"
+                                style="padding:10px 20px;font-size:13px;border-radius:var(--radius-sm);">
+                            Nuevo Producto
+                        </button>
+                    </div>
+
+                    <div class="mx-filtros">
+                        <input type="text" id="matriz-buscar" class="mx-input mx-buscar"
+                               placeholder="Buscar por codigo, nombre, categoria o proveedor...">
+                        <select id="matriz-f-estado" class="mx-select" style="min-width:150px;"></select>
+                        <select id="matriz-f-categoria" class="mx-select" style="min-width:180px;"></select>
+                        <select id="matriz-f-uso" class="mx-select" style="min-width:170px;"></select>
+                        <select id="matriz-f-venta" class="mx-select" style="min-width:150px;">
+                            <option value="">Venta: todos</option>
+                            <option value="si">Solo para la venta</option>
+                            <option value="no">Solo NO para la venta</option>
+                        </select>
+                        <select id="matriz-f-cuenta" class="mx-select" style="min-width:210px;"></select>
+                        <select id="matriz-orden" class="mx-select" style="min-width:190px;">
+                            <option value="categoria">Orden: categoria y codigo</option>
+                            <option value="nombre">Orden: alfabetico por nombre</option>
+                            <option value="codigo">Orden: por codigo</option>
+                        </select>
+                    </div>
+
+                    <div class="mx-barra">
+                        <span id="matriz-info" class="mx-conteo">&mdash;</span>
+                        <div id="matriz-plegado" style="display:none;align-items:center;gap:8px;">
+                            <button type="button" class="mx-btn-ghost" onclick="matrizTodos(true)">Abrir todas</button>
+                            <button type="button" class="mx-btn-ghost" onclick="matrizTodos(false)">Cerrar todas</button>
+                        </div>
+                        <div id="matriz-paginador" style="display:flex;align-items:center;gap:8px;">
+                            <button type="button" id="matriz-ant" class="mx-btn-ghost"
+                                    onclick="matrizPagina(-1)">&#8592; Anterior</button>
+                            <span id="matriz-paginas" class="mx-conteo" style="min-width:120px;text-align:center;">&mdash;</span>
+                            <button type="button" id="matriz-sig" class="mx-btn-ghost"
+                                    onclick="matrizPagina(1)">Siguiente &#8594;</button>
+                        </div>
+                    </div>
+
+                    <div id="matriz-lista"></div>
+
+                    <!-- Ficha del producto -->
+                    <div id="matriz-ficha" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9000;align-items:center;justify-content:center;padding:20px;">
+                        <div style="background:#fff;border-radius:12px;width:100%;max-width:900px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(18,52,80,.25);">
+                            <div style="padding:16px 22px;border-bottom:1px solid #E8E6E0;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                                <h3 id="matriz-ficha-titulo" style="margin:0;font-size:16px;color:#1A3A5C;font-weight:600;"></h3>
+                                <button type="button" onclick="matrizCerrarFicha()"
+                                        style="background:none;border:none;font-size:20px;color:#888780;cursor:pointer;line-height:1;">&times;</button>
+                            </div>
+                            <div id="matriz-pestanas" style="display:flex;gap:2px;padding:0 16px;border-bottom:1px solid #E8E6E0;overflow-x:auto;"></div>
+                            <div id="matriz-campos" style="padding:20px 22px;overflow-y:auto;flex:1;"></div>
+                            <div style="padding:14px 22px;border-top:1px solid #E8E6E0;display:flex;justify-content:flex-end;gap:10px;">
+                                <button type="button" onclick="matrizCerrarFicha()"
+                                        style="padding:0 18px;height:40px;border:1px solid rgba(203,213,225,0.30);background:#fff;color:#1A3A5C;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">
+                                    Cancelar</button>
+                                <button type="button" id="matriz-btn-guardar" onclick="matrizGuardarFicha()"
+                                        style="padding:0 22px;height:40px;border:none;background:#2563EB;color:#fff;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">
+                                    Guardar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vista Bodegas -->
+                <div id="view-bodegas" class="view">
+                    <div class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
+                        <h2><i class="fas fa-warehouse"></i> Bodegas</h2>
+                        <button class="btn-primary btn-sm" id="bodegas-btn-nueva"
+                                style="padding:10px 20px;font-size:13px;border-radius:var(--radius-sm);">
+                            Nueva Bodega
+                        </button>
+                    </div>
+
+                    <div class="fd-barra">
+                        <span id="bodegas-info" class="fd-conteo">&mdash;</span>
+                    </div>
+
+                    <div class="fd-card">
+                        <div style="overflow-x:auto;">
+                            <table class="fd-tabla" style="min-width:820px;">
+                                <thead><tr>
+                                    <th>Bodega</th>
+                                    <th>Codigo Contifico</th>
+                                    <th>Nombre en Contifico</th>
+                                    <th>ID Contifico</th>
+                                    <th class="fd-centro">Estado</th>
+                                    <th></th>
+                                </tr></thead>
+                                <tbody id="bodegas-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="bodegas-ficha" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9000;align-items:center;justify-content:center;padding:20px;">
+                        <div style="background:var(--bg-white);border-radius:12px;width:100%;max-width:720px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+                            <div style="padding:16px 22px;border-bottom:1px solid var(--border-light);display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                                <h3 id="bodegas-ficha-titulo" style="margin:0;font-size:16px;color:var(--text-dark);font-weight:700;"></h3>
+                                <button type="button" onclick="bodegasCerrar()"
+                                        style="background:none;border:none;font-size:20px;color:var(--text-gray);cursor:pointer;line-height:1;">&times;</button>
+                            </div>
+                            <div id="bodegas-campos" style="padding:20px 22px;overflow-y:auto;flex:1;"></div>
+                            <div style="padding:14px 22px;border-top:1px solid var(--border-light);display:flex;justify-content:flex-end;gap:10px;">
+                                <button type="button" onclick="bodegasCerrar()"
+                                        style="padding:9px 18px;border:1px solid var(--border);background:var(--bg-white);color:var(--text-dark);border-radius:var(--radius-sm);cursor:pointer;font-size:13px;font-weight:600;">
+                                    Cancelar</button>
+                                <button type="button" id="bodegas-btn-guardar" class="btn-primary" onclick="bodegasGuardar()"
+                                        style="padding:9px 22px;border-radius:var(--radius-sm);font-size:13px;">
+                                    Guardar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <!-- Vista Retenciones SRI -->
+                <!-- Estilo de Retenciones. Scopeado a la vista, como la Matriz. -->
+                <style>
+                #view-retenciones .ret-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+                    gap: 16px 20px;
+                }
+                #view-retenciones .ret-etiqueta {
+                    font-size: 11px; font-weight: 600; color: var(--color-muted);
+                    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px;
+                }
+                #view-retenciones .ret-valor { font-size: 14px; color: var(--color-text); }
+                #view-retenciones .ret-fuerte { font-weight: 600; }
+                #view-retenciones .ret-critico {
+                    background: #FCEBEB; border: 1px solid #F7C1C1;
+                    color: var(--danger); font-size: 13px; font-weight: 500;
+                    border-radius: var(--radius-card); padding: 13px 16px; margin-bottom: 12px;
+                }
+                #view-retenciones .ret-alerta {
+                    background: rgba(186,117,23,0.08); border: 1px solid rgba(186,117,23,0.30);
+                    color: var(--color-warning); font-size: 13px; font-weight: 500;
+                    border-radius: var(--radius-card); padding: 13px 16px; margin-bottom: 12px;
+                }
+                #view-retenciones .ret-total td {
+                    font-weight: 700; font-size: 16px; color: var(--primary);
+                    border-top: 2px solid var(--line-strong);
+                }
+                #view-retenciones .ret-chapa {
+                    display: flex; align-items: center; gap: 9px; margin-top: 10px;
+                    padding: 9px 13px; border-radius: var(--radius-card);
+                    background: rgba(37,99,235,0.06); border: 1px solid rgba(37,99,235,0.20);
+                    font-size: 12.5px; color: var(--color-text);
+                }
+                #view-retenciones .ret-chapa-pct {
+                    font-size: 17px; font-weight: 700; color: var(--action);
+                    font-variant-numeric: tabular-nums;
+                }
+                #view-retenciones .ret-resta { color: var(--danger); }
+                #view-retenciones .ret-ref-fila {
+                    display: flex; align-items: center; gap: 12px;
+                    padding: 7px 16px; font-size: 12.5px; color: var(--color-text);
+                    border-bottom: 1px solid var(--line);
+                }
+                #view-retenciones .ret-ref-fila:last-child { border-bottom: none; }
+                #view-retenciones .ret-ref-grid {
+                    display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+                    gap: 14px; align-items: start;
+                }
+                #view-retenciones .ret-columnas {
+                    display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+                    gap: 18px; align-items: start;
+                }
+                </style>
+
+                <!-- Vista Retenciones SRI -->
+                <div id="view-retenciones" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-file-invoice-dollar"></i> Retenciones SRI</h2>
+                    </div>
+
+                    <div class="fd-filtros">
+                        <input type="text" id="ret-ruc" class="fd-input fd-ancho"
+                               maxlength="13" inputmode="numeric"
+                               placeholder="RUC del proveedor (13 digitos)" style="flex:1;min-width:240px;">
+                        <button type="button" class="btn-primary btn-sm"
+                                onclick="retConsultar()" style="padding:0 24px;">
+                            Consultar al SRI
+                        </button>
+                    </div>
+
+                    <div id="ret-ficha">
+                        <div class="fd-vacio">
+                            Escribi un RUC y consultalo. Se pregunta al SRI en el momento:
+                            no hay datos guardados.
+                        </div>
+                    </div>
+
+                    <div class="ret-columnas" style="margin-top:18px;">
+                        <div>
+                            <div class="fd-barra"><span class="fd-conteo">Datos de la factura</span></div>
+                            <div class="fd-card" style="padding:18px;">
+                                <div class="form-group" style="margin-bottom:14px;">
+                                    <label class="fd-etiqueta">Concepto de retencion</label>
+                                    <select id="ret-concepto" class="fd-select" style="width:100%;"></select>
+                                    <div id="ret-chapa" class="ret-chapa" style="display:none;"></div>
+                                </div>
+                                <div id="ret-caja-tipo" class="form-group" style="display:none;margin-bottom:14px;">
+                                    <label class="fd-etiqueta">Es compra de</label>
+                                    <select id="ret-tipo-compra" class="fd-select" style="width:100%;">
+                                        <option value="bien">Bien (IVA 30%)</option>
+                                        <option value="servicio">Servicio (IVA 70%)</option>
+                                    </select>
+                                </div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="fd-etiqueta">Subtotal</label>
+                                        <input type="text" id="ret-subtotal" class="fd-input"
+                                               value="0" style="width:100%;">
+                                    </div>
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="fd-etiqueta">IVA de la factura</label>
+                                        <input type="text" id="ret-iva" class="fd-input"
+                                               value="0" style="width:100%;">
+                                        <button type="button" class="fd-btn-ghost"
+                                                onclick="retIva15()" style="margin-top:7px;">
+                                            Calcular 15% del subtotal
+                                        </button>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn-primary"
+                                        onclick="retCalcular()" style="margin-top:16px;">
+                                    Calcular retencion
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="fd-barra"><span class="fd-conteo">Retencion</span></div>
+                            <div id="ret-calculo">
+                                <div class="fd-vacio">
+                                    Consulta un RUC y elegi el concepto para ver la retencion.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="fd-barra" style="margin-top:22px;">
+                        <span class="fd-conteo">Referencia: porcentaje de renta por concepto
+                            &middot; Resolucion NAC-DGERCGC26-00000009, vigente desde 01/03/2026</span>
+                    </div>
+                    <div id="ret-referencia" class="ret-ref-grid"></div>
+                </div>
+
             </main>
         </div>
     </div>
@@ -3147,10 +3779,25 @@
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="js/config.js?v=20260317a"></script>
-    <script src="js/app.js?v=20260904dash"></script>
+    <script src="js/app.js?v=20260910c"></script>
     <script src="js/flujo-caja.js?v=20260825a"></script>
     <script src="js/costos.js?v=20260827e"></script>
     <script src="js/nomina.js?v=20260812a"></script>
+    <script src="js/movimientos.js?v=20260910a"></script>
+    <script src="js/matriz.js?v=20260910i"></script>
+    <script src="js/bodegas.js?v=20260910b"></script>
+    <script src="js/retenciones.js?v=20260910d"></script>
+    <script>
+    // La galeria de Caja Chica se carga al entrar a la vista: trae miniaturas
+    // y no tiene sentido pedirlas si nadie las va a ver.
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('.nav-btn[data-view="caja-chica"]').forEach(b =>
+            b.addEventListener('click', () => {
+                const f = document.getElementById('frame-caja-chica');
+                if (f && f.src.indexOf('evidencias') === -1) f.src = '/evidencias/caja-chica';
+            }));
+    });
+    </script>
     <style>
         /* NOMINA MODULE STYLES */
         .nom-table { width:100%; border-collapse:collapse; font-size:13px; }

@@ -33,6 +33,31 @@ app.json_provider_class = CustomJSONProvider
 app.json = CustomJSONProvider(app)
 CORS(app, origins=['https://inventario-ciego-5bdr.onrender.com'])
 
+# Solicitudes de movimiento entre bodegas (datos en Supabase, no en Azure)
+from movimientos_bodega import bp_movimientos
+app.register_blueprint(bp_movimientos)
+
+# Galeria de evidencias migradas de Airtable (fotos en disco, no en la base)
+from evidencias import bp_evidencias
+app.register_blueprint(bp_evidencias)
+
+# Matriz General de Productos: el maestro de productos, editable desde la app
+from matriz_productos import bp_matriz
+app.register_blueprint(bp_matriz)
+
+# Bodegas: el catalogo, con su vinculo al id que maneja Contifico
+from bodegas import bp_bodegas
+app.register_blueprint(bp_bodegas)
+
+# Catalogo de modulos para el panel de accesos (las 36 pantallas, no 10)
+from permisos import bp_permisos
+app.register_blueprint(bp_permisos)
+
+# Validacion de RUC contra el SRI en vivo: sin BD, sin scraping, sin Render
+from sri_ruc import bp_sri
+app.register_blueprint(bp_sri)
+
+
 @app.after_request
 def add_no_cache_headers(response):
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
@@ -492,6 +517,22 @@ def pagina_establecer_clave():
 
 @app.route('/<path:path>')
 def static_files(path):
+    """Estaticos y, si no, la pantalla que pide la URL.
+
+    Cada vista tiene su ruta (/conteo, /matriz-productos, /retenciones). Como
+    la app es una sola pagina, esas rutas no son archivos: hay que devolver el
+    index y dejar que el front abra la vista. Sin esto, entrar directo a
+    /conteo o recargar con F5 daba 404.
+
+    Se devuelve el index solo cuando el ultimo tramo NO parece un archivo (no
+    tiene punto), asi un .js o .css que falte sigue dando 404 de verdad y no un
+    HTML disfrazado, que es de lo mas dificil de diagnosticar.
+    """
+    completa = os.path.join(app.static_folder, path)
+    if os.path.isfile(completa):
+        return send_from_directory('static', path)
+    if '.' not in path.rsplit('/', 1)[-1]:
+        return index()
     return send_from_directory('static', path)
 
 # ==================== API ====================
@@ -6577,8 +6618,15 @@ def admin_guardar_roles():
         modulos = data.get('modulos', {})
         if rol not in ('subgerente', 'supervisor', 'gerente', 'admin'):
             return jsonify({'error': 'Rol invalido'}), 400
+        # Hay modulos que no se le pueden dar a nadie que no sea admin: desde
+        # ahi se reparten los accesos y se editan los catalogos maestros. Se
+        # filtran aqui y no solo en la pantalla, porque el navegador no es el
+        # lugar donde se decide quien entra a que.
+        from permisos import SOLO_ADMIN
         cur.execute("DELETE FROM goti.rol_modulos WHERE rol = %s", (rol,))
         for mod, perms in modulos.items():
+            if rol != 'admin' and mod in SOLO_ADMIN:
+                continue
             ver = perms.get('ver', False)
             editar = perms.get('editar', False)
             eliminar = perms.get('eliminar', False)
