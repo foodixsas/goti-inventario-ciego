@@ -60,19 +60,11 @@ CATALOGO = [
     ('retenciones', 'Retenciones', [
         ('retenciones',       'Consulta de RUC y calculo'),
     ]),
-    ('vouchers', 'Vouchers', [
-        ('vouchers',          'Consultar vouchers'),
-    ]),
     ('flujocaja', 'Flujo de caja', [
         ('flujo-caja',        'Proyeccion'),
     ]),
     ('costos', 'Costos', [
         ('costos',            'Tablero de costos'),
-    ]),
-    ('nomina', 'Nomina y TTHH', [
-        ('nom-dashboard',     'Dashboard RRHH'),
-        ('nom-empleados',     'Empleados'),
-        ('nom-nomina',        'Liquidacion'),
     ]),
     ('configuracion', 'Configuracion', [
         ('matriz-productos',  'Matriz de productos'),

@@ -175,10 +175,36 @@ async function retConsultar() {
         retEstado.datos = d.datos;
         retEstado.ruc = ruc.trim();
         retPintarFicha(d);
+        retAplicarSugerencia(d.sugerencia);
         retCalcular();
     } catch (e) {
         retEstado.datos = null;
         ficha.innerHTML = `<div class="fd-error">No se pudo consultar: ${retEsc(e.message)}</div>`;
+    }
+}
+
+// En RIMPE el concepto lo define el regimen, no lo que se compro: a un Negocio
+// Popular no se le retiene nada y a un Emprendedor se le retiene 1%. Como en la
+// factura los dos dicen solo "RIMPE", es facil elegir el que no era -- y
+// retenerle a un Negocio Popular es una retencion indebida. Por eso se
+// preselecciona y se avisa.
+function retAplicarSugerencia(sug) {
+    const caja = document.getElementById('ret-sugerencia');
+    const sel = document.getElementById('ret-concepto');
+    if (!caja) return;
+
+    if (!sug) { caja.style.display = 'none'; return; }
+
+    caja.style.display = '';
+    if (sug.codigo && sel) {
+        sel.value = sug.codigo;
+        retConceptoElegido();
+        caja.className = 'ret-sugerencia';
+        caja.innerHTML = `<b>Concepto elegido automaticamente:</b> ${retEsc(sug.motivo)}.
+            Se puede cambiar si corresponde otra cosa.`;
+    } else {
+        caja.className = 'ret-sugerencia ret-sugerencia-duda';
+        caja.innerHTML = retEsc(sug.motivo);
     }
 }
 
@@ -217,7 +243,7 @@ function retPintarFicha(d) {
             </div>
             <div class="ret-grid">
                 ${retDato('Tipo de contribuyente', p.tipo_persona)}
-                ${retDato('Regimen', p.regimen, true)}
+                ${retDato('Regimen', p.regimen_completo || p.regimen, true)}
                 ${retSiNo('Contribuyente especial', p.contribuyente_especial)}
                 ${retSiNo('Agente de retencion', p.agente_retencion)}
                 ${retSiNo('Obligado a contabilidad', p.obligado_contabilidad)}

@@ -60,12 +60,19 @@ def _pedir_al_sri(ruc, timeout):
 def _armar(d, ruc):
     fechas = d.get('informacionFechasContribuyente') or {}
     reps = d.get('representantesLegales') or []
+    # `categoria` llega vacia en el regimen general, pero en RIMPE trae el tipo:
+    # NEGOCIO POPULAR o EMPRENDEDOR. Es la unica forma de distinguirlos, y el
+    # porcentaje depende de eso: Negocio Popular no retiene y Emprendedor va 1%.
+    categoria = (d.get('categoria') or '').strip()
     return {
         'ruc': d.get('numeroRuc', ruc),
         'razon_social': d.get('razonSocial', ''),
         'estado': d.get('estadoContribuyenteRuc', ''),
         'tipo_persona': d.get('tipoContribuyente', ''),
         'regimen': d.get('regimen', ''),
+        'categoria': categoria,
+        'regimen_completo': ('%s - %s' % (d.get('regimen', ''), categoria)
+                             if categoria else d.get('regimen', '')),
         'obligado_contabilidad': d.get('obligadoLlevarContabilidad', 'NO'),
         'agente_retencion': d.get('agenteRetencion', 'NO'),
         'contribuyente_especial': d.get('contribuyenteEspecial', 'NO'),
@@ -124,6 +131,31 @@ def consultar_ruc_detallado(ruc, timeout=10):
 
 def esta_activo(datos):
     return bool(datos) and (datos.get('estado') or '').upper() == 'ACTIVO'
+
+
+def concepto_sugerido(datos):
+    """Concepto que corresponde por el regimen del proveedor, si es que hay uno.
+
+    Solo aplica a RIMPE, porque ahi el concepto lo define el regimen y no lo que
+    se compro: a un Negocio Popular no se le retiene nada y a un Emprendedor se
+    le retiene 1%, sea bien o servicio. En el regimen general el concepto sale
+    de la naturaleza del pago y no hay nada que sugerir.
+
+    Distinguirlos a ojo es facil de errar -- los dos dicen "RIMPE" en la
+    factura -- y el error se paga: retenerle 1% a un Negocio Popular es una
+    retencion indebida.
+    """
+    d = datos or {}
+    if (d.get('regimen') or '').upper().find('RIMPE') < 0:
+        return None
+    categoria = (d.get('categoria') or '').upper()
+    if 'POPULAR' in categoria:
+        return {'codigo': '332', 'motivo': 'RIMPE Negocios Populares: no se retiene IR ni IVA'}
+    if 'EMPRENDEDOR' in categoria:
+        return {'codigo': '343', 'motivo': 'RIMPE Emprendedores: se retiene 1% de IR'}
+    return {'codigo': None,
+            'motivo': 'Es RIMPE pero el SRI no dice de que tipo. Confirmar con el '
+                      'proveedor antes de elegir el concepto.'}
 
 
 def alertas(datos):
@@ -285,7 +317,8 @@ def sri_validar_ruc(ruc):
                                  'probar de nuevo en un momento.'}), 503
 
     return jsonify({'success': True, 'datos': datos,
-                    'activo': esta_activo(datos), 'alertas': alertas(datos)})
+                    'activo': esta_activo(datos), 'alertas': alertas(datos),
+                    'sugerencia': concepto_sugerido(datos)})
 
 
 @bp_sri.route('/api/sri/calcular', methods=['POST'])
@@ -323,4 +356,5 @@ def sri_calcular():
     calculo = calcular_retencion(datos, concepto_cod, subtotal, iva_valor,
                                  d.get('tipo_compra'))
     return jsonify({'success': True, 'datos': datos, 'calculo': calculo,
-                    'activo': esta_activo(datos), 'alertas': alertas(datos)})
+                    'activo': esta_activo(datos), 'alertas': alertas(datos),
+                    'sugerencia': concepto_sugerido(datos)})
