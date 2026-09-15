@@ -57,8 +57,11 @@ CATALOGO = [
         ('mov-solicitud',     'Solicitar movimiento'),
         ('mov-historial',     'Movimientos solicitados'),
     ]),
-    ('retenciones', 'Retenciones', [
-        ('retenciones',       'Consulta de RUC y calculo'),
+    # El id del grupo queda como 'retenciones' (lo usan el menu y rol_modulos);
+    # la etiqueta es 'Facturas' porque es donde se buscan las facturas del SRI.
+    ('retenciones', 'Facturas', [
+        ('retenciones',       'Consulta de RUC y calculo de retencion'),
+        ('sri-facturas',      'Facturas recibidas del SRI'),
     ]),
     ('flujocaja', 'Flujo de caja', [
         ('flujo-caja',        'Proyeccion'),
@@ -71,13 +74,15 @@ CATALOGO = [
         ('bodegas',           'Bodegas'),
         ('config-productos',  'Productos por marca'),
         ('usuarios',          'Usuarios y accesos'),
+        ('sri-credenciales',  'Credenciales del SRI'),
     ]),
 ]
 
 # Modulos que NUNCA se le pueden dar a alguien que no sea administrador: desde
 # ahi se reparten los accesos y se tocan los catalogos maestros. Se muestran en
 # la pantalla, pero bloqueados y explicados.
-SOLO_ADMIN = {'usuarios', 'bodegas', 'matriz-productos', 'config-productos'}
+SOLO_ADMIN = {'usuarios', 'bodegas', 'matriz-productos', 'config-productos',
+              'sri-credenciales'}
 
 TODOS = [m for _, _, mods in CATALOGO for m, _ in mods]
 ETIQUETAS = {m: e for _, _, mods in CATALOGO for m, e in mods}

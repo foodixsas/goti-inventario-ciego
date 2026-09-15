@@ -581,16 +581,21 @@
                     </div>
                 </div>
 
-                <!-- MODULO: RETENCIONES SRI -->
+                <!-- MODULO: FACTURAS (SRI) -->
+                <!-- El id del grupo sigue siendo 'retenciones': lo usan
+                     toggleModule() y goti.rol_modulos. Solo cambia la etiqueta. -->
                 <div class="nav-module" data-module="retenciones">
                     <button class="nav-module-header" onclick="toggleModule('retenciones')">
                         <i class="fas fa-file-invoice-dollar"></i>
-                        <span>Retenciones</span>
+                        <span>Facturas</span>
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
                         <button class="nav-btn" data-view="retenciones" style="display:none;">
                             <i class="fas fa-percent"></i><span>Consulta de RUC</span>
+                        </button>
+                        <button class="nav-btn" data-view="sri-facturas" style="display:none;">
+                            <i class="fas fa-file-invoice"></i><span>Facturas del SRI</span>
                         </button>
                     </div>
                 </div>
@@ -643,6 +648,9 @@
                         </button>
                         <button class="nav-btn" data-view="usuarios" style="display:none;">
                             <i class="fas fa-users-cog"></i><span>Usuarios y Accesos</span>
+                        </button>
+                        <button class="nav-btn" data-view="sri-credenciales" style="display:none;">
+                            <i class="fas fa-key"></i><span>Credenciales SRI</span>
                         </button>
                     </div>
                 </div>
@@ -3114,6 +3122,154 @@
                     <div id="ret-referencia" class="ret-ref-grid"></div>
                 </div>
 
+                <!-- Vista Facturas recibidas del SRI -->
+                <div id="view-sri-facturas" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-file-invoice"></i> Facturas recibidas del SRI</h2>
+                    </div>
+
+                    <div class="fd-filtros">
+                        <div class="form-group" style="margin:0;">
+                            <label class="fd-etiqueta">Desde</label>
+                            <input type="date" id="sf-desde" class="fd-input">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="fd-etiqueta">Hasta</label>
+                            <input type="date" id="sf-hasta" class="fd-input">
+                        </div>
+                        <div class="form-group" style="margin:0;flex:1;min-width:200px;">
+                            <label class="fd-etiqueta">Buscar</label>
+                            <input type="text" id="sf-buscar" class="fd-input"
+                                   placeholder="Proveedor, RUC o serie" style="width:100%;">
+                        </div>
+                        <button type="button" id="sf-btn-consultar" class="btn-primary btn-sm"
+                                style="padding:0 22px;">
+                            <i class="fas fa-search"></i> Consultar
+                        </button>
+                        <button type="button" id="sf-btn-subir" class="btn-primary btn-sm"
+                                style="padding:0 22px;background:#0f766e;">
+                            <i class="fas fa-cloud-arrow-up"></i> Traer del SRI (subir TXT)
+                        </button>
+                        <input type="file" id="sf-archivo" accept=".txt" style="display:none;">
+                        <div class="form-group" style="margin:0;">
+                            <label class="fd-etiqueta">Mes a importar</label>
+                            <input type="month" id="sf-mes-directo" class="fd-input">
+                        </div>
+                        <button type="button" id="sf-btn-directo" class="btn-primary btn-sm"
+                                style="padding:0 22px;background:#7c3aed;"
+                                title="Trae los XML del portal del SRI por HTTP, sin TXT">
+                            <i class="fas fa-bolt"></i> Importar directo del portal
+                        </button>
+                    </div>
+
+                    <div id="sf-aviso" style="display:none;margin-bottom:14px;"></div>
+
+                    <div class="fd-barra">
+                        <span class="fd-conteo" id="sf-resumen">Sin consultar</span>
+                        <span style="flex:1;"></span>
+                        <button type="button" id="sf-btn-cruce" class="btn-primary btn-sm"
+                                style="background:#475569;">
+                            <i class="fas fa-code-compare"></i> Cruzar con Contifico
+                        </button>
+                    </div>
+
+                    <div class="fd-card" style="padding:0;overflow:auto;">
+                        <table class="nom-table" id="sf-tabla">
+                            <thead>
+                                <tr>
+                                    <th>Proveedor</th>
+                                    <th>RUC</th>
+                                    <th>Tipo</th>
+                                    <th>Serie</th>
+                                    <th>Fecha</th>
+                                    <th style="text-align:right;">Subtotal</th>
+                                    <th style="text-align:right;">IVA</th>
+                                    <th style="text-align:right;">Total</th>
+                                    <th style="text-align:center;">Lineas</th>
+                                    <th style="text-align:center;">Ver</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sf-cuerpo">
+                                <tr><td colspan="10">
+                                    <div class="fd-vacio">
+                                        Elegi las fechas y dale Consultar. Para traer un dia nuevo,
+                                        baja el TXT de comprobantes recibidos del portal del SRI y
+                                        subilo con el boton verde: de ahi se piden los XML al SRI y
+                                        se guardan con todo el detalle de linea.
+                                    </div>
+                                </td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Vista Credenciales del SRI -->
+                <div id="view-sri-credenciales" class="view">
+                    <div class="view-header">
+                        <h2><i class="fas fa-key"></i> Credenciales del SRI</h2>
+                    </div>
+
+                    <div id="sc-aviso" style="display:none;margin-bottom:14px;"></div>
+
+                    <div class="fd-card" style="max-width:640px;padding:22px;">
+                        <div id="sc-estado" style="margin-bottom:18px;">
+                            <div class="fd-vacio">Cargando estado...</div>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom:14px;">
+                            <label class="fd-etiqueta">RUC (13 digitos)</label>
+                            <input type="text" id="sc-ruc" class="fd-input" maxlength="13"
+                                   inputmode="numeric" placeholder="1793168604001"
+                                   style="width:100%;">
+                        </div>
+                        <div class="form-group" style="margin-bottom:18px;">
+                            <label class="fd-etiqueta">Clave del portal SRI en Linea</label>
+                            <input type="password" id="sc-clave" class="fd-input"
+                                   placeholder="Se guarda cifrada; nunca se vuelve a mostrar"
+                                   autocomplete="new-password" style="width:100%;">
+                        </div>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <button type="button" id="sc-btn-guardar" class="btn-primary btn-sm"
+                                    style="padding:0 22px;">
+                                <i class="fas fa-floppy-disk"></i> Guardar
+                            </button>
+                            <button type="button" id="sc-btn-probar" class="btn-primary btn-sm"
+                                    style="padding:0 22px;background:#0f766e;">
+                                <i class="fas fa-plug-circle-check"></i> Probar conexion
+                            </button>
+                        </div>
+                        <div style="margin-top:16px;font-size:12px;color:#64748b;line-height:1.6;">
+                            La clave se guarda <strong>cifrada</strong> en la base y la usan la
+                            importacion directa desde el portal y los procesos automaticos.
+                            <em>Probar conexion</em> hace <strong>un solo</strong> intento de login
+                            (el SRI bloquea la cuenta tras varios fallos) y ademas consulta el
+                            catastro publico para confirmar el RUC.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detalle de un comprobante del SRI -->
+                <div id="sf-modal" style="display:none;position:fixed;inset:0;z-index:9000;
+                     background:rgba(15,23,42,0.55);padding:28px;overflow:auto;">
+                    <div class="fd-card" style="max-width:1000px;margin:0 auto;padding:0;">
+                        <div style="display:flex;align-items:center;gap:12px;padding:16px 20px;
+                                    border-bottom:1px solid #e2e8f0;">
+                            <strong id="sf-modal-titulo" style="color:#123450;flex:1;"></strong>
+                            <button type="button" id="sf-modal-pdf" class="btn-primary btn-sm"
+                                    style="background:#b91c1c;">
+                                <i class="fas fa-file-pdf"></i> PDF
+                            </button>
+                            <button type="button" id="sf-modal-xml" class="btn-primary btn-sm"
+                                    style="background:#475569;">
+                                <i class="fas fa-code"></i> XML
+                            </button>
+                            <button type="button" id="sf-modal-cerrar" class="btn-primary btn-sm"
+                                    style="background:#64748b;">Cerrar</button>
+                        </div>
+                        <div id="sf-modal-cuerpo" style="padding:20px;"></div>
+                    </div>
+                </div>
+
             </main>
         </div>
     </div>
@@ -3189,6 +3345,8 @@
     <script src="js/matriz.js?v=20260910i"></script>
     <script src="js/bodegas.js?v=20260910b"></script>
     <script src="js/retenciones.js?v=20260910e"></script>
+    <script src="js/sri-facturas.js?v=20260915a"></script>
+    <script src="js/sri-credenciales.js?v=20260915a"></script>
     <script>
     // La galeria de Caja Chica se carga al entrar a la vista: trae miniaturas
     // y no tiene sentido pedirlas si nadie las va a ver.

@@ -17,7 +17,10 @@ cd /d "%~dp0"
 title Control Contable - local :5055
 
 echo.
-echo   Control Contable  ->  http://127.0.0.1:5055
+REM  El > va escapado como ^>: sin escapar, cmd lo toma como redireccion e
+REM  intenta crear un archivo con la URL por nombre. De ahi salia el error
+REM  "El nombre de archivo, el nombre de directorio o la sintaxis... no son correctos".
+echo   Control Contable  -^>  http://127.0.0.1:5055
 echo   Dejar esta ventana abierta. Ctrl+C para detener.
 echo.
 

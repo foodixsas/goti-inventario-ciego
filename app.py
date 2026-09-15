@@ -57,6 +57,17 @@ app.register_blueprint(bp_permisos)
 from sri_ruc import bp_sri
 app.register_blueprint(bp_sri)
 
+# Facturas recibidas del SRI: XML guardado en base, PDF (RIDE) al vuelo
+from sri_facturas import bp_sri_facturas
+app.register_blueprint(bp_sri_facturas)
+
+# Credenciales del SRI (clave cifrada en goti) y la importacion directa
+# desde el portal por HTTP, sin navegador
+from sri_credenciales import bp_sri_cred
+app.register_blueprint(bp_sri_cred)
+from sri_portal import bp_sri_portal
+app.register_blueprint(bp_sri_portal)
+
 
 @app.after_request
 def add_no_cache_headers(response):

@@ -1576,6 +1576,16 @@ function cambiarVista(viewName, sinHistorial) {
         retInit();
     }
 
+    // Facturas recibidas del SRI: arranca mostrando el dia de ayer
+    if (viewName === 'sri-facturas') {
+        sfInit();
+    }
+
+    // Credenciales del SRI (solo admin)
+    if (viewName === 'sri-credenciales') {
+        scInit();
+    }
+
     // Redireccionar vistas de dashboard vacías al módulo unificado
     if (viewName === 'dashboard') { cambiarVista('dash-general'); return; }
     if (viewName === 'dep-dashboard') { cambiarVista('dash-general'); cambiarDashTab('depositos'); return; }

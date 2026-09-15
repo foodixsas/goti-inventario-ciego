@@ -47,6 +47,17 @@ os.environ.setdefault('PORT', '5055')
 from app import app  # noqa: E402  (el import va despues de fijar el entorno)
 
 if __name__ == '__main__':
+    # En local, nada de cache: si no, cada cambio en index.html o en un .js
+    # obliga a un Ctrl+F5 y parece que el codigo no se aplico. En Render esto
+    # no se toca -- alli la cache si conviene.
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
+    @app.after_request
+    def _sin_cache(resp):
+        resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        return resp
+
     puerto = int(os.environ['PORT'])
     print('Control Contable (local) -> http://127.0.0.1:%d' % puerto)
     print('Supabase: ' + os.environ.get('SUPABASE_URL', '(sin definir)'))
