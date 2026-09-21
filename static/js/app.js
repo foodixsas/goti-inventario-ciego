@@ -1514,6 +1514,11 @@ function cambiarVista(viewName, sinHistorial) {
         tgInit();
     }
 
+    // Auto-inicializar Toma de Locales (modulo propio, tres pantallas)
+    if (viewName === 'toma-locales')   { tlInit(); }
+    if (viewName === 'toma-historico') { tlInitHistorico(); }
+    if (viewName === 'toma-pedidos')   { tlInitPedidos(); }
+
     // Auto-inicializar cuadres de caja
     if (viewName === 'cuadre-registro') { cuadreInit(); }
     if (viewName === 'cuadre-historial' || viewName === 'cuadre-dashboard') {
@@ -1584,6 +1589,11 @@ function cambiarVista(viewName, sinHistorial) {
     // Credenciales del SRI (solo admin)
     if (viewName === 'sri-credenciales') {
         scInit();
+    }
+
+    // Informes de inventario: semanales y mensuales ya emitidos
+    if (viewName === 'informes-inv') {
+        iiInit();
     }
 
     // Redireccionar vistas de dashboard vacías al módulo unificado
@@ -9203,6 +9213,24 @@ function _aplicarVistaImpersonada() {
     // Guardar bodegas impersonadas para que cargarBodegas funcione
     state._impBodegas = imp.bodegas;
     state._impBodega = imp.bodega;
+
+    // Si hay una pantalla de Toma de Locales abierta, volver a dibujarla con
+    // el usuario simulado. Sin esto la pantalla se queda con lo que cargo el
+    // admin -- sus 8 bodegas -- y parece que la simulacion no filtra nada.
+    _refrescarTomaLocales();
+}
+
+/* Vuelve a inicializar la pantalla de Toma de Locales que este activa.
+   Se llama al entrar y al salir de "Ver como...": ese modulo pide sus datos
+   al servidor con el usuario efectivo, asi que un cambio de usuario obliga a
+   preguntar de nuevo. */
+function _refrescarTomaLocales() {
+    const activa = document.querySelector('.view.active');
+    if (!activa) return;
+    const id = activa.id;
+    if (id === 'view-toma-locales'   && typeof tlInit === 'function')          tlInit();
+    if (id === 'view-toma-historico' && typeof tlInitHistorico === 'function') tlInitHistorico();
+    if (id === 'view-toma-pedidos'   && typeof tlInitPedidos === 'function')   tlInitPedidos();
 }
 
 // ============================================================
@@ -10186,6 +10214,10 @@ function salirImpersonacion() {
     document.getElementById('btn-impersonar').value = '';
     document.getElementById('user-name').textContent = state.user.nombre;
     showMainScreen();
+    // Recuperar el acceso propio en la pantalla de Toma de Locales, si esta
+    // abierta: al salir de la simulacion sus datos siguen siendo los del
+    // usuario que se estaba viendo.
+    _refrescarTomaLocales();
 }
 
 // ==================== VOUCHER SCANNER MODULE ====================

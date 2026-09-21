@@ -53,6 +53,13 @@ app.register_blueprint(bp_bodegas)
 from permisos import bp_permisos
 app.register_blueprint(bp_permisos)
 
+# Toma de locales: la captura que vivia en inventario-chiosburger.netlify.app,
+# donde el login estaba escrito en el JavaScript publico. Escribe en las MISMAS
+# tablas public.toma_* / tomasFisicas, asi que el cruce, el worker de Contifico
+# y los informes no se enteran del cambio.
+from toma_locales import bp_toma_locales
+app.register_blueprint(bp_toma_locales)
+
 # Validacion de RUC contra el SRI en vivo: sin BD, sin scraping, sin Render
 from sri_ruc import bp_sri
 app.register_blueprint(bp_sri)
@@ -67,6 +74,10 @@ from sri_credenciales import bp_sri_cred
 app.register_blueprint(bp_sri_cred)
 from sri_portal import bp_sri_portal
 app.register_blueprint(bp_sri_portal)
+
+# Informes de inventario (semanales y mensuales) archivados en la base
+from informes_inventario import bp_informes_inv
+app.register_blueprint(bp_informes_inv)
 
 
 @app.after_request

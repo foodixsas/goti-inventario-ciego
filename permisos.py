@@ -35,11 +35,21 @@ CATALOGO = [
         ('cruce',             'Cruce operativo'),
         ('bajas',             'Bajas'),
         ('semanal',           'Semanal'),
+        ('informes-inv',      'Informes semanales y mensuales'),
         ('evaluacion',        'Evaluacion'),
         ('correccion',        'Corregir conteos'),
         ('descuentos-nomina', 'Descuentos de nomina'),
         ('carga-locales',     'Carga de locales'),
         ('telegram-avisos',   'Avisos de Telegram'),
+    ]),
+    # Toma de locales: modulo propio, no una pantalla de Inventario. Viene de
+    # una aplicacion aparte (inventario-chiosburger.netlify.app) y conserva su
+    # identidad, con sus tres pantallas administrables por separado: se puede
+    # dar el conteo a un local sin darle el historico de todas las bodegas.
+    ('toma', 'Toma de locales', [
+        ('toma-locales',      'Conteo'),
+        ('toma-historico',    'Historial de tomas'),
+        ('toma-pedidos',      'Pedidos del dia'),
     ]),
     ('depositos', 'Depositos', [
         ('dep-pendientes',    'Pendientes'),

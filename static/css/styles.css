@@ -7368,3 +7368,588 @@ table, .kpi-valor, .kpi-value, input[type="number"] {
    traia su propio .page a pantalla completa. Adentro de Control Contable el
    fondo y el alto los pone el layout. --- */
 #view-retenciones .page-ret { min-height: 0; background: transparent; padding: 0; }
+
+/* ===================================================================
+   TOMA DE LOCALES
+   Anclado al toolkit FOODIX v2 (skills/foodix-design). Ningun valor
+   suelto: todo sale de los tokens de :root. Las reglas duras que
+   manda este bloque, y por que:
+
+     - Card analitica: radio 12px (--radius-card) + --shadow-subtle +
+       borde --border-card. NO se mezcla con el nivel hero de 24px.
+     - Inputs y botones: pill (--radius-pill), 44px de alto (40 el
+       small). Nada de rectangulos de 6px.
+     - El numero grande va en 26px weight 300 y --text-dark. Un valor
+       hero en bold esta mal segun el sistema.
+     - Semantica de color cerrada: --success teal = positivo real,
+       --danger rojo = negativo, --warning ambar = alerta. El rosa
+       --accent es "lo actual", no significa bueno ni malo.
+     - tabular-nums en TODO numero, para que las columnas no bailen.
+     - Sin gradientes decorativos, sin glass, sin texturas.
+     - Focus visible teal #1D9E75.
+   =================================================================== */
+
+.tl-ayuda {
+    color: var(--text-gray);
+    font-size: .875rem;
+    margin-bottom: 16px;
+}
+
+/* --- Las dos cifras de cabecera: valor hero 26px / 300 --- */
+.tl-cifras {
+    display: flex; justify-content: flex-end; gap: 28px;
+    padding-bottom: 14px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--border-light);
+}
+.tl-cifra { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.tl-cifra small {
+    font-size: .75rem; color: var(--text-gray);
+    letter-spacing: .01em;
+}
+.tl-cifra span {
+    font-size: 26px; font-weight: 300; line-height: 1;
+    color: var(--text-dark);
+    font-variant-numeric: tabular-nums;
+}
+.tl-cifra .ok { color: var(--success); }     /* teal = positivo real */
+.tl-cifra .warn { color: var(--warning); }   /* ambar = alerta, no rojo */
+
+.tl-encabezado { margin-bottom: 16px; }
+.tl-encabezado h3 {
+    margin: 0 0 2px;
+    color: var(--text-dark);
+    font-size: 1.05rem; font-weight: 600;
+}
+
+/* --- Card analitica: 12px + shadow-subtle + borde de card --- */
+.tl-card-filtros,
+.tl-bodega-btn,
+.tl-item {
+    background: var(--bg-white);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-subtle);
+}
+
+.tl-card-filtros { padding: 18px; margin-bottom: 18px; }
+.tl-card-filtros h4 {
+    margin: 0 0 14px;
+    color: var(--text-dark);
+    font-size: .95rem; font-weight: 600;
+}
+
+/* --- Selector de bodegas --- */
+.tl-bodegas {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(224px, 1fr));
+    gap: 12px;
+}
+.tl-bodega-btn {
+    display: flex; align-items: center; gap: 12px;
+    padding: 18px 18px;
+    cursor: pointer; text-align: left;
+    color: var(--text-dark); font-size: .95rem; font-weight: 500;
+    transition: border-color .15s, box-shadow .15s;
+}
+.tl-bodega-btn:hover {
+    border-color: var(--primary-light);
+    box-shadow: var(--shadow-md);
+}
+.tl-bodega-btn:focus-visible { outline: 2px solid #1D9E75; outline-offset: 2px; }
+.tl-bodega-btn i { color: var(--primary-light); font-size: 1.15rem; }
+.tl-acciones-pie { margin-top: 24px; }
+
+/* --- Barra de pantalla --- */
+.tl-barra {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 0 14px; margin-bottom: 14px;
+    border-bottom: 1px solid var(--border-light);
+}
+.tl-titulo { display: flex; flex-direction: column; line-height: 1.3; }
+.tl-titulo strong { color: var(--text-dark); font-weight: 600; }
+.tl-fecha { font-size: .8rem; color: var(--text-gray); }
+.tl-barra > .btn:nth-last-child(-n+2) { margin-left: auto; }
+.tl-barra > .btn + .btn { margin-left: 0; }
+
+/* --- Metricas de sesion: mismo valor hero 26/300 --- */
+.tl-metricas {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 10px; margin-bottom: 16px;
+}
+.tl-metrica {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 12px 8px;
+    background: var(--bg-white);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-subtle);
+}
+.tl-metrica span {
+    font-size: 26px; font-weight: 300; line-height: 1;
+    color: var(--text-dark);
+    font-variant-numeric: tabular-nums;
+}
+.tl-metrica small { font-size: .72rem; color: var(--text-gray); }
+
+/* --- Filtros: inputs pill de 44px --- */
+.tl-filtros {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+.tl-filtros-fechas { margin-top: 10px; }
+
+.tl-card-filtros .obs-filtro-input,
+.tl-filtros .obs-filtro-input,
+.tl-filtros .btn {
+    height: 44px;
+    border-radius: var(--radius-pill);
+    padding: 0 18px;
+}
+.tl-card-filtros .obs-filtro-input,
+.tl-filtros .obs-filtro-input {
+    border: 1px solid var(--border);
+    background: var(--bg-white);
+    color: var(--text-dark);
+    font-size: .875rem;
+}
+.tl-card-filtros .obs-filtro-input:focus,
+.tl-filtros .obs-filtro-input:focus {
+    outline: none;
+    border-color: var(--action);              /* azul de accion del sistema */
+    box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+.tl-switches {
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    margin-top: 12px;
+    font-size: .875rem; color: var(--text-dark);
+}
+.tl-switches label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+/* --- Tablas --- */
+.tl-tabla { width: 100%; font-variant-numeric: tabular-nums; }
+.tl-tabla code {
+    background: var(--bg-alt); color: var(--text-dark);
+    padding: 2px 8px; border-radius: var(--radius-sm);
+    font-size: .8rem;
+}
+.tl-acciones { display: flex; gap: 6px; white-space: nowrap; }
+.tl-acciones .btn { border-radius: var(--radius-pill); height: 34px; padding: 0 14px; }
+
+/* --- Responsive: el body nunca se desplaza en horizontal --- */
+@media (max-width: 860px) {
+    .tl-item { flex-direction: column; align-items: stretch; gap: 12px; }
+    .tl-item-campos { justify-content: space-between; align-items: flex-end; }
+    .tl-conteos { flex: 1; }
+    .tl-campo { flex: 1; }
+    .tl-cap, .tl-pedir { width: 100%; min-width: 56px; }
+    .tl-item-total { min-width: 72px; }
+}
+@media (max-width: 720px) {
+    .tl-cifras { justify-content: space-around; gap: 12px; }
+    .tl-barra > .btn:nth-last-child(-n+2) { margin-left: 0; }
+    /* La tabla scrollea dentro de su caja, no arrastra la pagina */
+    .tl-tabla { display: block; overflow-x: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tl-bodega-btn { transition: none; }
+}
+
+/* --- Modal de edicion: card analitica sobre velo neutro --- */
+.tl-modal-fondo {
+    position: fixed; inset: 0; z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+    background: rgba(26, 58, 92, .45);   /* navy de texto con alfa, sin blur */
+}
+.tl-modal {
+    width: 100%; max-width: 480px;
+    max-height: 90vh; overflow-y: auto;
+    background: var(--bg-white);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-lg);
+}
+.tl-modal-cab {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid var(--border-light);
+}
+.tl-modal-cab h3 {
+    margin: 0; font-size: 1rem; font-weight: 600; color: var(--text-dark);
+}
+.tl-modal-x {
+    width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none;
+    border-radius: var(--radius-pill);
+    color: var(--text-gray); cursor: pointer;
+}
+.tl-modal-x:hover { background: var(--bg-alt); color: var(--text-dark); }
+
+.tl-modal-cuerpo { padding: 18px 20px; }
+.tl-modal-prod {
+    margin: 0 0 2px; font-size: .95rem; font-weight: 600; color: var(--text-dark);
+}
+.tl-modal-meta { margin: 0 0 16px; font-size: .78rem; color: var(--text-gray); }
+
+.tl-modal-actual {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px; padding: 14px;
+    margin-bottom: 18px;
+    background: var(--bg-alt);
+    border-radius: var(--radius-card);
+}
+.tl-modal-actual > div { display: flex; flex-direction: column; gap: 4px; }
+.tl-modal-actual small { font-size: .7rem; color: var(--text-gray); }
+/* Valor hero: 26px weight 300, nunca bold */
+.tl-modal-actual strong {
+    font-size: 26px; font-weight: 300; line-height: 1;
+    color: var(--text-dark); font-variant-numeric: tabular-nums;
+}
+.tl-modal-actual code {
+    font-size: .82rem; color: var(--text-dark);
+    background: var(--bg-white); padding: 4px 8px;
+    border-radius: var(--radius-sm);
+}
+
+.tl-modal-campo { display: block; margin-bottom: 14px; }
+.tl-modal-campo span {
+    display: block; margin-bottom: 6px;
+    font-size: .78rem; color: var(--text-gray);
+}
+.tl-modal-campo input {
+    width: 100%; height: 44px; padding: 0 18px;
+    font-size: .925rem; color: var(--text-dark);
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    font-variant-numeric: tabular-nums;
+}
+.tl-modal-campo input:focus {
+    outline: none; border-color: var(--action);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+.tl-modal-pie {
+    display: flex; justify-content: flex-end; gap: 10px;
+    padding: 14px 20px 18px;
+    border-top: 1px solid var(--border-light);
+}
+.tl-modal-pie .btn { height: 44px; border-radius: var(--radius-pill); padding: 0 22px; }
+
+@media (max-width: 480px) {
+    .tl-modal-pie { flex-direction: column-reverse; }
+    .tl-modal-pie .btn { width: 100%; }
+}
+
+/* -------------------------------------------------------------------
+   PANTALLA DE CONTEO
+   Tamanos y alineacion calcados del sistema original; colores y formas
+   anclados al toolkit. Donde el original usa morado y gradientes, aqui
+   va el navy de marca y superficies planas del sistema.
+   ------------------------------------------------------------------- */
+
+/* Volver al inicio: pill de 44px, alineado a la izquierda */
+.tl-volver {
+    display: inline-flex; align-items: center; gap: 10px;
+    height: 44px; padding: 0 22px; margin-bottom: 20px;
+    background: var(--bg-white);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-subtle);
+    color: var(--text-dark); font-size: .925rem; font-weight: 500;
+    cursor: pointer;
+}
+.tl-volver:hover { border-color: var(--primary-light); box-shadow: var(--shadow-md); }
+.tl-volver:focus-visible { outline: 2px solid #1D9E75; outline-offset: 2px; }
+
+/* Cabecera de bodega: icono 88px, nombre grande, cifra a la derecha */
+.tl-hero {
+    display: flex; align-items: center; gap: 24px;
+    padding: 28px 32px; margin-bottom: 20px;
+    background: var(--bg-white);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-hero);      /* card hero: 24px */
+    box-shadow: var(--shadow-card, var(--shadow-md));
+}
+.tl-hero-icono {
+    flex: 0 0 auto;
+    width: 88px; height: 88px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--primary);             /* navy de marca, sin gradiente */
+    border-radius: 20px;
+    color: #FFFFFF; font-size: 2.1rem;
+}
+.tl-hero-txt { flex: 1; min-width: 0; }
+.tl-hero-txt h2 {
+    margin: 0 0 4px;
+    font-size: 2.15rem; font-weight: 700; line-height: 1.1;
+    color: var(--text-dark);
+}
+.tl-hero-txt p { margin: 0; font-size: 1rem; color: var(--text-gray); }
+.tl-hero-cifra {
+    flex: 0 0 auto; display: flex; flex-direction: column;
+    align-items: flex-end; gap: 4px;
+}
+.tl-hero-cifra small { font-size: .875rem; color: var(--text-gray); }
+/* La cifra grande del original; en el toolkit el valor hero va en 300 */
+.tl-hero-cifra span {
+    font-size: 2.6rem; font-weight: 300; line-height: 1;
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Dos botones de modo, mitad y mitad */
+.tl-modos, .tl-ordenes {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 16px; margin-bottom: 16px;
+}
+.tl-modo, .tl-orden {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    height: 52px; padding: 0 24px;
+    background: var(--bg-white);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-subtle);
+    color: var(--text-dark); font-size: .95rem; font-weight: 500;
+    cursor: pointer;
+    transition: border-color .15s, color .15s;
+}
+.tl-modo:hover, .tl-orden:hover { border-color: var(--primary-light); }
+.tl-modo.activo, .tl-orden.activo {
+    border-color: var(--primary);
+    color: var(--primary); font-weight: 600;
+    background: var(--bg-alt);
+}
+.tl-modo:focus-visible, .tl-orden:focus-visible {
+    outline: 2px solid #1D9E75; outline-offset: 2px;
+}
+.tl-orden { font-size: 1rem; }
+.tl-orden i:first-child { color: var(--text-gray); }
+.tl-orden i:last-child { color: var(--text-gray); font-size: .85rem; }
+
+/* Barra de avance segmentada por tipo + chip de tiempo */
+.tl-progreso {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 12px 16px; margin-bottom: 12px;
+    background: var(--bg-white);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-subtle);
+    font-size: .78rem; color: var(--text-gray);
+    font-variant-numeric: tabular-nums;
+}
+.tl-pg-conteo { font-weight: 600; color: var(--text-dark); margin-right: 4px; }
+.tl-pg-tipo { font-weight: 700; }
+.tl-pg-barra {
+    flex: 1; min-width: 60px; height: 8px;
+    background: var(--bg-alt);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+}
+.tl-pg-barra i { display: block; height: 100%; border-radius: var(--radius-pill); }
+/* Rampa azul del sistema para series ordenadas A -> B -> C */
+.tl-pg-a { color: #0C447C; }
+.tl-pg-a i { background: #0C447C; }
+.tl-pg-b { color: var(--primary-light); }
+.tl-pg-b i { background: var(--primary-light); }
+.tl-pg-c { color: #7FB3E3; }
+.tl-pg-c i { background: #7FB3E3; }
+.tl-pg-pct { min-width: 32px; }
+.tl-pg-total { font-weight: 700; color: var(--primary); margin-left: 4px; }
+.tl-pg-punto {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--border);
+}
+.tl-pg-punto.ok { background: var(--success); }
+.tl-pg-reloj {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 12px;
+    background: var(--bg-alt);
+    border-radius: var(--radius-pill);
+    color: var(--text-dark);
+}
+
+/* Buscador + Limpiar + V.2 */
+.tl-buscador {
+    display: grid; grid-template-columns: 1fr 200px 200px;
+    gap: 12px; margin-bottom: 20px;
+}
+.tl-buscador input {
+    height: 44px; padding: 0 20px;
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    color: var(--text-dark); font-size: .925rem;
+}
+.tl-buscador input:focus {
+    outline: none; border-color: var(--action);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.tl-aux {
+    height: 44px;
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    color: var(--text-gray); font-size: .925rem; cursor: pointer;
+}
+.tl-aux:hover { border-color: var(--primary-light); color: var(--text-dark); }
+
+/* -------- Tarjeta de producto: vertical y grande, como el original -------- */
+.tl-lista { display: flex; flex-direction: column; gap: 20px; }
+
+.tl-item {
+    position: relative;
+    display: block;
+    padding: 26px 28px 0;
+    background: var(--bg-white);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-hero);
+    box-shadow: var(--shadow-subtle);
+}
+/* El estado se lee en el borde completo, como en el original */
+.tl-item-pendiente { border-color: var(--danger); }
+.tl-item-hecho { border-color: var(--success); }
+.tl-item-cero { border-color: var(--warning); }
+
+/* Badge que sobresale por la esquina superior derecha */
+.tl-badge {
+    position: absolute; top: -13px; right: 24px;
+    height: 26px; padding: 0 16px;
+    display: inline-flex; align-items: center;
+    border-radius: var(--radius-pill);
+    font-size: .72rem; font-weight: 700; letter-spacing: .02em;
+    color: #FFFFFF;
+    background: var(--danger);
+}
+.tl-item-hecho .tl-badge { background: var(--success); }
+.tl-item-cero .tl-badge { background: var(--warning); }
+
+.tl-item-nombre {
+    margin: 0 0 8px;
+    font-size: 1.35rem; font-weight: 700; line-height: 1.2;
+    color: var(--text-dark); text-transform: uppercase;
+}
+.tl-item-meta {
+    margin: 0 0 22px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: .875rem;
+}
+.tl-meta-cat { color: var(--text-gray); }
+.tl-meta-sep { color: var(--border); }
+.tl-meta-cod { color: var(--primary-light); font-weight: 600; }
+.tl-meta-tipo { color: var(--accent); font-weight: 600; }
+.tl-item-equiv {
+    margin: -14px 0 20px;
+    font-size: .8rem; color: var(--text-gray);
+}
+.tl-item-equiv b { color: var(--text-dark); font-weight: 600; }
+
+/* Las cuatro columnas iguales: Conteo 1 | 2 | 3 | Total */
+.tl-rejilla {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 18px; margin-bottom: 24px;
+}
+.tl-celda { display: flex; flex-direction: column; gap: 10px; }
+.tl-celda label {
+    text-align: center;
+    font-size: .875rem; color: var(--text-gray);
+}
+/* Campo grande y centrado, 64px de alto como el original */
+.tl-cap {
+    width: 100%; height: 64px; padding: 0 16px;
+    text-align: center;
+    font-size: 1.15rem; color: var(--text-dark);
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    font-variant-numeric: tabular-nums;
+}
+.tl-cap:focus {
+    outline: none; border-color: var(--action);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+/* El Total es lectura: mismo tamano, fondo suave, sin borde de input */
+.tl-total-caja {
+    height: 64px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: var(--bg-alt);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+}
+.tl-total-caja b {
+    font-size: 1.15rem; font-weight: 700; color: var(--primary);
+    font-variant-numeric: tabular-nums;
+}
+.tl-total-caja span { font-size: .875rem; color: var(--text-gray); }
+
+/* Cantidad a pedir: banda inferior separada, como el original */
+.tl-pedido {
+    margin: 0 -28px; padding: 20px 28px 24px;
+    background: var(--bg-light);
+    border-top: 1px solid var(--border-light);
+    border-radius: 0 0 var(--radius-hero) var(--radius-hero);
+}
+.tl-pedido > label {
+    display: block; margin-bottom: 10px;
+    font-size: .875rem; color: var(--text-gray);
+}
+.tl-pedido-fila { display: grid; grid-template-columns: 1fr 240px; gap: 16px; }
+.tl-pedir {
+    width: 100%; height: 56px; padding: 0 22px;
+    font-size: 1.05rem; color: var(--text-dark);
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    font-variant-numeric: tabular-nums;
+}
+.tl-pedir:focus {
+    outline: none; border-color: var(--action);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.tl-pedido-uni {
+    height: 56px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-alt);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    color: var(--text-dark); font-size: .925rem;
+}
+
+/* Vista compacta (el boton V.2 del original) */
+.tl-lista-compacta { gap: 12px; }
+.tl-lista-compacta .tl-item { padding: 18px 22px 0; }
+.tl-lista-compacta .tl-item-nombre { font-size: 1.05rem; margin-bottom: 4px; }
+.tl-lista-compacta .tl-item-equiv { display: none; }
+.tl-lista-compacta .tl-item-meta { margin-bottom: 14px; font-size: .8rem; }
+.tl-lista-compacta .tl-rejilla { gap: 12px; margin-bottom: 16px; }
+.tl-lista-compacta .tl-cap,
+.tl-lista-compacta .tl-total-caja { height: 48px; font-size: 1rem; }
+.tl-lista-compacta .tl-celda label { font-size: .75rem; }
+.tl-lista-compacta .tl-pedido { margin: 0 -22px; padding: 14px 22px 18px; }
+.tl-lista-compacta .tl-pedir,
+.tl-lista-compacta .tl-pedido-uni { height: 44px; }
+
+/* -------------------------- Responsive -------------------------- */
+@media (max-width: 900px) {
+    .tl-buscador { grid-template-columns: 1fr; }
+    .tl-hero { flex-wrap: wrap; gap: 18px; padding: 22px; }
+    .tl-hero-txt h2 { font-size: 1.7rem; }
+    .tl-hero-cifra { width: 100%; align-items: flex-start; }
+}
+@media (max-width: 720px) {
+    .tl-modos, .tl-ordenes { grid-template-columns: 1fr; gap: 10px; }
+    /* Dos y dos: en un telefono, cuatro columnas dejan campos de 60px */
+    .tl-rejilla { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .tl-pedido-fila { grid-template-columns: 1fr; }
+    .tl-item { padding: 22px 18px 0; }
+    .tl-pedido { margin: 0 -18px; padding: 16px 18px 20px; }
+    .tl-hero-icono { width: 64px; height: 64px; font-size: 1.6rem; }
+}
+
+/* Fecha de la toma bajo el nombre del local, en el resumen de pedidos */
+.tl-metrica-fecha { font-size: .66rem; opacity: .75; }
