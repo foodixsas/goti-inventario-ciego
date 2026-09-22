@@ -276,6 +276,9 @@ function fc_renderTabla() {
     // Total Ingresos
     html += fc_renderFilaTotalIngresos();
 
+    // Total Disponible (Saldo Inicial + Total Ingresos)
+    html += fc_renderFilaTotalDisponible();
+
     // ============ EGRESOS ============
     html += fc_renderSeccion('EGRESOS', 'row-section');
     html += fc_renderEgresos();
@@ -523,6 +526,22 @@ function fc_renderFilaTotalIngresos() {
             html += `<td class="dia-col sem-${sem.num}${sab} monto fc-total-ingresos-dia" data-fecha="${dia}" style="background:#c8e6c9 !important;">-</td>`;
         });
         html += `<td class="dia-col sem-${sem.num} total-col monto fc-total-ingresos-total" data-semana="${sem.num}" style="background:#c8e6c9 !important;">-</td>`;
+    });
+    html += '</tr>';
+    return html;
+}
+
+// Total Disponible = Saldo Inicial Total + Total Ingresos del dia
+function fc_renderFilaTotalDisponible() {
+    let html = `<tr class="row-total" style="background:#b2dfdb !important;"><td class="col-concepto" style="background:#b2dfdb !important; font-weight:bold;">TOTAL DISPONIBLE (SALDO INICIAL + INGRESOS)</td>`;
+    html += '<td class="col-saldo" style="background:#b2dfdb !important;"></td><td class="col-dias" style="background:#fff3e0 !important;"></td>';
+    fc_semanas.forEach(sem => {
+        html += `<td class="col-semana sem-${sem.num}-header monto fc-total-disponible-sem" data-semana="${sem.num}" style="background:#b2dfdb !important;">-</td>`;
+        sem.dias.forEach((dia, i) => {
+            const sab = i === 5 ? ' dia-sab' : (i === 6 ? ' dia-dom' : '');
+            html += `<td class="dia-col sem-${sem.num}${sab} monto fc-total-disponible-dia" data-fecha="${dia}" style="background:#b2dfdb !important;">-</td>`;
+        });
+        html += `<td class="dia-col sem-${sem.num} total-col monto fc-total-disponible-total" data-semana="${sem.num}" style="background:#b2dfdb !important;">-</td>`;
     });
     html += '</tr>';
     return html;
@@ -1045,6 +1064,11 @@ function fc_recalcularFlujoYSaldos() {
             flujoCell.style.color = flujo < 0 ? '#c62828' : '#2e7d32';
         }
 
+        // Total Disponible = saldo inicial del dia + ingresos del dia
+        // (aqui saldoProdubanco/saldoPichincha todavia son el saldo inicial del dia)
+        const dispCell = document.querySelector(`.fc-total-disponible-dia[data-fecha="${fecha}"]`);
+        if (dispCell) dispCell.textContent = fc_formatMonto(saldoProdubanco + saldoPichincha + ingresos);
+
         // Actualizar saldos por banco
         saldoProdubanco = saldoProdubanco + ingresosProdubanco - egresosProdubanco;
         saldoPichincha = saldoPichincha + ingresosPichincha - egresosPichincha;
@@ -1123,6 +1147,15 @@ function fc_recalcularFlujoYSaldos() {
         // Saldo inicial semana (total)
         const siSemCell = document.querySelector(`.fc-saldo-total-sem[data-semana="${sem.num}"]`);
         if (siSemCell) siSemCell.textContent = fc_formatMonto(primerSaldoTotal || 0);
+
+        // Total Disponible semana = saldo inicial de la semana + ingresos de la semana
+        const ingSemCell = document.querySelector(`.fc-total-ingresos-sem[data-semana="${sem.num}"]`);
+        const ingresosSem = ingSemCell && ingSemCell.textContent !== '-' ? parseFloat(ingSemCell.textContent.replace(/,/g, '')) || 0 : 0;
+        const disponibleSem = (primerSaldoTotal || 0) + ingresosSem;
+        const dispSemCell = document.querySelector(`.fc-total-disponible-sem[data-semana="${sem.num}"]`);
+        if (dispSemCell) dispSemCell.textContent = fc_formatMonto(disponibleSem);
+        const dispTotalCell = document.querySelector(`.fc-total-disponible-total[data-semana="${sem.num}"]`);
+        if (dispTotalCell) dispTotalCell.textContent = fc_formatMonto(disponibleSem);
 
         // Flujo semana
         const flujoSemCell = document.querySelector(`.fc-flujo-sem[data-semana="${sem.num}"]`);
@@ -3276,6 +3309,80 @@ function fc_aplicarRecurrencia() {
 
 // ============ FACTURAS POR PROVEEDOR ============
 let fc_facturas_data = {}; // key: rowId -> [{num, fecha, monto, vencimiento, fecha_pago}]
+
+// ============ FECHA DE ANALISIS DE VENCIDOS ============
+// "Vencido" se mide contra esta fecha, no contra hoy: al pararse en la celda de
+// un dia en EGRESOS, chips, notas, decision y el modal muestran lo vencido HASTA
+// ese dia. null = hoy (comportamiento normal).
+let fc_fechaAnalisis = null; // 'YYYY-MM-DD'
+
+function fc_hoyLocalStr() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function fc_fechaAnalisisEsHoy() {
+    return !fc_fechaAnalisis || fc_fechaAnalisis === fc_hoyLocalStr();
+}
+function fc_hoyAnalisis() {
+    const d = fc_fechaAnalisis ? new Date(fc_fechaAnalisis + 'T12:00:00') : new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+}
+function fc_fmtFechaCorta(fechaStr) {
+    const meses = ['','ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+    const diasSem = ['Dom','Lun','Mar','Mie','Jue','Vie','Sab'];
+    const d = new Date(fechaStr + 'T12:00:00');
+    return `${diasSem[d.getDay()]} ${d.getDate()}-${meses[d.getMonth()+1]}`;
+}
+
+// Al enfocar la celda de un dia en una fila de egresos, esa fecha manda.
+document.addEventListener('focusin', (e) => {
+    const inp = e.target;
+    if (!inp.classList || !inp.classList.contains('fc-input')) return;
+    const fecha = inp.dataset.fecha;
+    if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return;
+    if (!inp.closest('[class*="fc-egreso-item-"]')) return;
+    fc_setFechaAnalisis(fecha);
+});
+
+function fc_setFechaAnalisis(fecha) {
+    const nueva = (fecha === fc_hoyLocalStr()) ? null : fecha;
+    if (nueva === fc_fechaAnalisis) { fc_indicadorFechaAnalisis(); return; }
+    fc_fechaAnalisis = nueva;
+    fc_refrescarVencidos();
+}
+
+function fc_volverAHoy() {
+    if (fc_fechaAnalisis === null) return;
+    fc_fechaAnalisis = null;
+    fc_refrescarVencidos();
+}
+
+// Refresca chips y notas de vencido de todas las filas SIN recalcular la grilla
+// (recalcular entero redibuja el panel de liquidez y roba el foco).
+function fc_refrescarVencidos() {
+    document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
+        if (row.dataset.fcRowId) fc_actualizarBadgeFacturas(row);
+    });
+    fc_indicadorFechaAnalisis();
+}
+
+// Pildora flotante que avisa contra que fecha se estan midiendo los vencidos
+function fc_indicadorFechaAnalisis() {
+    let ind = document.getElementById('fc-ind-fecha-analisis');
+    if (fc_fechaAnalisisEsHoy()) { if (ind) ind.remove(); return; }
+    if (!ind) {
+        ind = document.createElement('div');
+        ind.id = 'fc-ind-fecha-analisis';
+        ind.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;background:#7c3aed;color:#fff;'
+            + 'padding:6px 12px;border-radius:16px;font-size:12px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.25);'
+            + 'display:flex;align-items:center;gap:8px;';
+        document.body.appendChild(ind);
+    }
+    ind.innerHTML = `Vencidos medidos al <b>${fc_fmtFechaCorta(fc_fechaAnalisis)}</b>`
+        + `<button onclick="fc_volverAHoy()" style="background:rgba(255,255,255,.25);border:none;color:#fff;`
+        + `border-radius:10px;padding:1px 8px;cursor:pointer;font-size:11px;font-weight:700;">Volver a hoy</button>`;
+}
 let fc_row_id_counter = 1000;
 
 function fc_getFacturas(rowId) {
@@ -3368,8 +3475,9 @@ async function fc_abrirFacturas(row) {
     let totalVigentes = 0;
     let cantVigentes = 0;
 
-    const hoy = new Date();
-    hoy.setHours(0,0,0,0);
+    // "Vencido" contra la fecha de analisis (celda del dia enfocada); sin ella, hoy
+    const hoy = fc_hoyAnalisis();
+    const sufijoAl = fc_fechaAnalisisEsHoy() ? '' : ` &middot; al ${fc_fmtFechaCorta(fc_fechaAnalisis)}`;
 
     // Obtener dias de credito del item (columna DIAS)
     const diasCredito = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
@@ -3405,10 +3513,10 @@ async function fc_abrirFacturas(row) {
         `<tr class="fc-fac-separador"><td colspan="8" style="background:${fondo};color:${color};font-size:10px;font-weight:700;letter-spacing:.4px;padding:5px 8px;border-top:2px solid ${color};border-bottom:1px solid ${color}33;">${texto}</td></tr>`;
     let sepPuesto = false;
     if (sepVencidas > 0) {
-        facturasHtml += _sepHtml(`VENCIDAS (${sepVencidas}) &middot; $${_fmt(sepVencidasMonto)} &mdash; de la mas antigua a la mas reciente`, '#dc2626', '#fef2f2');
+        facturasHtml += _sepHtml(`VENCIDAS (${sepVencidas}) &middot; $${_fmt(sepVencidasMonto)}${sufijoAl} &mdash; de la mas antigua a la mas reciente`, '#dc2626', '#fef2f2');
     } else {
         sepPuesto = true; // no hay vencidas: el separador de "por vencer" va arriba igual
-        if (sepPorVencer > 0) facturasHtml += _sepHtml(`POR VENCER (${sepPorVencer}) &middot; $${_fmt(sepPorVencerMonto)}`, '#16a34a', '#f0fdf4');
+        if (sepPorVencer > 0) facturasHtml += _sepHtml(`POR VENCER (${sepPorVencer}) &middot; $${_fmt(sepPorVencerMonto)}${sufijoAl}`, '#16a34a', '#f0fdf4');
     }
 
     facturas.forEach((fac, idx) => {
@@ -3444,7 +3552,8 @@ async function fc_abrirFacturas(row) {
                 else if (diff > 30) claseVencido = 'fc-venc-alto';
                 else claseVencido = 'fc-venc-medio';
             } else if (diff === 0) {
-                diasVencido = 'Hoy';
+                // Si se analiza otro dia, "Hoy" confunde: vence el dia analizado
+                diasVencido = fc_fechaAnalisisEsHoy() ? 'Hoy' : '0d';
                 claseVencido = 'fc-venc-medio';
             } else {
                 diasVencido = `${Math.abs(diff)}d`;
@@ -3464,7 +3573,7 @@ async function fc_abrirFacturas(row) {
         if (!sepPuesto && !(fechaVencReal && new Date(fechaVencReal + 'T12:00:00') < hoy)) {
             sepPuesto = true;
             if (sepPorVencer > 0) {
-                facturasHtml += _sepHtml(`POR VENCER (${sepPorVencer}) &middot; $${_fmt(sepPorVencerMonto)}`, '#16a34a', '#f0fdf4');
+                facturasHtml += _sepHtml(`POR VENCER (${sepPorVencer}) &middot; $${_fmt(sepPorVencerMonto)}${sufijoAl}`, '#16a34a', '#f0fdf4');
             }
         }
 
@@ -3768,8 +3877,7 @@ function fc_actualizarBadgeFacturas(row) {
     // Vencido y dias vencidos a la vista, sin tener que abrir el modal.
     // Solo cuenta lo que NO tiene fecha de pago programada, y descuenta abonos.
     const diasCred = parseInt(row.querySelector('.fc-input-dias')?.value) || 0;
-    const hoyChip = new Date();
-    hoyChip.setHours(0, 0, 0, 0);
+    const hoyChip = fc_hoyAnalisis();
     const nombreProv = row.querySelector('.fc-input-nombre')?.value || '';
     const ficha = fc_buscarProveedorBD(nombreProv);
     let montoVencido = 0, maxDias = 0, pendienteRow = 0;
@@ -3825,7 +3933,8 @@ function fc_actualizarBadgeFacturas(row) {
         const color = maxDias > 60 ? '#dc2626' : (maxDias > 30 ? '#ea580c' : '#ca8a04');
         chip.textContent = `$${montoVencido.toLocaleString('en-US', {maximumFractionDigits: 0})} - ${maxDias}d`;
         chip.title = `Vencido sin programar: $${montoVencido.toLocaleString('en-US', {minimumFractionDigits: 2})}`
-                   + ` | la mas antigua tiene ${maxDias} dias vencidos`;
+                   + ` | la mas antigua tiene ${maxDias} dias vencidos`
+                   + (fc_fechaAnalisisEsHoy() ? '' : ` | medido al ${fc_fmtFechaCorta(fc_fechaAnalisis)}`);
         chip.style.cssText = 'margin-left:6px;font-size:9px;font-weight:700;color:#fff;'
                            + `background:${color};padding:1px 5px;border-radius:8px;white-space:nowrap;vertical-align:middle;`;
     } else if (chip) {
@@ -4658,8 +4767,7 @@ const FC_AP_PESO   = { A: 4, B: 3, C: 2, D: 1, E: 0 };
 // cargadas en la grilla (misma fuente que los chips de la fila).
 function fc_saldosPorProveedor() {
     const mapa = {};
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    const hoy = fc_hoyAnalisis();
     document.querySelectorAll('[class*="fc-egreso-item-"]').forEach(row => {
         const rowId = row.dataset.fcRowId;
         if (!rowId) return;

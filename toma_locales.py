@@ -432,19 +432,88 @@ def toma_bodegas():
             _release_db(conn)
 
 
+def _extras_fuera_matriz(cur, bodega, ya_estan):
+    """
+    Productos que esa bodega SI esta contando pero la matriz no ofrece.
+
+    Existe para que apagar Airtable no borre productos vivos de la hoja de
+    conteo. Se mira la ULTIMA toma de esa bodega y se devuelve lo que no venga
+    ya en el catalogo de la matriz.
+
+    Por que la ultima toma y no una ventana de dias: con 60 dias la red
+    rescataba 13 productos en vez de 8, porque revivia cosas que se habian
+    retirado de la matriz A PROPOSITO (materia_prima traia 6 asi). La ultima
+    toma es exactamente "lo que esta bodega cuenta hoy", y hace que la red se
+    limpie sola: en cuanto un producto deja de contarse, deja de aparecer.
+
+    Cada fila sale con `fuera_matriz: True` para que la pantalla lo pueda
+    señalar: no es un producto normal, es uno al que le falta el flag (o la
+    ficha entera) en la Matriz de Productos.
+    """
+    cfg = BODEGAS[bodega]
+    forma = cfg['forma']
+
+    if forma == 'tf':
+        sql = """
+            SELECT DISTINCT ON (cod_prod)
+                   cod_prod AS codigo, productos AS producto, categoria,
+                   "Tipo A,B o C" AS tipo_abc, unidad, uni_bod
+            FROM public."tomasFisicas"
+            WHERE local = %s AND cod_prod IS NOT NULL
+              AND fecha::text = (SELECT MAX(fecha::text) FROM public."tomasFisicas"
+                                  WHERE local = %s)
+            ORDER BY cod_prod, fecha::text DESC
+        """
+        cur.execute(sql, (cfg['local'], cfg['local']))
+    else:
+        col_cant_uni = COL_UNIDAD[forma]
+        # uni_bod solo existe en la forma 'b'
+        uni_bod = 'uni_bod' if forma == 'b' else 'NULL::text AS uni_bod'
+        sql = f"""
+            SELECT DISTINCT ON (codigo)
+                   codigo, producto, categoria,
+                   "Tipo A,B o C" AS tipo_abc, {col_cant_uni} AS unidad, {uni_bod}
+            FROM {cfg['tabla']}
+            WHERE codigo IS NOT NULL
+              AND fecha::text = (SELECT MAX(fecha::text) FROM {cfg['tabla']})
+            ORDER BY codigo, fecha::text DESC
+        """
+        cur.execute(sql)
+
+    extras = []
+    for r in cur.fetchall():
+        if r['codigo'] in ya_estan:
+            continue
+        r['equivalencia'] = None
+        r['fuera_matriz'] = True
+        extras.append(r)
+    return extras
+
+
 @bp_toma_locales.route('/api/toma/catalogo', methods=['GET'])
 def toma_catalogo():
     """
     Productos a contar en una bodega.
 
-    El API viejo pegaba a Airtable DESDE EL NAVEGADOR con el token incrustado en
-    el bundle publico. Aqui el token vive en la variable de entorno
-    AIRTABLE_TOKEN de Render y nunca sale del servidor.
+    La fuente es `goti.gfc_matriz_productos` y NADA MAS. Airtable quedo fuera a
+    proposito (22-sep-2026): sus tablas se van a borrar, y el API viejo ademas
+    pegaba a Airtable DESDE EL NAVEGADOR con el token incrustado en el bundle
+    publico. Aqui el catalogo sale de la misma base que ya edita el modulo
+    Matriz de Productos, asi que lo que Jonathan cambia ahi se ve aqui al
+    instante y no hay token que revocar ni servicio de terceros que se caiga.
 
-    Segunda etapa (despues del corte): servir esto desde
-    goti.gfc_matriz_productos, que ya tiene los 1264 productos y los flags
-    conteo_* por bodega. Se deja el camino preparado con el parametro
-    ?fuente=matriz para poder compararlos en paralelo antes de cambiar.
+    La matriz trae un flag y una unidad POR BODEGA (conteo_chios /
+    unidad_conteo_chios, etc.), asi que el catalogo sale filtrado a lo que de
+    verdad se cuenta en ese sitio.
+
+    RED DE SEGURIDAD: si un producto se conto en esa bodega en los ultimos 60
+    dias pero la matriz no lo ofrece, igual aparece, marcado con
+    `fuera_matriz: true`. Sin esto, al apagar Airtable se caian de la hoja de
+    conteo productos vivos: al 22-sep-2026 eran DEAL071 y DEAL072 (no existen
+    en la matriz), COND012 y MPC020 (existen, sin ningun flag encendido),
+    DEAL009 (falta el flag de santo_cachon) y QL021 (falta el de chios).
+    La red evita perderlos; el arreglo de fondo es corregir la matriz, y
+    mientras tanto el marcador deja ver cuales faltan.
     """
     bodega = request.args.get('bodega')
     conn = None
@@ -453,52 +522,40 @@ def toma_catalogo():
         if err:
             return err
 
-        if request.args.get('fuente') == 'matriz':
-            # OJO con los nombres: en gfc_matriz_productos la columna del tipo
-            # se llama `tipo_a_b_o_c`, NO "Tipo A,B o C" como en las tablas
-            # toma_*. Son dos convenciones distintas en la misma base.
-            #
-            # La matriz trae un flag y una unidad POR BODEGA
-            # (conteo_chios / unidad_conteo_chios, etc.), asi que el catalogo
-            # sale filtrado a lo que de verdad se cuenta en ese sitio.
-            cfg_m = BODEGAS[bodega]['matriz']
-            flag = 'conteo_%s' % cfg_m
-            uni = 'unidad_conteo_%s' % cfg_m
-            cur = conn.cursor()
-            cur.execute(f"""
-                SELECT codigo,
-                       nombre_producto AS producto,
-                       categoria,
-                       tipo_a_b_o_c AS tipo_abc,
-                       {uni} AS unidad,
-                       unidad_contifico AS uni_bod,
-                       equivalencias_inventarios AS equivalencia
-                FROM goti.gfc_matriz_productos
-                WHERE estado = 'Activo' AND {flag} IS TRUE
-                ORDER BY categoria, nombre_producto
-            """)
-            return jsonify({'fuente': 'matriz', 'productos': cur.fetchall()})
+        cfg = BODEGAS[bodega]
 
-        token = os.environ.get('AIRTABLE_TOKEN')
-        if not token:
-            return jsonify({
-                'error': 'AIRTABLE_TOKEN no configurado en el servidor',
-                'detalle': 'Definir la variable en Render antes de usar esta fuente'
-            }), 503
+        # OJO con los nombres: en gfc_matriz_productos la columna del tipo se
+        # llama `tipo_a_b_o_c`, NO "Tipo A,B o C" como en las tablas toma_*.
+        # Son dos convenciones distintas en la misma base.
+        cfg_m = cfg['matriz']
+        flag = 'conteo_%s' % cfg_m
+        uni = 'unidad_conteo_%s' % cfg_m
 
-        import requests
-        base = os.environ.get('AIRTABLE_BASE_ID', '')
-        tabla = os.environ.get('AIRTABLE_TABLE_ID', '')
-        r = requests.get(
-            f'https://api.airtable.com/v0/{base}/{tabla}',
-            headers={'Authorization': f'Bearer {token}'},
-            timeout=30,
-        )
-        if r.status_code != 200:
-            print(f"Airtable respondio {r.status_code}")
-            return jsonify({'error': 'No se pudo leer el catalogo'}), 502
-        registros = r.json().get('records', [])
-        return jsonify({'fuente': 'airtable', 'productos': [x.get('fields', {}) for x in registros]})
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT codigo,
+                   nombre_producto AS producto,
+                   categoria,
+                   tipo_a_b_o_c AS tipo_abc,
+                   {uni} AS unidad,
+                   unidad_contifico AS uni_bod,
+                   equivalencias_inventarios AS equivalencia
+            FROM goti.gfc_matriz_productos
+            WHERE estado = 'Activo' AND {flag} IS TRUE
+            ORDER BY categoria, nombre_producto
+        """)
+        productos = cur.fetchall()
+        for p in productos:
+            p['fuera_matriz'] = False
+
+        extras = _extras_fuera_matriz(cur, bodega, {p['codigo'] for p in productos})
+        productos.extend(extras)
+
+        return jsonify({
+            'fuente': 'matriz',
+            'productos': productos,
+            'fuera_matriz': [e['codigo'] for e in extras],
+        })
 
     except Exception as e:
         _log_error("/api/toma/catalogo", e)

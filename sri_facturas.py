@@ -155,6 +155,32 @@ def envolver_autorizacion(xml, clave, estado='AUTORIZADO', fecha_aut='',
                                   ambiente or '', normalizar(xml))
 
 
+def desenvolver_autorizacion(texto):
+    """Inverso de `envolver_autorizacion`: (comprobante, estado, fecha_aut).
+
+    El portal y el web service entregan el sobre <autorizacion> con el
+    comprobante dentro del CDATA de <comprobante>. Ahi `infoTributaria` es
+    TEXTO, no un elemento, asi que `desmenuzar_xml` no encuentra nada y la
+    cabecera sale vacia con cero lineas de detalle. Hay que desenvolverlo antes
+    de guardar. Si el texto ya viene desnudo se devuelve igual.
+    """
+    t = normalizar(texto)
+    m = re.search(r'<comprobante>(.*?)</comprobante>', t, re.S)
+    cuerpo = m.group(1) if m else t
+    cd = re.search(r'<!\[CDATA\[(.*?)\]\]>', cuerpo, re.S)
+    xml = (cd.group(1) if cd else cuerpo).strip()
+    if not xml.startswith('<'):
+        # algunos emisores escapan el comprobante en vez de usar CDATA
+        xml = (xml.replace('&lt;', '<').replace('&gt;', '>')
+                  .replace('&quot;', '"').replace('&apos;', "'")
+                  .replace('&amp;', '&'))
+    me = re.search(r'<estado>(.*?)</estado>', t)
+    mf = re.search(r'<fechaAutorizacion>(.*?)</fechaAutorizacion>', t)
+    return (xml,
+            me.group(1).strip() if me else 'AUTORIZADO',
+            mf.group(1).strip() if mf else '')
+
+
 def pedir_xml_al_sri(clave, timeout=45):
     """Devuelve (estado, xml, fecha_autorizacion). No necesita login ni token."""
     req = urllib.request.Request(
@@ -243,18 +269,35 @@ def desmenuzar_xml(xml, clave):
     credito y retencion: los tres comparten `infoTributaria`."""
     raiz = ET.fromstring(normalizar(xml).encode('utf-8'))
     trib = raiz.find('.//infoTributaria')
-    info = raiz.find('.//infoFactura')
-    if info is None:
-        info = raiz.find('.//infoNotaCredito')
-    if info is None:
-        info = raiz.find('.//infoCompRetencion')
+    # Cada tipo de comprobante nombra distinto su bloque de cabecera. Faltaban
+    # los dos ultimos: sin ellos la liquidacion de compra y la nota de debito
+    # entraban sin fecha de emision ni importe.
+    info = None
+    for etiqueta in ('infoFactura', 'infoNotaCredito', 'infoCompRetencion',
+                     'infoLiquidacionCompra', 'infoNotaDebito'):
+        info = raiz.find('.//' + etiqueta)
+        if info is not None:
+            break
 
     cod_doc = _txt(trib, 'codDoc')
     estab, pto, sec = (_txt(trib, 'estab'), _txt(trib, 'ptoEmi'),
                        _txt(trib, 'secuencial'))
 
     total_sin = _num(_txt(info, 'totalSinImpuestos'))
+    # Cada tipo nombra distinto su total: la factura usa importeTotal, la nota
+    # de credito valorModificacion y la retencion no trae total (se suma de
+    # sus impuestos retenidos mas abajo).
     importe = _num(_txt(info, 'importeTotal'))
+    if importe is None:
+        importe = _num(_txt(info, 'valorModificacion'))   # nota de credito
+    if importe is None:
+        importe = _num(_txt(info, 'valorTotal'))          # nota de debito
+    if importe is None:
+        ret = [_num(_txt(i, 'valorRetenido'))
+               for i in raiz.findall('.//impuesto')]
+        ret = [v for v in ret if v is not None]
+        if ret:
+            importe = sum(ret)
 
     # El IVA no viene como campo suelto: se suma de totalConImpuestos.
     iva = 0.0
@@ -327,7 +370,17 @@ def guardar(cur, xml, clave, estado, origen='txt_sri', fecha_aut=''):
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
         ON CONFLICT (clave_acceso) DO UPDATE SET
             tipo_comprobante    = EXCLUDED.tipo_comprobante,
+            cod_doc             = EXCLUDED.cod_doc,
             serie               = EXCLUDED.serie,
+            -- Estas cinco faltaban en el UPDATE: al re-guardar un comprobante
+            -- que ya existia se refrescaba la fecha y los valores pero el
+            -- emisor quedaba con lo viejo (o en NULL si entro sin parsear).
+            ruc_emisor          = EXCLUDED.ruc_emisor,
+            razon_social_emisor = EXCLUDED.razon_social_emisor,
+            nombre_comercial    = EXCLUDED.nombre_comercial,
+            identificacion_receptor = EXCLUDED.identificacion_receptor,
+            dir_establecimiento = EXCLUDED.dir_establecimiento,
+            ambiente            = EXCLUDED.ambiente,
             fecha_emision       = EXCLUDED.fecha_emision,
             fecha_autorizacion  = COALESCE(NULLIF(EXCLUDED.fecha_autorizacion, ''),
                                            goti.gfc_sri_comprobantes.fecha_autorizacion),

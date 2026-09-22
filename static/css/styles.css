@@ -7953,3 +7953,12 @@ table, .kpi-valor, .kpi-value, input[type="number"] {
 
 /* Fecha de la toma bajo el nombre del local, en el resumen de pedidos */
 .tl-metrica-fecha { font-size: .66rem; opacity: .75; }
+
+/* Producto que la bodega cuenta pero la Matriz de Productos no ofrece.
+   Aparece por la red de seguridad del catalogo: sin ella se habria perdido al
+   apagar Airtable. El ambar es el de alerta del toolkit -- no es un error,
+   es un aviso de que a ese producto le falta el flag en la matriz. */
+.tl-meta-fuera {
+    color: #BA7517;
+    font-weight: 500;
+}

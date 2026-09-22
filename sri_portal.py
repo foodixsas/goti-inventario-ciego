@@ -187,6 +187,23 @@ def _valor_de_opcion(html, nombre_select, texto):
     return None
 
 
+def _boton_consulta(html):
+    """Id del boton que dispara la consulta, leido del formulario.
+
+    El portal ya lo renombro una vez. Se buscan los nombres conocidos y, si no
+    aparece ninguno, cualquier submit del formulario que no sea "Anterior".
+    """
+    for conocido in ('frmPrincipal:btnBuscar', 'frmPrincipal:btnConsultarSinRe',
+                     'frmPrincipal:btnConsultar'):
+        if 'id="%s"' % conocido in html:
+            return conocido
+    for m in re.finditer(r'<input[^>]*id="(frmPrincipal:[^"]+)"[^>]*>', html):
+        etiqueta = m.group(0)
+        if 'submit' in etiqueta and 'Anterior' not in etiqueta:
+            return m.group(1)
+    return 'frmPrincipal:btnBuscar'
+
+
 def _consultar(s, url_form, html, anio, mes, tipo):
     """POST minimo de la consulta. (respuesta, error, filtros_usados)."""
     todos = _campos_del_form(html)
@@ -208,28 +225,46 @@ def _consultar(s, url_form, html, anio, mes, tipo):
     datos['frmPrincipal:dia'] = (_valor_de_opcion(html, 'frmPrincipal:dia',
                                                   'Todos') or '')
     datos['frmPrincipal:cmbTipoComprobante'] = v_tipo
-    datos['frmPrincipal:btnConsultarSinRe'] = 'Consultar'
+    # El boton de consulta se LEE de la pagina, no se escribe a mano. El portal
+    # lo renombro (`btnConsultarSinRe` -> `btnBuscar`) y con el nombre viejo el
+    # POST no dispara la busqueda: vuelve el formulario en blanco, que este
+    # codigo leia como "mes sin datos" y marcaba el periodo completo. Asi se
+    # perdieron 197 de 285 periodos sin que nada avisara.
+    datos[_boton_consulta(html)] = 'Consultar'
     datos['frmPrincipal'] = 'frmPrincipal'
     r = s.post(url_form, data=datos, timeout=120,
                headers={'Content-Type': 'application/x-www-form-urlencoded',
                         'Referer': url_form,
                         'Origin': 'https://srienlinea.sri.gob.ec'})
+    # El boton no forma parte de los filtros: reenviarlo en la descarga
+    # volveria a lanzar la consulta en vez de entregar el XML.
     filtros = {k: v for k, v in datos.items()
-               if k not in ('javax.faces.ViewState',
-                            'frmPrincipal:btnConsultarSinRe')}
+               if k != 'javax.faces.ViewState'
+               and not k.startswith('frmPrincipal:btn')}
     return r, None, filtros
 
 
 def _filas(html):
-    """[(id_del_enlace, clave_acceso)] de la tabla de resultados."""
+    """[(id_del_enlace, clave_acceso)] de la tabla de resultados.
+
+    La clave se lee de la CELDA que tiene exactamente 49 digitos. Buscarla con
+    un regex sobre la fila entera daba claves CORRIDAS: el RUC del emisor
+    (13 digitos, celda anterior) pegado a la clave forma una cadena mas larga y
+    el regex arrancaba en el RUC, devolviendo 49 digitos que no son la clave.
+    Con eso el dedupe no reconocia lo ya descargado y se repetia todo.
+    """
     salida = []
     for fila in re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.S):
         mid = re.search(r'id="(frmPrincipal:tablaCompRecibidos:\d+:lnkXml)"', fila)
         if not mid:
             continue
-        texto = re.sub(r'<[^>]+>', ' ', fila)
-        mc = CLAVE49.search(texto.replace(' ', ''))
-        salida.append((mid.group(1), mc.group(1) if mc else None))
+        clave = None
+        for celda in re.findall(r'<td[^>]*>(.*?)</td>', fila, re.S):
+            texto = re.sub(r'\s+', '', re.sub(r'<[^>]+>', ' ', celda))
+            if len(texto) == 49 and texto.isdigit():
+                clave = texto
+                break
+        salida.append((mid.group(1), clave))
     return salida
 
 

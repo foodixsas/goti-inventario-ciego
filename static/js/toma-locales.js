@@ -420,7 +420,7 @@ async function tlAbrirBodega(clave) {
     tlFiltro = ''; tlCategoria = ''; tlTipo = ''; tlSoloCero = false;
     tlCargando('Cargando productos...');
     try {
-        const p = new URLSearchParams(tlCred({ bodega: clave, fuente: 'matriz' }));
+        const p = new URLSearchParams(tlCred({ bodega: clave }));
         const r = await fetch(`${CONFIG.API_URL}/api/toma/catalogo?` + p);
         if (!r.ok) {
             const err = await r.json().catch(() => ({}));
@@ -683,6 +683,8 @@ function tlItemHtml(p) {
             <span class="tl-meta-cod">Codigo: ${tlEsc(cod)}</span>
             ${p.tipo_abc ? `<span class="tl-meta-sep">·</span>
                 <span class="tl-meta-tipo">Tipo: ${tlEsc(p.tipo_abc)}</span>` : ''}
+            ${p.fuera_matriz ? `<span class="tl-meta-sep">·</span>
+                <span class="tl-meta-fuera" title="Se cuenta aqui pero no esta marcado en la Matriz de Productos">Fuera de matriz</span>` : ''}
         </p>
         ${p.equivalencia ? `<p class="tl-item-equiv">
             <b>Equivalencia:</b> ${tlEsc(p.equivalencia)}</p>` : ''}
