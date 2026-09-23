@@ -8174,15 +8174,58 @@ def flujo_caja_guardar():
         egresos = json.dumps(egresos_dict)
         usuario = data.get('usuario', 'admin')
 
-        # PROTECCION contra perdida de datos: si los egresos entrantes no traen
-        # ningun valor/saldo/dias/deuda, NO sobrescribir egresos ya guardados.
-        egresos_entrantes_vacios = not any(
-            (it.get('valores') or it.get('saldo') or it.get('dias') or it.get('deuda'))
-            for items in egresos_dict.values() for it in items
-        )
-
         conn = fc_get_movimientos_db()
         cur = conn.cursor()
+
+        # ===================================================================
+        # PROTECCION CONTRA PERDIDA DE DATOS
+        #
+        # Habia una sola red: si TODOS los egresos entrantes venian vacios, no
+        # se sobrescribia. Esa red es demasiado gruesa. El 22-sep-2026 las
+        # semanas 39 a 42 llegaron con arriendos, nomina, servicios y tarjetas
+        # llenos y con los proveedores en cero -- 98 principales y 11
+        # eventuales por semana. Como el resto traia datos, el guardado no era
+        # "vacio" y paso derecho: se perdieron los proveedores de cuatro
+        # semanas.
+        #
+        # Ahora la comparacion es CATEGORIA POR CATEGORIA. Si una categoria
+        # tenia datos y llega sin ninguno, se conserva la guardada y se
+        # informa en la respuesta. Una categoria que se queda vacia sola casi
+        # siempre es un error de la pantalla, no una decision: para quitar un
+        # item de verdad existe la baja (fc_egresos_eliminados), que respeta
+        # el historico.
+        # ===================================================================
+        def _tiene_datos(items):
+            """Si algun item trae valor, saldo, dias o deuda."""
+            for it in (items or []):
+                if not isinstance(it, dict):
+                    continue
+                if (it.get('valores') or it.get('saldo')
+                        or it.get('dias') or it.get('deuda')):
+                    return True
+            return False
+
+        cur.execute('SELECT egresos FROM flujo_caja_guardado'
+                    ' WHERE fecha_semana = %s', (fecha_semana,))
+        _fila = cur.fetchone()
+        _previo = (_fila[0] if _fila else None) or {}
+        if not isinstance(_previo, dict):
+            _previo = {}
+
+        conservadas = []
+        for _cat, _viejos in _previo.items():
+            if _tiene_datos(_viejos) and not _tiene_datos(egresos_dict.get(_cat)):
+                egresos_dict[_cat] = _viejos
+                conservadas.append({'categoria': _cat, 'items': len(_viejos)})
+        if conservadas:
+            egresos = json.dumps(egresos_dict)
+            print('[flujo-caja] %s: se conservaron categorias que llegaron vacias: %s'
+                  % (fecha_semana, ', '.join(c['categoria'] for c in conservadas)))
+
+        # La red gruesa se queda como segunda linea, por si la fila no existia
+        egresos_entrantes_vacios = not any(
+            _tiene_datos(items) for items in egresos_dict.values()
+        )
 
         # Upsert: insertar o actualizar si ya existe.
         # Si los egresos entrantes estan vacios y la fila existente tiene datos,
@@ -8214,7 +8257,13 @@ def flujo_caja_guardar():
         row_id = cur.fetchone()[0]
         conn.commit()
 
-        return jsonify({'ok': True, 'id': row_id, 'mensaje': f'Semana {semana_num} guardada'})
+        resp = {'ok': True, 'id': row_id, 'mensaje': f'Semana {semana_num} guardada'}
+        if conservadas:
+            resp['conservadas'] = conservadas
+            resp['aviso'] = ('No se guardo el vaciado de: '
+                             + ', '.join(c['categoria'] for c in conservadas)
+                             + '. Se conservo lo que ya estaba.')
+        return jsonify(resp)
 
     except Exception as e:
         import traceback

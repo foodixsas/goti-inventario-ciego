@@ -2520,6 +2520,8 @@ async function fc_guardarDatos() {
     // Detalle de facturas por semana de cartera: se manda UNA vez al final,
     // no dentro de los egresos de cada semana (evita 4 copias de lo mismo)
     const detalleCartera = {};
+    // Categorias que el servidor se nego a vaciar, por semana
+    const avisosConservados = [];
     try {
         // Guardar cada semana por separado
         for (const sem of semanas) {
@@ -2675,6 +2677,16 @@ async function fc_guardarDatos() {
                 const err = await response.json();
                 throw new Error(err.error || 'Error al guardar');
             }
+
+            // El servidor avisa si una categoria llego vacia y tenia datos: en
+            // vez de borrarla la conserva. Hay que verlo, no enterarse la
+            // semana siguiente cuando ya no estan los proveedores.
+            const respGuardar = await response.json().catch(() => ({}));
+            if (respGuardar && respGuardar.conservadas) {
+                avisosConservados.push(`Semana ${semanaNum}: `
+                    + respGuardar.conservadas
+                        .map(c => `${c.categoria} (${c.items} items)`).join(', '));
+            }
         }
 
         // Devolver a la cartera de cada semana el detalle de facturas editado
@@ -2695,9 +2707,27 @@ async function fc_guardarDatos() {
             }
         }
 
-        alert('Datos guardados correctamente'
-              + (detalleOk ? `
-Facturas guardadas en ${detalleOk} proveedor(es)` : ''));
+        let msg = 'Datos guardados correctamente';
+        if (detalleOk) {
+            msg += `
+Facturas guardadas en ${detalleOk} proveedor(es)`;
+        }
+        // El servidor se nego a vaciar una categoria que tenia datos. Hay que
+        // enterarse ahora, no la semana siguiente cuando falten los proveedores.
+        if (avisosConservados.length) {
+            msg += `
+
+OJO: estas categorias llegaron VACIAS y NO se borraron.
+Se conservo lo que ya estaba guardado:
+
+${avisosConservados.join(`
+`)}
+
+Si de verdad querias quitar un item, usa la baja (boton X), que respeta
+el historico. Si no, vuelve a consultar la semana: lo mas probable es
+que la pantalla no haya cargado bien.`;
+        }
+        alert(msg);
 
     } catch (error) {
         console.error('Error guardando:', error);
