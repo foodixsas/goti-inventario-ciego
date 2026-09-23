@@ -8911,13 +8911,88 @@ def flujo_caja_cartera_semana_guardar():
                 VALUES %s''', filas, page_size=500,
                 template='(%s, %s, %s, %s, %s, %s::jsonb)')
         conn.commit()
-        return jsonify({'ok': True, 'guardados': len(filas), 'reemplazados': borradas})
+
+        nuevos = _fc_dar_alta_rucs_nuevos(cur, filas)
+        conn.commit()
+
+        return jsonify({'ok': True, 'guardados': len(filas),
+                        'reemplazados': borradas, 'proveedores_nuevos': nuevos})
     except Exception as e:
         if conn: conn.rollback()
         import traceback; traceback.print_exc()
         return jsonify({'error': str(e)}), 500
     finally:
         if conn: fc_release_movimientos_db(conn)
+
+
+def _fc_dar_alta_rucs_nuevos(cur, filas):
+    """Crea en fc_proveedores los RUC de la cartera que todavia no estan.
+
+    El RUC es la identidad del proveedor: es lo unico que no cambia y es lo
+    que amarra la cartera con la matriz. Si llega uno nuevo y nadie lo da de
+    alta, ese proveedor queda sin ficha -- sin dias de credito, sin datos
+    bancarios -- y la cartera lo arrastra semana tras semana.
+
+    El nombre NO se copia del archivo: ahi viene la abreviatura de uso interno.
+    Se consulta el catastro del SRI, que es la fuente legal de la razon social.
+    Si el SRI no responde o el RUC no existe, se usa el nombre del archivo y la
+    ficha queda marcada para revisar; nunca se deja de crear al proveedor.
+
+    Devuelve la lista de los creados, para avisarlo en pantalla.
+    """
+    from sri_ruc import consultar_ruc
+
+    rucs = {}
+    for _sem, nombre, ruc, _s, _f, _d in filas:
+        if ruc and len(ruc) in (10, 13):
+            rucs.setdefault(ruc if len(ruc) == 13 else ruc + '001', nombre)
+    if not rucs:
+        return []
+
+    cur.execute("SELECT left(regexp_replace(ruc,'[^0-9]','','g'), 10)"
+                " FROM public.fc_proveedores"
+                " WHERE coalesce(btrim(ruc),'') <> ''")
+    ya = set(r[0] for r in cur.fetchall())
+
+    creados = []
+    for ruc, nombre in rucs.items():
+        if ruc[:10] in ya:
+            continue
+        razon, estado, tipo, regimen = nombre, None, None, None
+        try:
+            d = consultar_ruc(ruc)
+            if d and d.get('razon_social'):
+                razon = (d['razon_social'] or '').strip()
+                estado = (d.get('estado') or '').upper() or None
+                tipo = d.get('tipo_persona') or None
+                regimen = d.get('regimen') or None
+        except Exception as e:
+            print('[cartera] el SRI no contesto por %s: %s' % (ruc, str(e)[:60]))
+
+        # El nombre es UNICO. Si ya existe con otro RUC, no se pisa: se crea con
+        # el RUC detras para distinguirlo y que alguien lo revise.
+        cur.execute('SELECT 1 FROM public.fc_proveedores'
+                    ' WHERE upper(btrim(nombre)) = upper(btrim(%s))', (razon,))
+        if cur.fetchone():
+            razon = '%s (%s)' % (razon, ruc)
+
+        try:
+            cur.execute('INSERT INTO public.fc_proveedores'
+                        ' (nombre, razon_social, nombre_comercial, ruc,'
+                        '  tipo_proveedor, sri_estado, sri_tipo_persona,'
+                        '  sri_regimen, sri_verificado_en, created_at, updated_at)'
+                        ' VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now(), now(), now())',
+                        (razon, razon if estado else None,
+                         nombre if nombre.upper() != razon.upper() else None,
+                         ruc, 'EVENTUAL', estado or 'NO VERIFICADO',
+                         tipo, regimen))
+            creados.append({'ruc': ruc, 'nombre': razon, 'estado': estado})
+            ya.add(ruc[:10])
+        except Exception as e:
+            print('[cartera] no se pudo crear %s: %s' % (ruc, str(e)[:80]))
+    if creados:
+        print('[cartera] dados de alta desde el SRI: %d' % len(creados))
+    return creados
 
 
 @app.route('/api/flujo-caja/cartera-semana/detalle', methods=['POST'])

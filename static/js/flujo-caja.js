@@ -2109,9 +2109,14 @@ async function fc_cargarDatosGuardados() {
             const dCart = await resCart.json();
             if (dCart.ok) fc_cartera_semanas = dCart.semanas || {};
         } catch (e) { console.error('Error cargando cartera por semana:', e); }
+        // Dos indices por semana: el RUC y el nombre. El RUC es el bueno --
+        // no cambia nunca -- y el nombre queda de respaldo para las filas de
+        // cartera que todavia no lo tienen.
         const carteraSet = {};
+        const carteraRuc = {};
         Object.entries(fc_cartera_semanas).forEach(([sem, lista]) => {
             carteraSet[sem] = new Set(lista.map(p => fc_normalizarNombre(p.proveedor)));
+            carteraRuc[sem] = new Set(lista.map(p => fc_soloDigitos(p.ruc)).filter(Boolean));
         });
         // Una semana sin cartera registrada conserva el comportamiento anterior
         // (no se filtra nada), asi no se vacian semanas que nunca se cargaron.
@@ -2134,8 +2139,8 @@ async function fc_cargarDatosGuardados() {
                         // proveedor no viene en el archivo de esa semana, sus valores de
                         // esa semana no se arrastran (cada semana es unica).
                         if (FC_GRUPOS_PROV.has(grupo) && hayCartera) {
-                            const setSem = carteraSet[fechaSemana];
-                            if (setSem && !setSem.has(fc_normalizarNombre(item.nombre))) return;
+                            if (!fc_enCartera(carteraRuc[fechaSemana],
+                                              carteraSet[fechaSemana], item)) return;
                         }
 
                         // Items dados de baja: si la baja rige desde antes de la vista,
@@ -2147,7 +2152,7 @@ async function fc_cargarDatosGuardados() {
                         // Buscar si ya existe este item por nombre
                         let existente = egresosConsolidados[grupo].find(e => e.nombre === item.nombre);
                         if (!existente) {
-                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, valores: {}, pagados: {}, facturas: [], eliminadoDesde: elimDesde || null };
+                            existente = { nombre: item.nombre, banco: item.banco, deuda: item.deuda || 0, saldo: item.saldo || 0, dias: item.dias || 0, ruc: item.ruc || '', valores: {}, pagados: {}, facturas: [], eliminadoDesde: elimDesde || null };
                             egresosConsolidados[grupo].push(existente);
                         }
                         // Consolidar valores (fechas) — sin dias posteriores a la baja
@@ -2170,6 +2175,8 @@ async function fc_cargarDatosGuardados() {
                         } else if ((item.facturas || []).length > (existente.facturas || []).length) {
                             existente.facturas = item.facturas;
                         }
+                        // El RUC no se pierde: si alguna semana lo tiene, se queda
+                        if (item.ruc && !existente.ruc) existente.ruc = item.ruc;
                         // Actualizar banco, deuda, saldo y dias si vienen
                         if (item.banco) existente.banco = item.banco;
                         if (item.deuda) existente.deuda = item.deuda;
@@ -2192,6 +2199,8 @@ async function fc_cargarDatosGuardados() {
         // Todos los proveedores que alguna semana visible tiene en su cartera
         const carteraTodas = new Set();
         Object.values(carteraSet).forEach(set => set.forEach(n => carteraTodas.add(n)));
+        const carteraTodasRuc = new Set();
+        Object.values(carteraRuc).forEach(set => set.forEach(r => carteraTodasRuc.add(r)));
         if (enVista.size) {
             let descartados = 0;
             for (const grupo of Object.keys(egresosConsolidados)) {
@@ -2313,6 +2322,9 @@ async function fc_cargarDatosGuardados() {
                         nuevos.push({
                             nombre: p.proveedor, banco: 'produbanco', deuda: 0,
                             saldo: p.saldo || 0,
+                            // El RUC viene de la cartera; si esa fila no lo trae,
+                            // se busca en la matriz de proveedores.
+                            ruc: fc_soloDigitos(p.ruc || (provBD && provBD.ruc) || ''),
                             dias: provBD ? (provBD.dias_credito || 0) : 0,
                             valores: {}, eliminadoDesde: null
                         });
@@ -2466,10 +2478,10 @@ async function fc_cargarDatosGuardados() {
                     // Cada semana es unica: en las semanas cuya cartera NO trae a este
                     // proveedor sus dias quedan bloqueados (no hay nada que pagarle ahi).
                     if (FC_GRUPOS_PROV.has(grupo) && hayCartera) {
-                        const nk = fc_normalizarNombre(item.nombre);
                         semanas.forEach(sem => {
                             const setSem = carteraSet[sem.inicio];
-                            if (!setSem || setSem.has(nk)) return;
+                            if (!setSem) return;
+                            if (fc_enCartera(carteraRuc[sem.inicio], setSem, item)) return;
                             sem.dias.forEach(dia => {
                                 const inp = rows[idx].querySelector(`[data-fecha="${dia}"].fc-input`);
                                 if (!inp) return;
@@ -2480,6 +2492,11 @@ async function fc_cargarDatosGuardados() {
                             });
                         });
                     }
+
+                    // El RUC viaja con la fila: de ahi lo lee el Guardar. Sin esto
+                    // el primer guardado lo borraria y el vinculo volveria a
+                    // depender del nombre, que es lo que rompio las semanas 39-42.
+                    if (item.ruc) rows[idx].dataset.ruc = fc_soloDigitos(item.ruc);
 
                     // Baja a mitad de la vista: fila solo historica, dias posteriores bloqueados
                     if (item.eliminadoDesde) {
@@ -2612,6 +2629,9 @@ async function fc_guardarDatos() {
                 // todavia no tiene egresos guardados.
                 const facturas = facturasFila;
                 const itemData = { nombre, banco, deuda, saldo, dias, valores: {}, pagados: {}, facturas };
+                // El RUC es la unica identidad que no cambia: se guarda siempre
+                const rucFila = fc_soloDigitos(row.dataset.ruc || '');
+                if (rucFila) itemData.ruc = rucFila;
                 const semCart = FC_GRUPOS_PROV.has(grupo) ? (row.dataset.carteraSemana || '') : '';
                 if (semCart && facturasFila.length) {
                     (detalleCartera[semCart] = detalleCartera[semCart] || []).push(
@@ -4560,6 +4580,8 @@ function fc_procesarCarteraXLS(input) {
 
             const semanaCartera = semanas[0].inicio;
             let carteraGuardada = 0;
+            // Proveedores que el servidor creo desde el SRI al ver un RUC nuevo
+            let provsNuevos = [];
             const rowIdPorProv = {};
 
             let conservados = 0, nuevos = 0;
@@ -4669,6 +4691,10 @@ function fc_procesarCarteraXLS(input) {
                 const dCart = await resCart.json();
                 if (dCart.ok) {
                     carteraGuardada = dCart.guardados;
+                    // RUC que no estaba en la matriz: el servidor lo dio de alta
+                    // con la razon social del SRI. Hay que decirlo, si no nadie
+                    // se entera de que aparecio un proveedor nuevo.
+                    provsNuevos = dCart.proveedores_nuevos || [];
                     fc_cartera_semanas[semanaCartera] = provsCartera;
                 } else {
                     console.error('No se pudo registrar la cartera de la semana:', dCart.error);
@@ -4700,6 +4726,17 @@ function fc_procesarCarteraXLS(input) {
                 msg += `- ${bajasLiberadas} reaparecieron: se les quito la baja porque vienen en el archivo\n`;
             }
             msg += `- Ordenados por monto (mayor a menor)\n`;
+            if (provsNuevos.length) {
+                msg += `\n${provsNuevos.length} RUC no estaban en la matriz y se dieron de alta con la razon social del SRI:\n`;
+                provsNuevos.slice(0, 12).forEach(p => {
+                    msg += `   ${p.nombre} (${p.ruc})`
+                         + (p.estado && p.estado !== 'ACTIVO' ? ` -- OJO: ${p.estado} en el SRI` : '') + `\n`;
+                });
+                if (provsNuevos.length > 12) {
+                    msg += `   ... y ${provsNuevos.length - 12} mas\n`;
+                }
+                msg += `Revisalos en Configuracion > Matriz de proveedores para completar dias de credito y datos bancarios.\n`;
+            }
             msg += `\nUse el boton F en cada proveedor para ver facturas y asignar fechas de pago.`;
             alert(msg);
 
@@ -4756,6 +4793,28 @@ function fc_parsearFechaXLS(val) {
     // Si ya es YYYY-MM-DD
     if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
     return str;
+}
+
+/* Solo los digitos del RUC. '1791883446001' y '1791883446-001' son el mismo. */
+function fc_soloDigitos(x) {
+    return String(x == null ? '' : x).replace(/[^0-9]/g, '');
+}
+
+/* Esta este proveedor en la cartera de la semana?
+
+   Manda el RUC, que no cambia. El nombre queda de respaldo por dos razones:
+   quedan 37 filas de cartera sin RUC, y hay items del Flujo que nunca lo
+   tuvieron. Con cualquiera de los dos que empate, el proveedor se queda.
+
+   Es a proposito mas permisivo que la version que comparaba solo nombres: de
+   este filtro depende que un proveedor se vea o no en pantalla, y el que no se
+   ve lo borra el siguiente Guardar. Ante la duda, se muestra. */
+function fc_enCartera(setRuc, setNombre, item) {
+    if (!setNombre && !setRuc) return true;
+    const ruc = fc_soloDigitos(item && item.ruc);
+    if (ruc && setRuc && setRuc.has(ruc)) return true;
+    const nom = fc_normalizarNombre((item && item.nombre) || '');
+    return !!(setNombre && setNombre.has(nom));
 }
 
 function fc_normalizarNombre(nombre) {
