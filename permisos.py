@@ -81,6 +81,7 @@ CATALOGO = [
     ]),
     ('configuracion', 'Configuracion', [
         ('matriz-productos',  'Matriz de productos'),
+        ('matriz-proveedores', 'Matriz de proveedores'),
         ('bodegas',           'Bodegas'),
         ('config-productos',  'Productos por marca'),
         ('usuarios',          'Usuarios y accesos'),
@@ -91,8 +92,8 @@ CATALOGO = [
 # Modulos que NUNCA se le pueden dar a alguien que no sea administrador: desde
 # ahi se reparten los accesos y se tocan los catalogos maestros. Se muestran en
 # la pantalla, pero bloqueados y explicados.
-SOLO_ADMIN = {'usuarios', 'bodegas', 'matriz-productos', 'config-productos',
-              'sri-credenciales'}
+SOLO_ADMIN = {'usuarios', 'bodegas', 'matriz-productos', 'matriz-proveedores',
+              'config-productos', 'sri-credenciales'}
 
 TODOS = [m for _, _, mods in CATALOGO for m, _ in mods]
 ETIQUETAS = {m: e for _, _, mods in CATALOGO for m, e in mods}

@@ -7962,3 +7962,20 @@ table, .kpi-valor, .kpi-value, input[type="number"] {
     color: #BA7517;
     font-weight: 500;
 }
+
+/* Los submodulos del menu son <a> para que el clic derecho ofrezca "abrir en
+   pestaña nueva". Sin esto heredarian el subrayado y el azul de enlace. */
+a.nav-btn { text-decoration: none; }
+a.nav-btn:hover { text-decoration: none; }
+
+/* Accion secundaria en la cabecera de una vista, al lado del boton primario.
+   Los .fd-btn-ghost de las barras internas se quedan en 32px; este es el
+   "small" del toolkit, 40px, para que case con el .btn-primary vecino. */
+.fd-btn-ghost.fd-btn-cabecera {
+    height: 40px;
+    padding: 0 18px;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}

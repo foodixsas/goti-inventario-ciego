@@ -311,3 +311,161 @@ async function bodegasBorrar(id) {
         showToast(e.message, 'error');
     }
 }
+
+
+// ===========================================================================
+// SINCRONIZAR BODEGAS CON CONTIFICO
+//
+// Antes habia que entrar a Contifico, buscar el hash del id y copiarlo a mano.
+// Ahi es donde se cuela el error que manda un traslado a la bodega equivocada.
+// Aqui se listan las que estan en Contifico y no aqui, y se crean con el id ya
+// puesto. La clave (bodega_principal, floreana...) se propone a partir del
+// nombre y se puede corregir antes de crear.
+// ===========================================================================
+let bodegasSync = null;
+
+async function bodegasAbrirSync() {
+    const m = document.getElementById('bodegas-sync');
+    if (!m) return;
+    m.style.display = 'flex';
+    const c = document.getElementById('bodegas-sync-cuerpo');
+    c.innerHTML = `<div style="padding:34px;text-align:center;color:#888780;">
+        <i class="fas fa-spinner fa-spin" style="font-size:20px;"></i>
+        <p style="margin-top:10px;">Leyendo las bodegas de Contifico...</p></div>`;
+    document.getElementById('bodegas-sync-crear').disabled = true;
+
+    try {
+        const r = await fetch(`${CONFIG.API_URL}/api/bodegas/sincronizar`);
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            c.innerHTML = `<div class="fd-vacio" style="padding:26px;">
+                <p><b>${bodEsc(d.error || 'No se pudo consultar Contifico')}</b></p>
+                ${d.detalle ? `<p class="fd-tenue">${bodEsc(d.detalle)}</p>` : ''}</div>`;
+            return;
+        }
+        bodegasSync = d;
+        bodegasPintarSync();
+    } catch (e) {
+        c.innerHTML = `<div class="fd-vacio" style="padding:26px;">No se pudo contactar al servidor.</div>`;
+    }
+}
+
+function bodegasCerrarSync() {
+    const m = document.getElementById('bodegas-sync');
+    if (m) m.style.display = 'none';
+}
+
+function bodegasPintarSync() {
+    const d = bodegasSync;
+    const c = document.getElementById('bodegas-sync-cuerpo');
+    const inp = `padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;
+                 font-size:12.5px;width:100%;background:#fff;color:#0f172a;`;
+
+    c.innerHTML = `
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+            <span class="fd-chip">Contifico: ${d.contifico}</span>
+            <span class="fd-chip">Vinculadas: ${d.vinculadas.length}</span>
+            <span class="fd-chip">Nuevas: ${d.nuevas.length}</span>
+        </div>
+
+        ${d.rotas.length ? `
+        <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;
+                    padding:10px 14px;margin-bottom:14px;font-size:12px;color:#991B1B;">
+            <b>${d.rotas.length} bodega(s) apuntan a un id que ya no existe en Contifico.</b>
+            Un traslado a estas fallaria: ${d.rotas.map(x => bodEsc(x.bodega)).join(', ')}.
+        </div>` : ''}
+
+        <h4 style="margin:0 0 4px;font-size:14px;color:#1A3A5C;">
+            Bodegas de Contifico que aqui no estan (${d.nuevas.length})</h4>
+        <p class="fd-tenue" style="font-size:12px;margin:0 0 10px;">
+            Marca las que quieras crear. El id de Contifico se guarda solo; la clave
+            se propone a partir del nombre y la puedes corregir.</p>
+
+        ${d.nuevas.length ? `
+        <table class="fd-tabla" style="width:100%;font-size:12.5px;">
+            <thead><tr>
+                <th style="width:34px;"></th><th>Codigo</th><th>Nombre en Contifico</th>
+                <th style="width:190px;">Clave aqui</th><th style="width:210px;">Nombre aqui</th>
+            </tr></thead>
+            <tbody>
+            ${d.nuevas.map(n => `
+                <tr data-cf="${bodEsc(n.contifico_id)}">
+                    <td><input type="checkbox" class="bsync-sel"></td>
+                    <td class="fd-mono">${bodEsc(n.codigo)}</td>
+                    <td>${bodEsc(n.nombre_contifico)}</td>
+                    <td><input type="text" class="bsync-id" value="${bodEsc(n.id_sugerido)}" style="${inp}"></td>
+                    <td><input type="text" class="bsync-nombre" value="${bodEsc(n.nombre_sugerido || n.nombre_contifico)}" style="${inp}"></td>
+                </tr>`).join('')}
+            </tbody>
+        </table>` : '<p class="fd-vacio">Ninguna. Todas las bodegas de Contifico ya estan registradas.</p>'}
+
+        <h4 style="margin:22px 0 8px;font-size:14px;color:#1A3A5C;">
+            Ya vinculadas (${d.vinculadas.length})</h4>
+        <table class="fd-tabla" style="width:100%;font-size:12.5px;">
+            <thead><tr><th>Codigo</th><th>Nombre en Contifico</th><th>Bodega aqui</th></tr></thead>
+            <tbody>${d.vinculadas.map(v => `
+                <tr><td class="fd-mono">${bodEsc(v.codigo)}</td>
+                    <td>${bodEsc(v.nombre_contifico)}</td>
+                    <td>${bodEsc(v.nombre)} <span class="fd-tenue fd-mono">${bodEsc(v.bodega)}</span></td>
+                </tr>`).join('')}</tbody>
+        </table>`;
+
+    c.querySelectorAll('.bsync-sel').forEach(ch =>
+        ch.addEventListener('change', bodegasContarSync));
+    bodegasContarSync();
+}
+
+function bodegasContarSync() {
+    const n = document.querySelectorAll('.bsync-sel:checked').length;
+    const p = document.getElementById('bodegas-sync-pie');
+    if (p) p.textContent = n ? `${n} bodega(s) por crear` : 'Nada seleccionado';
+    const b = document.getElementById('bodegas-sync-crear');
+    if (b) b.disabled = !n;
+}
+
+async function bodegasCrearDesdeSync() {
+    const crear = [];
+    document.querySelectorAll('#bodegas-sync-cuerpo tr[data-cf]').forEach(tr => {
+        if (!tr.querySelector('.bsync-sel').checked) return;
+        crear.push({
+            contifico_id: tr.getAttribute('data-cf'),
+            id: tr.querySelector('.bsync-id').value.trim().toLowerCase(),
+            nombre: tr.querySelector('.bsync-nombre').value.trim(),
+        });
+    });
+    if (!crear.length) return;
+
+    if (!bodegasEsAdmin()) {
+        showToast('Solo un administrador puede crear bodegas', 'error');
+        return;
+    }
+    const clave = prompt('Contrasena de administrador para crear '
+                       + crear.length + ' bodega(s):');
+    if (!clave) return;
+
+    const b = document.getElementById('bodegas-sync-crear');
+    if (b) { b.disabled = true; b.textContent = 'Creando...'; }
+    try {
+        const r = await fetch(`${CONFIG.API_URL}/api/bodegas/sincronizar`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ crear, admin_user: bodegasUsuario(), admin_pass: clave })
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'No se pudo crear');
+        const partes = [];
+        if (d.creadas.length) partes.push(`${d.creadas.length} creada(s)`);
+        if (d.fallidas.length) partes.push(`${d.fallidas.length} con problema`);
+        showToast(partes.join(', ') || 'Sin cambios', d.fallidas.length ? 'warning' : 'success');
+        if (d.fallidas.length) {
+            console.warn('Bodegas no creadas:', d.fallidas);
+            alert('No se pudieron crear:\n\n'
+                + d.fallidas.map(f => `  ${f.id}: ${f.motivo}`).join('\n'));
+        }
+        await bodegasAbrirSync();     // vuelve a consultar: la lista cambio
+        bodegasCargar();
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        if (b) { b.textContent = 'Crear las seleccionadas'; bodegasContarSync(); }
+    }
+}

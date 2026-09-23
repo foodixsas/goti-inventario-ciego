@@ -1191,9 +1191,14 @@ function setupEventListeners() {
 
     // Navegacion
     document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const view = btn.dataset.view;
-            cambiarVista(view);
+        btn.addEventListener('click', e => {
+            // Ctrl/Cmd+clic, Shift+clic y el clic del medio son del navegador:
+            // ahi el usuario esta pidiendo otra pestaña o ventana y no hay que
+            // interceptarlo. El clic normal sigue cambiando de vista sin
+            // recargar.
+            if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            cambiarVista(btn.dataset.view);
         });
     });
 
@@ -1515,6 +1520,9 @@ function cambiarVista(viewName, sinHistorial) {
     }
 
     // Auto-inicializar Toma de Locales (modulo propio, tres pantallas)
+    if (viewName === 'matriz-proveedores' && typeof proveedoresInit === 'function') {
+        proveedoresInit();
+    }
     if (viewName === 'toma-locales')   { tlInit(); }
     if (viewName === 'toma-historico') { tlInitHistorico(); }
     if (viewName === 'toma-pedidos')   { tlInitPedidos(); }

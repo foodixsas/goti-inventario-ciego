@@ -417,3 +417,226 @@ def bodegas_borrar(bid):
         return _error(e, 'borrar bodega')
     finally:
         _soltar(conn)
+
+
+# ===========================================================================
+# SINCRONIZAR BODEGAS CON CONTIFICO
+#
+# Antes, para vincular una bodega habia que entrar a Contifico, buscar el hash
+# del id y copiarlo a mano. Eso es justo donde se cuela un error que despues
+# manda un traslado a la bodega equivocada sin que nadie lo note.
+#
+# Aqui se leen las bodegas directo de la API de Contifico (son 12 y vienen en
+# una sola llamada, no hace falta hilo de fondo como en los productos) y se
+# comparan contra goti.gfc_bodegas. De lo que falte se puede crear la bodega
+# con el id ya puesto.
+#
+# Ojo: el endpoint /api/bodegas/contifico lee de public.contifico_bodegas, que
+# es un espejo en la base `movimientos` y puede estar atrasado. Este va a la
+# fuente.
+# ===========================================================================
+import json
+import os
+import re
+import unicodedata
+import urllib.error
+import urllib.request
+
+CF_BODEGA_URL = 'https://api.contifico.com/sistema/api/v1/bodega/'
+
+
+def _cf_llave_bod():
+    return os.environ.get('CONTIFICO_API_KEY', '').strip()
+
+
+def _cf_bodegas():
+    req = urllib.request.Request(
+        CF_BODEGA_URL, headers={'Authorization': _cf_llave_bod(),
+                                'Accept': 'application/json'})
+    d = json.loads(urllib.request.urlopen(req, timeout=60).read())
+    return d if isinstance(d, list) else d.get('results', [])
+
+
+# Los conectores van en minuscula: 'Planta de Produccion', no 'Planta De
+# Produccion'. Nunca la primera palabra.
+_MENORES = {'de', 'del', 'la', 'las', 'el', 'los', 'y', 'e', 'en', 'a'}
+
+
+def _titulo(t):
+    """'BODEGA PULMON' -> 'Bodega Pulmon'.
+
+    Contifico devuelve los nombres TODO EN MAYUSCULAS y asi se quedaban al
+    crear la bodega, conviviendo con las que ya estaban en nombre propio.
+    """
+    palabras = ' '.join(str(t or '').split()).split(' ')
+    fuera = []
+    for i, p in enumerate(palabras):
+        b = p.lower()
+        fuera.append(b if (i > 0 and b in _MENORES) else b[:1].upper() + b[1:])
+    return ' '.join(fuera)
+
+
+def _clave_sugerida(nombre, usadas):
+    """'BODEGA SANTO CACHON' -> 'santo_cachon'.
+
+    El id de gfc_bodegas es texto y lo eligio una persona (bodega_principal,
+    floreana...). Se propone uno con el mismo estilo para no tener que
+    inventarlo, pero se puede cambiar antes de crear.
+    """
+    t = unicodedata.normalize('NFKD', nombre or '')
+    t = ''.join(c for c in t if not unicodedata.combining(c)).lower()
+    t = re.sub(r'^bodega\s+', '', t.strip())
+    t = re.sub(r'[^a-z0-9]+', '_', t).strip('_') or 'bodega'
+    base, n = t, 2
+    while t in usadas:
+        t = '%s_%d' % (base, n)
+        n += 1
+    return t
+
+
+@bp_bodegas.route('/api/bodegas/sincronizar', methods=['GET'])
+def bodegas_sincronizar():
+    """Que bodegas hay en Contifico que aqui todavia no estan."""
+    if not _cf_llave_bod():
+        return jsonify({'success': False,
+                        'error': 'Falta CONTIFICO_API_KEY en el servidor',
+                        'detalle': 'Definir la variable de entorno en Render.'}), 503
+    conn = None
+    try:
+        try:
+            catalogo = _cf_bodegas()
+        except urllib.error.HTTPError as e:
+            return jsonify({'success': False,
+                            'error': 'Contifico respondio %s' % e.code}), 502
+
+        conn = _db()
+        cur = conn.cursor()
+        asegurar_tabla(cur)
+        conn.commit()
+        cur.execute('SELECT id, nombre, contifico_id, contifico_codigo, activo'
+                    ' FROM %s' % TABLA)
+        mias = [dict(r) for r in cur.fetchall()]
+        por_cf = {m['contifico_id']: m for m in mias if m['contifico_id']}
+        usadas = set(m['id'] for m in mias)
+
+        nuevas, vinculadas = [], []
+        for c in catalogo:
+            cid = c.get('id')
+            mia = por_cf.get(cid)
+            if mia:
+                vinculadas.append({
+                    'contifico_id': cid,
+                    'codigo': c.get('codigo'),
+                    'nombre_contifico': c.get('nombre'),
+                    'bodega': mia['id'],
+                    'nombre': mia['nombre'],
+                    'activo': mia['activo'],
+                    # El nombre pudo cambiar en Contifico despues de vincular
+                    'nombre_cambio': (mia.get('contifico_codigo') or '') != (c.get('codigo') or ''),
+                })
+            else:
+                sug = _clave_sugerida(c.get('nombre'), usadas)
+                usadas.add(sug)
+                nuevas.append({
+                    'contifico_id': cid,
+                    'codigo': c.get('codigo'),
+                    'nombre_contifico': c.get('nombre'),
+                    'nombre_sugerido': _titulo(c.get('nombre')),
+                    'id_sugerido': sug,
+                    'venta': c.get('venta'),
+                    'compra': c.get('compra'),
+                    'produccion': c.get('produccion'),
+                })
+
+        # Bodegas nuestras que apuntan a un id que ya no existe en Contifico:
+        # el traslado fallaria y conviene verlo.
+        ids_cf = set(c.get('id') for c in catalogo)
+        rotas = [{'bodega': m['id'], 'nombre': m['nombre'],
+                  'contifico_id': m['contifico_id']}
+                 for m in mias if m['contifico_id'] and m['contifico_id'] not in ids_cf]
+
+        sin_vincular = [{'bodega': m['id'], 'nombre': m['nombre']}
+                        for m in mias if not m['contifico_id']]
+
+        return jsonify({'success': True, 'contifico': len(catalogo),
+                        'nuevas': nuevas, 'vinculadas': vinculadas,
+                        'rotas': rotas, 'sin_vincular': sin_vincular})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return _error(e, 'sincronizar bodegas')
+    finally:
+        _soltar(conn)
+
+
+@bp_bodegas.route('/api/bodegas/sincronizar', methods=['POST'])
+def bodegas_sincronizar_crear():
+    """Crea las bodegas elegidas, con el id de Contifico ya puesto.
+
+    Solo admin, igual que crear una bodega a mano: una bodega mal vinculada
+    manda mercaderia al lugar equivocado.
+    """
+    d = request.get_json(silent=True) or {}
+    pedidas = d.get('crear') or []
+    if not pedidas:
+        return jsonify({'success': False, 'error': 'No se eligio ninguna bodega'}), 400
+
+    conn = None
+    try:
+        conn = _db()
+        cur = conn.cursor()
+        if not _es_admin(conn, (d.get('admin_user') or '').strip(),
+                         (d.get('admin_pass') or '').strip()):
+            return jsonify({'success': False,
+                            'error': 'Solo un administrador puede crear bodegas'}), 403
+
+        asegurar_tabla(cur)
+        catalogo = {c.get('id'): c for c in _cf_bodegas()}
+
+        cur.execute('SELECT COALESCE(MAX(orden), 100) AS m FROM %s' % TABLA)
+        orden = (cur.fetchone()['m'] or 100)
+
+        creadas, fallidas = [], []
+        for p in pedidas:
+            cid = (p.get('contifico_id') or '').strip()
+            bid = (p.get('id') or '').strip().lower()
+            c = catalogo.get(cid)
+            if not c:
+                fallidas.append({'id': bid or cid,
+                                 'motivo': 'ese id ya no esta en Contifico'})
+                continue
+            if not bid:
+                fallidas.append({'id': cid, 'motivo': 'falta la clave de la bodega'})
+                continue
+            if not re.match(r'^[a-z][a-z0-9_]*$', bid):
+                fallidas.append({'id': bid, 'motivo': 'la clave solo admite '
+                                 'minusculas, numeros y guion bajo'})
+                continue
+            orden += 10
+            try:
+                cur.execute(
+                    'INSERT INTO %s (id, nombre, contifico_id, contifico_codigo,'
+                    ' contifico_nombre, orden, modificado_por, modificado_en)'
+                    ' VALUES (%%s,%%s,%%s,%%s,%%s,%%s,%%s,now())' % TABLA,
+                    (bid, _titulo(p.get('nombre') or c.get('nombre')), cid,
+                     c.get('codigo'), c.get('nombre'), orden,
+                     (d.get('admin_user') or '').strip() or None))
+                creadas.append({'id': bid, 'nombre': p.get('nombre') or c.get('nombre'),
+                                'contifico_id': cid})
+            except Exception as e:
+                conn.rollback()
+                motivo = str(e)[:120]
+                if 'gfc_bodegas_contifico_id_uk' in motivo:
+                    motivo = 'esa bodega de Contifico ya esta vinculada'
+                elif 'pkey' in motivo:
+                    motivo = 'ya existe una bodega con la clave ' + bid
+                fallidas.append({'id': bid, 'motivo': motivo})
+
+        conn.commit()
+        return jsonify({'success': True, 'creadas': creadas, 'fallidas': fallidas})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return _error(e, 'crear bodegas desde Contifico')
+    finally:
+        _soltar(conn)

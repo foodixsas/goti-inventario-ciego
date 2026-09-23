@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GFC - Control Contable | FOODIX</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260922a">
+    <link rel="stylesheet" href="css/styles.css?v=20260922c">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -474,10 +474,10 @@
             <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
             <nav class="sidebar" id="sidebar">
                 <!-- DASHBOARD GENERAL -->
-                <button class="nav-btn" data-view="dash-general" style="font-weight:600;border-bottom:1px solid var(--border);padding:14px 16px;">
+                <a class="nav-btn" data-view="dash-general" style="font-weight:600;border-bottom:1px solid var(--border);padding:14px 16px;" href="/dash-general">
                     <i class="fas fa-tachometer-alt"></i>
                     <span>Dashboard</span>
-                </button>
+                </a>
 
                 <!-- MODULO: INVENTARIO -->
                 <div class="nav-module" data-module="inventario">
@@ -491,54 +491,54 @@
                             <i class="fas fa-clipboard-list"></i>
                             <span>Conteo</span>
                         </button>
-                        <button class="nav-btn" data-view="observaciones" style="display:none;">
+                        <a class="nav-btn" data-view="observaciones" style="display:none;" href="/observaciones">
                             <i class="fas fa-comment-alt"></i>
                             <span>Observaciones</span>
-                        </button>
-                        <button class="nav-btn" data-view="historico" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="historico" style="display:none;" href="/historico">
                             <i class="fas fa-history"></i>
                             <span>Historico</span>
-                        </button>
-                        <button class="nav-btn" data-view="dashboard" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="dashboard" style="display:none;" href="/dashboard">
                             <i class="fas fa-chart-pie"></i>
                             <span>Dashboard</span>
-                        </button>
-                        <button class="nav-btn" data-view="cruce" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="cruce" style="display:none;" href="/cruce">
                             <i class="fas fa-exchange-alt"></i>
                             <span>Cruce Operativo</span>
-                        </button>
-                        <button class="nav-btn" data-view="bajas" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="bajas" style="display:none;" href="/bajas">
                             <i class="fas fa-arrow-down"></i>
                             <span>Bajas</span>
-                        </button>
-                        <button class="nav-btn" data-view="semanal" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="semanal" style="display:none;" href="/semanal">
                             <i class="fas fa-calendar-week"></i>
                             <span>Semanal</span>
-                        </button>
-                        <button class="nav-btn" data-view="informes-inv" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="informes-inv" style="display:none;" href="/informes-inv">
                             <i class="fas fa-file-invoice"></i>
                             <span>Informes</span>
-                        </button>
-                        <button class="nav-btn" data-view="evaluacion" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="evaluacion" style="display:none;" href="/evaluacion">
                             <i class="fas fa-clipboard-check"></i>
                             <span>Evaluacion</span>
-                        </button>
-                        <button class="nav-btn" data-view="correccion" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="correccion" style="display:none;" href="/correccion">
                             <i class="fas fa-edit"></i>
                             <span>Corregir</span>
-                        </button>
-                        <button class="nav-btn" data-view="descuentos-nomina" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="descuentos-nomina" style="display:none;" href="/descuentos-nomina">
                             <i class="fas fa-file-invoice-dollar"></i>
                             <span>Descuentos Nomina</span>
-                        </button>
-                        <button class="nav-btn" data-view="carga-locales" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="carga-locales" style="display:none;" href="/carga-locales">
                             <i class="fas fa-store"></i>
                             <span>Carga Locales</span>
-                        </button>
-                        <button class="nav-btn" data-view="telegram-avisos" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="telegram-avisos" style="display:none;" href="/telegram-avisos">
                             <i class="fab fa-telegram"></i>
                             <span>Avisos Telegram</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
 
@@ -550,22 +550,22 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items" style="display:none;">
-                        <button class="nav-btn" data-view="dep-pendientes" style="display:none;">
+                        <a class="nav-btn" data-view="dep-pendientes" style="display:none;" href="/dep-pendientes">
                             <i class="fas fa-clock"></i>
                             <span>Pendientes</span>
-                        </button>
-                        <button class="nav-btn" data-view="dep-historial" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="dep-historial" style="display:none;" href="/dep-historial">
                             <i class="fas fa-list"></i>
                             <span>Historial</span>
-                        </button>
-                        <button class="nav-btn" data-view="dep-descuadres" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="dep-descuadres" style="display:none;" href="/dep-descuadres">
                             <i class="fas fa-exclamation-triangle"></i>
                             <span>Descuadres</span>
-                        </button>
-                        <button class="nav-btn" data-view="dep-dashboard" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="dep-dashboard" style="display:none;" href="/dep-dashboard">
                             <i class="fas fa-chart-bar"></i>
                             <span>Dashboard</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
 
@@ -581,15 +581,15 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
-                        <button class="nav-btn" data-view="toma-locales" style="display:none;">
+                        <a class="nav-btn" data-view="toma-locales" style="display:none;" href="/toma-locales">
                             <i class="fas fa-pen-to-square"></i><span>Inventario</span>
-                        </button>
-                        <button class="nav-btn" data-view="toma-historico" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="toma-historico" style="display:none;" href="/toma-historico">
                             <i class="fas fa-clock-rotate-left"></i><span>Historico</span>
-                        </button>
-                        <button class="nav-btn" data-view="toma-pedidos" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="toma-pedidos" style="display:none;" href="/toma-pedidos">
                             <i class="fas fa-cart-shopping"></i><span>Pedidos del Dia</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
 
@@ -600,18 +600,18 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
-                        <button class="nav-btn" data-view="caja-chica" style="display:none;">
+                        <a class="nav-btn" data-view="caja-chica" style="display:none;" href="/caja-chica">
                             <i class="fas fa-receipt"></i><span>Caja Chica</span>
-                        </button>
-                        <button class="nav-btn" data-view="cuadre-registro" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="cuadre-registro" style="display:none;" href="/cuadre-registro">
                             <i class="fas fa-edit"></i><span>Registro</span>
-                        </button>
-                        <button class="nav-btn" data-view="cuadre-historial" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="cuadre-historial" style="display:none;" href="/cuadre-historial">
                             <i class="fas fa-list"></i><span>Historial</span>
-                        </button>
-                        <button class="nav-btn" data-view="cuadre-dashboard" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="cuadre-dashboard" style="display:none;" href="/cuadre-dashboard">
                             <i class="fas fa-chart-bar"></i><span>Dashboard</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
 
@@ -623,14 +623,14 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
-                        <button class="nav-btn" data-view="mov-solicitud" style="display:none;">
+                        <a class="nav-btn" data-view="mov-solicitud" style="display:none;" href="/mov-solicitud">
                             <i class="fas fa-truck-ramp-box"></i>
                             <span>Solicitar Movimiento</span>
-                        </button>
-                        <button class="nav-btn" data-view="mov-historial" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="mov-historial" style="display:none;" href="/mov-historial">
                             <i class="fas fa-clipboard-list"></i>
                             <span>Movimientos Solicitados</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
 
@@ -644,12 +644,12 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
-                        <button class="nav-btn" data-view="retenciones" style="display:none;">
+                        <a class="nav-btn" data-view="retenciones" style="display:none;" href="/retenciones">
                             <i class="fas fa-percent"></i><span>Consulta de RUC</span>
-                        </button>
-                        <button class="nav-btn" data-view="sri-facturas" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="sri-facturas" style="display:none;" href="/sri-facturas">
                             <i class="fas fa-file-invoice"></i><span>Facturas del SRI</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
 
@@ -661,9 +661,9 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
-                        <button class="nav-btn" data-view="flujo-caja" style="display:none;">
+                        <a class="nav-btn" data-view="flujo-caja" style="display:none;" href="/flujo-caja">
                             <i class="fas fa-coins"></i><span>Proyeccion</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
 
@@ -675,9 +675,9 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
-                        <button class="nav-btn" data-view="costos">
+                        <a class="nav-btn" data-view="costos" href="/costos">
                             <i class="fas fa-chart-column"></i><span>Tablero de Costos</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
 
@@ -690,21 +690,24 @@
                         <i class="fas fa-chevron-down nav-module-arrow"></i>
                     </button>
                     <div class="nav-module-items">
-                        <button class="nav-btn" data-view="matriz-productos" style="display:none;">
+                        <a class="nav-btn" data-view="matriz-productos" style="display:none;" href="/matriz-productos">
                             <i class="fas fa-table-list"></i><span>Matriz de Productos</span>
-                        </button>
-                        <button class="nav-btn" data-view="bodegas" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="matriz-proveedores" style="display:none;" href="/matriz-proveedores">
+                            <i class="fas fa-truck-field"></i><span>Matriz de Proveedores</span>
+                        </a>
+                        <a class="nav-btn" data-view="bodegas" style="display:none;" href="/bodegas">
                             <i class="fas fa-warehouse"></i><span>Bodegas</span>
-                        </button>
-                        <button class="nav-btn" data-view="config-productos" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="config-productos" style="display:none;" href="/config-productos">
                             <i class="fas fa-boxes-stacked"></i><span>Productos por Marca</span>
-                        </button>
-                        <button class="nav-btn" data-view="usuarios" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="usuarios" style="display:none;" href="/usuarios">
                             <i class="fas fa-users-cog"></i><span>Usuarios y Accesos</span>
-                        </button>
-                        <button class="nav-btn" data-view="sri-credenciales" style="display:none;">
+                        </a>
+                        <a class="nav-btn" data-view="sri-credenciales" style="display:none;" href="/sri-credenciales">
                             <i class="fas fa-key"></i><span>Credenciales SRI</span>
-                        </button>
+                        </a>
                     </div>
                 </div>
             </nav>
@@ -3161,10 +3164,16 @@
                 <div id="view-matriz-productos" class="view">
                     <div class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
                         <h2><i class="fas fa-table-list"></i> Matriz General de Productos</h2>
-                        <button class="btn-primary btn-sm" id="matriz-btn-nuevo"
-                                style="padding:10px 20px;font-size:13px;border-radius:var(--radius-sm);">
-                            Nuevo Producto
-                        </button>
+                        <div style="display:flex;gap:10px;align-items:center;">
+                            <button type="button" class="fd-btn-ghost fd-btn-cabecera" id="matriz-btn-sync"
+                                    onclick="matrizAbrirSync()">
+                                <i class="fas fa-rotate"></i> Sincronizar con Contifico
+                            </button>
+                            <button class="btn-primary btn-sm" id="matriz-btn-nuevo"
+                                    style="padding:10px 20px;font-size:13px;border-radius:var(--radius-sm);">
+                                Nuevo Producto
+                            </button>
+                        </div>
                     </div>
 
                     <div class="mx-filtros">
@@ -3223,16 +3232,125 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Sincronizacion con Contifico.
+                         Contifico es donde nacen los productos; la matriz es el
+                         maestro de inventario. De alla se trae lo que las dos
+                         comparten y el resto lo llena una persona. Nada se
+                         aplica solo: se revisa, se elige y recien se aplica. -->
+                    <div id="matriz-sync" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9000;align-items:center;justify-content:center;padding:20px;">
+                        <div style="background:#fff;border-radius:12px;width:100%;max-width:1020px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(18,52,80,.25);">
+                            <div style="padding:16px 22px;border-bottom:1px solid #E8E6E0;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                                <h3 style="margin:0;font-size:16px;color:#1A3A5C;font-weight:600;">
+                                    Sincronizar con Contifico</h3>
+                                <button type="button" onclick="matrizCerrarSync()"
+                                        style="background:none;border:none;font-size:20px;color:#888780;cursor:pointer;line-height:1;">&times;</button>
+                            </div>
+
+                            <div id="matriz-sync-cuerpo" style="padding:20px 22px;overflow-y:auto;flex:1;"></div>
+
+                            <div style="padding:14px 22px;border-top:1px solid #E8E6E0;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                                <span id="matriz-sync-pie" class="mx-conteo">&mdash;</span>
+                                <div style="display:flex;gap:10px;">
+                                    <button type="button" onclick="matrizCerrarSync()"
+                                            style="padding:0 18px;height:40px;border:1px solid rgba(203,213,225,0.30);background:#fff;color:#1A3A5C;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">
+                                        Cerrar</button>
+                                    <button type="button" id="matriz-sync-aplicar" onclick="matrizAplicarSync()" disabled
+                                            style="padding:0 22px;height:40px;border:none;background:#2563EB;color:#fff;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">
+                                        Aplicar lo seleccionado</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
+
+                <!-- Matriz de Proveedores. UNA sola tabla para todo el sistema
+                     (public.fc_proveedores): la misma que usa Flujo de Caja y
+                     la que se edita desde la ficha del producto. -->
+                <div id="view-matriz-proveedores" class="view">
+                    <div class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
+                        <h2><i class="fas fa-truck"></i> Matriz de Proveedores</h2>
+                        <div style="display:flex;gap:10px;align-items:center;">
+                            <button type="button" class="fd-btn-ghost fd-btn-cabecera"
+                                    id="prov-btn-sri" onclick="proveedoresVerificarSri()">
+                                <i class="fas fa-shield-halved"></i> Verificar con el SRI
+                            </button>
+                            <button type="button" class="fd-btn-ghost fd-btn-cabecera"
+                                    id="prov-btn-nuevo">
+                                <i class="fas fa-plus"></i> Nuevo Proveedor
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="fd-filtros" style="margin-bottom:10px;">
+                        <input type="text" id="prov-buscar" class="fd-input"
+                               style="min-width:280px;flex:1;"
+                               placeholder="Buscar por nombre, nombre comercial o RUC...">
+                        <select id="prov-f-tipo" class="fd-select" style="min-width:150px;">
+                            <option value="">Tipo: todos</option>
+                        </select>
+                        <select id="prov-f-criticidad" class="fd-select" style="min-width:150px;">
+                            <option value="">Criticidad: todas</option>
+                        </select>
+                        <select id="prov-f-dato" class="fd-select" style="min-width:170px;">
+                            <option value="">Todos</option>
+                            <option value="sin_ruc">Sin RUC</option>
+                            <option value="sin_tel">Sin telefono</option>
+                            <option value="sin_dia">Sin dia de despacho</option>
+                            <option value="sin_bodega">Sin bodega habitual</option>
+                            <option value="del_sri">Solo los del SRI</option>
+                            <option value="suspendido">Suspendidos en el SRI</option>
+                            <option value="sin_verificar">Sin verificar en el SRI</option>
+                            <option value="sin_banco">Sin cuenta bancaria</option>
+                            <option value="benef_otro">Se paga a nombre de otro</option>
+                        </select>
+                    </div>
+
+                    <div class="fd-barra">
+                        <span id="prov-info" class="fd-conteo">&mdash;</span>
+                    </div>
+
+                    <div id="prov-lista"></div>
+
+                    <!-- Ficha del proveedor -->
+                    <div id="prov-ficha" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9000;align-items:center;justify-content:center;padding:20px;">
+                        <div style="background:#fff;border-radius:12px;width:100%;max-width:880px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(18,52,80,.25);">
+                            <div style="padding:16px 22px;border-bottom:1px solid #E8E6E0;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                                <h3 id="prov-ficha-titulo" style="margin:0;font-size:16px;color:#1A3A5C;font-weight:600;"></h3>
+                                <button type="button" onclick="proveedoresCerrar()"
+                                        style="background:none;border:none;font-size:20px;color:#888780;cursor:pointer;line-height:1;">&times;</button>
+                            </div>
+                            <div id="prov-ficha-campos" style="padding:20px 22px;overflow-y:auto;flex:1;"></div>
+                            <div style="padding:14px 22px;border-top:1px solid #E8E6E0;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                                <span class="fd-tenue" style="font-size:11.5px;">
+                                    Lo que cambies aqui lo ve tambien Flujo de Caja y la ficha del producto.</span>
+                                <div style="display:flex;gap:10px;">
+                                    <button type="button" onclick="proveedoresCerrar()"
+                                            style="padding:0 18px;height:40px;border:1px solid rgba(203,213,225,0.30);background:#fff;color:#1A3A5C;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">
+                                        Cancelar</button>
+                                    <button type="button" id="prov-btn-guardar" onclick="proveedoresGuardar()"
+                                            style="padding:0 22px;height:40px;border:none;background:#2563EB;color:#fff;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">
+                                        Guardar</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <!-- Vista Bodegas -->
                 <div id="view-bodegas" class="view">
                     <div class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:6px;">
                         <h2><i class="fas fa-warehouse"></i> Bodegas</h2>
-                        <button class="btn-primary btn-sm" id="bodegas-btn-nueva"
-                                style="padding:10px 20px;font-size:13px;border-radius:var(--radius-sm);">
-                            Nueva Bodega
-                        </button>
+                        <div style="display:flex;gap:10px;align-items:center;">
+                            <button type="button" class="fd-btn-ghost fd-btn-cabecera" id="bodegas-btn-sync"
+                                    onclick="bodegasAbrirSync()">
+                                <i class="fas fa-rotate"></i> Sincronizar con Contifico
+                            </button>
+                            <button class="btn-primary btn-sm" id="bodegas-btn-nueva"
+                                    style="padding:10px 20px;font-size:13px;border-radius:var(--radius-sm);">
+                                Nueva Bodega
+                            </button>
+                        </div>
                     </div>
 
                     <div class="fd-barra">
@@ -3273,7 +3391,33 @@
                             </div>
                         </div>
                     </div>
-                </div>
+                
+                    <!-- Sincronizacion de bodegas con Contifico. Evita tener que
+                         buscar el hash del id a mano, que es donde se cuela el
+                         error que manda un traslado a la bodega equivocada. -->
+                    <div id="bodegas-sync" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9000;align-items:center;justify-content:center;padding:20px;">
+                        <div style="background:#fff;border-radius:12px;width:100%;max-width:980px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(18,52,80,.25);">
+                            <div style="padding:16px 22px;border-bottom:1px solid #E8E6E0;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                                <h3 style="margin:0;font-size:16px;color:#1A3A5C;font-weight:600;">
+                                    Sincronizar bodegas con Contifico</h3>
+                                <button type="button" onclick="bodegasCerrarSync()"
+                                        style="background:none;border:none;font-size:20px;color:#888780;cursor:pointer;line-height:1;">&times;</button>
+                            </div>
+                            <div id="bodegas-sync-cuerpo" style="padding:20px 22px;overflow-y:auto;flex:1;"></div>
+                            <div style="padding:14px 22px;border-top:1px solid #E8E6E0;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                                <span id="bodegas-sync-pie" class="fd-conteo">&mdash;</span>
+                                <div style="display:flex;gap:10px;">
+                                    <button type="button" onclick="bodegasCerrarSync()"
+                                            style="padding:0 18px;height:40px;border:1px solid rgba(203,213,225,0.30);background:#fff;color:#1A3A5C;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">
+                                        Cerrar</button>
+                                    <button type="button" id="bodegas-sync-crear" onclick="bodegasCrearDesdeSync()" disabled
+                                            style="padding:0 22px;height:40px;border:none;background:#2563EB;color:#fff;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;">
+                                        Crear las seleccionadas</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+</div>
 
 
                 <!-- Vista Retenciones SRI -->
@@ -3667,12 +3811,13 @@
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="js/config.js?v=20260317a"></script>
-    <script src="js/app.js?v=20260921a"></script>
+    <script src="js/app.js?v=20260922b"></script>
     <script src="js/flujo-caja.js?v=20260922a"></script>
     <script src="js/costos.js?v=20260827e"></script>
     <script src="js/movimientos.js?v=20260910a"></script>
-    <script src="js/matriz.js?v=20260910i"></script>
-    <script src="js/bodegas.js?v=20260910b"></script>
+    <script src="js/matriz.js?v=20260922k"></script>
+    <script src="js/bodegas.js?v=20260922b"></script>
+    <script src="js/proveedores.js?v=20260922m"></script>
     <script src="js/retenciones.js?v=20260910e"></script>
     <script src="js/sri-facturas.js?v=20260915a"></script>
     <script src="js/sri-credenciales.js?v=20260915a"></script>
