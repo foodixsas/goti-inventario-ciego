@@ -4451,6 +4451,10 @@ function fc_procesarCarteraXLS(input) {
             const headers = rows[headerIdx].map(c => String(c).trim());
             const colProv = headers.indexOf('Proveedor');
             const colRazon = headers.findIndex(h => h.includes('Social'));
+            // El RUC es la identidad del proveedor. Contifico lo trae en el
+            // archivo desde sep-2026; si un archivo viejo no lo tiene, se sigue
+            // trabajando por nombre como antes.
+            const colRuc = headers.findIndex(h => h.trim().toUpperCase() === 'RUC');
             const colTipo = headers.findIndex(h => h.includes('Tipo'));
             const colDoc = headers.findIndex(h => h.includes('Documento') && !h.includes('Tipo') && !h.includes('Valor') && !h.includes('modificado'));
             const colEmision = headers.findIndex(h => h.includes('Emisi'));
@@ -4481,8 +4485,18 @@ function fc_procesarCarteraXLS(input) {
                 const fechaEmision = fc_parsearFechaXLS(r[colEmision]);
                 const fechaVenc = fc_parsearFechaXLS(r[colVenc]);
 
-                const key = fc_normalizarNombre(proveedor);
-                if (!fc_cartera_cargada[key]) fc_cartera_cargada[key] = { nombre: proveedor, facturas: [] };
+                const rucFila = colRuc >= 0 ? fc_soloDigitos(r[colRuc]) : '';
+                const razonFila = colRazon >= 0 ? String(r[colRazon] || '').trim() : '';
+
+                // Se agrupa por RUC. El nombre cambia -- se corrige una tilde, se
+                // pasa a la razon social -- y entonces el mismo proveedor salia
+                // como dos. El RUC no cambia nunca.
+                const key = rucFila ? ('R' + rucFila) : fc_normalizarNombre(proveedor);
+                if (!fc_cartera_cargada[key]) {
+                    fc_cartera_cargada[key] = {
+                        nombre: proveedor, ruc: rucFila, razon: razonFila, facturas: []
+                    };
+                }
 
                 fc_cartera_cargada[key].facturas.push({
                     num: numDoc,
@@ -4516,13 +4530,18 @@ function fc_procesarCarteraXLS(input) {
                 (fc_facturas_data[row.dataset.fcRowId] || []).forEach(f => {
                     if (f.fecha_pago) pagosPrev[String(f.num).trim()] = f.fecha_pago;
                 });
-                previoProv[fc_normalizarNombre(nombreFila)] = {
+                const datosPrev = {
                     nombre: nombreFila,
                     celdas: celdasPrev,
                     pagos: pagosPrev,
                     banco: row.dataset.banco || 'produbanco',
                     dias: (row.querySelector('.fc-input-dias')?.value || '').trim()
                 };
+                // Con las DOS claves: por RUC, que es como viene la cartera nueva,
+                // y por nombre, para las filas que todavia no tienen RUC.
+                const rucPrev = fc_soloDigitos(row.dataset.ruc || '');
+                if (rucPrev) previoProv['R' + rucPrev] = datosPrev;
+                previoProv[fc_normalizarNombre(nombreFila)] = datosPrev;
             });
 
             // El Excel manda tambien sobre las bajas: si Contifico dice que se le debe,
@@ -4559,7 +4578,9 @@ function fc_procesarCarteraXLS(input) {
 
             // Ordenar proveedores por total descendente
             const proveedoresOrdenados = Object.entries(fc_cartera_cargada)
-                .map(([k, v]) => ({ key: k, nombre: v.nombre, facturas: v.facturas, total: v.facturas.reduce((s,f) => s + f.monto, 0) }))
+                .map(([k, v]) => ({ key: k, nombre: v.nombre, ruc: v.ruc || '',
+                                    razon: v.razon || '', facturas: v.facturas,
+                                    total: v.facturas.reduce((s,f) => s + f.monto, 0) }))
                 .sort((a, b) => b.total - a.total);
 
             let facturasAsignadas = 0;
@@ -4587,11 +4608,16 @@ function fc_procesarCarteraXLS(input) {
             let conservados = 0, nuevos = 0;
             proveedoresOrdenados.forEach(prov => {
                 const dynRowId = 'fcr-dyn-' + (++fc_row_id_counter);
-                const provBD = fc_buscarProveedorBD(prov.nombre);
+                // Por RUC primero: asi los dias de credito y el resto de la ficha
+                // se encuentran aunque el nombre del archivo no sea el de la matriz.
+                const provBD = fc_provPorRuc(prov.ruc) || fc_buscarProveedorBD(prov.nombre);
                 const diasCred = provBD ? provBD.dias_credito : fc_buscarDiasCredito(prov.nombre);
 
                 // Lo que este proveedor ya tenia planificado antes de esta carga
-                const prev = previoProv[prov.key] || null;
+                const prev = previoProv[prov.key]
+                          || previoProv[fc_normalizarNombre(prov.nombre)]
+                          || (prov.razon ? previoProv[fc_normalizarNombre(prov.razon)] : null)
+                          || null;
                 if (prev) conservados++; else nuevos++;
                 const bancoPrev = prev ? prev.banco : 'produbanco';
                 // La ficha del proveedor MANDA en los dias de credito. Antes ganaba lo
@@ -4672,11 +4698,13 @@ function fc_procesarCarteraXLS(input) {
             // Va DESPUES de crear las filas para que el detalle ya lleve las fechas de
             // pago que se conservaron de la carga anterior.
             const provsCartera = proveedoresOrdenados.map(p => {
-                const pbd = fc_buscarProveedorBD(p.nombre);
+                const pbd = fc_provPorRuc(p.ruc) || fc_buscarProveedorBD(p.nombre);
                 const det = fc_facturas_data[rowIdPorProv[p.key]] || p.facturas;
                 return {
                     proveedor: p.nombre,
-                    ruc: pbd ? (pbd.ruc || '') : '',
+                    // El del archivo manda: viene de Contifico. La matriz es el
+                    // respaldo para los archivos viejos que no traian la columna.
+                    ruc: p.ruc || (pbd ? (pbd.ruc || '') : ''),
                     saldo: p.total,
                     facturas: det.length,
                     detalle: det
@@ -5258,6 +5286,19 @@ async function fc_cargarProveedoresBD() {
 // Buscar proveedor en catalogo BD por nombre. Tras unificar duplicados el catalogo
 // guarda la razon social de Contifico en 'nombre' y la marca corta en
 // 'nombre_comercial' (SUPERMAXI, PILSENER...), asi que hay que mirar las dos.
+/* La ficha del proveedor por RUC, que es su identidad.
+
+   Se comparan los 10 primeros digitos: la cedula 1713233680 y el RUC
+   1713233680001 son el mismo contribuyente, y en la tabla conviven las dos
+   formas. */
+function fc_provPorRuc(ruc) {
+    const r = fc_soloDigitos(ruc);
+    if (!r) return null;
+    const corto = r.slice(0, 10);
+    return fc_proveedores_bd.find(p => fc_soloDigitos(p.ruc).slice(0, 10) === corto)
+        || null;
+}
+
 function fc_buscarProveedorBD(nombre) {
     const upper = (nombre || '').toUpperCase().trim();
     if (!upper) return null;
