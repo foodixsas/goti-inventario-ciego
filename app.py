@@ -8205,7 +8205,8 @@ def flujo_caja_guardar():
                     return True
             return False
 
-        cur.execute('SELECT egresos FROM flujo_caja_guardado'
+        cur.execute('SELECT egresos, ajustes_tc, ajustes_efectivo, ajustes_deuna,'
+                    ' traspasos, plataformas FROM flujo_caja_guardado'
                     ' WHERE fecha_semana = %s', (fecha_semana,))
         _fila = cur.fetchone()
         _previo = (_fila[0] if _fila else None) or {}
@@ -8221,6 +8222,52 @@ def flujo_caja_guardar():
             egresos = json.dumps(egresos_dict)
             print('[flujo-caja] %s: se conservaron categorias que llegaron vacias: %s'
                   % (fecha_semana, ', '.join(c['categoria'] for c in conservadas)))
+
+        # Los ajustes, los traspasos y las plataformas NO tenian ninguna red: se
+        # sobrescribian siempre. Las semanas 39 a 42 quedaron con los cinco en
+        # blanco mientras la 38 los tenia completos -- un traspaso de 9.000 y
+        # otro de 12.000 desaparecieron sin que nadie lo viera.
+        #
+        # Son diccionarios {fecha: monto}: si llega vacio y lo guardado tiene
+        # algo, se conserva. Vaciar una semana entera de ajustes a mano no es un
+        # caso real; perderlos por un fallo de carga si lo fue.
+        _otros = [('ajustes_tc', 1, 'ajustes_tc'),
+                  ('ajustes_efectivo', 2, 'ajustes_efectivo'),
+                  ('ajustes_deuna', 3, 'ajustes_deuna'),
+                  ('traspasos', 4, 'traspasos'),
+                  ('plataformas', 5, 'plataformas')]
+        _entrante = {'ajustes_tc': data.get('ajustes_tc', {}) or {},
+                     'ajustes_efectivo': data.get('ajustes_efectivo', {}) or {},
+                     'ajustes_deuna': data.get('ajustes_deuna', {}) or {},
+                     'traspasos': data.get('traspasos', {}) or {},
+                     'plataformas': data.get('plataformas', {}) or {}}
+
+        def _vacio(x):
+            """Un dict sin ningun valor distinto de cero, mirando un nivel mas
+            abajo para plataformas, que es {plataforma: {fecha: monto}}."""
+            if not isinstance(x, dict) or not x:
+                return True
+            for v in x.values():
+                if isinstance(v, dict):
+                    if any(float(w or 0) for w in v.values()):
+                        return False
+                elif float(v or 0):
+                    return False
+            return True
+
+        for _nom, _idx, _campo in _otros:
+            _viejo = (_fila[_idx] if _fila else None) or {}
+            if not _vacio(_viejo) and _vacio(_entrante[_campo]):
+                _entrante[_campo] = _viejo
+                conservadas.append({'categoria': _nom,
+                                    'items': len(_viejo)})
+                print('[flujo-caja] %s: se conservo %s, llego vacio'
+                      % (fecha_semana, _nom))
+        ajustes_tc = json.dumps(_entrante['ajustes_tc'])
+        ajustes_efectivo = json.dumps(_entrante['ajustes_efectivo'])
+        ajustes_deuna = json.dumps(_entrante['ajustes_deuna'])
+        traspasos = json.dumps(_entrante['traspasos'])
+        plataformas = json.dumps(_entrante['plataformas'])
 
         # La red gruesa se queda como segunda linea, por si la fila no existia
         egresos_entrantes_vacios = not any(
