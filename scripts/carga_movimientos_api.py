@@ -19,6 +19,7 @@ Ejecucion auto:    GitHub Actions 3x/dia (ver .github/workflows/carga_movimiento
 
 import json
 import os
+import re
 import requests
 import sys
 from pyairtable import Api
@@ -180,6 +181,137 @@ def formatear_fecha(fecha_raw):
         return datetime.strptime(fecha_raw[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
     except:
         return datetime.now().strftime("%d/%m/%Y")
+
+# ============================================================
+# CERROJO ANTI-DUPLICADOS
+# ============================================================
+# Un movimiento se creaba dos veces por dos caminos distintos:
+#
+#   1. Dos programas a la vez. Este bot y el Selenium viejo leen la MISMA
+#      tabla de AirTable y el mismo campo 'Hecho'. Se distinguen por la
+#      descripcion: el viejo pone el nombre corto del local ("...-BODEGA
+#      REAL") y este el nombre completo de la bodega ("...-BODEGA BODEGA
+#      CHIOS REAL"). Entre el 19 y el 21 de agosto de 2026 eso metio hasta
+#      seis ingresos del mismo queso el mismo dia.
+#
+#   2. El propio bot repitiendose. El cron corre cada minuto entre el :25 y
+#      el :39 y una pasada tarda ~96s: dos corridas se solapan, las dos ven
+#      el registro sin 'Hecho' y las dos lo cargan. Lo mismo pasa cuando el
+#      POST se crea pero la respuesta tarda mas de los 30s de timeout, o
+#      cuando AirTable rechaza el update de 'Hecho'.
+#
+# La defensa es preguntarle a Contifico antes de crear. La API v2 lista los
+# movimientos por tipo, ordenados del mas nuevo al mas viejo, en paginas de
+# 100; como los registros de AirTable son de hoy o de ayer, con dos o tres
+# paginas se cubre de sobra.
+#
+# Ademas cada movimiento que crea este bot lleva su origen en la descripcion
+# ("[AT:recXXXXXXXX]"): es una marca exacta, no una coincidencia, y permite
+# distinguir un duplicado de verdad de dos registros legitimos que casualmente
+# coinciden en producto, cantidad y dia.
+
+CONTIFICO_API_V2 = "https://api.contifico.com/sistema/api/v2"
+MARCA_ORIGEN = "[AT:%s]"
+PAGINAS_MAX_BUSQUEDA = int(os.getenv("PAGINAS_BUSQUEDA", "4"))
+
+# Cache por corrida: {tipo: [movimientos]}
+_movimientos_recientes = {}
+
+
+def marca_origen(record_id):
+    return MARCA_ORIGEN % record_id
+
+
+def _fecha_iso(f):
+    """dd/mm/yyyy -> yyyy-mm-dd, que es como las devuelve la API."""
+    try:
+        d, m, a = f.split("/")
+        return "%s-%s-%s" % (a, m, d)
+    except Exception:
+        return f
+
+
+def movimientos_recientes(tipo, hasta_fecha):
+    """Movimientos de ese tipo ya existentes en Contifico, hasta 'hasta_fecha'.
+
+    Se recorren las paginas de la v2 (las mas nuevas primero) y se para en
+    cuanto la pagina entera es anterior a la fecha buscada. Si la API falla
+    se devuelve None -no una lista vacia-: no es lo mismo "no hay nada" que
+    "no pude mirar", y con None el que llama decide si arriesgarse.
+    """
+    if tipo in _movimientos_recientes:
+        return _movimientos_recientes[tipo]
+
+    objetivo = _fecha_iso(hasta_fecha)
+    acumulado, url = [], "%s/movimiento-inventario/" % CONTIFICO_API_V2
+    params = {"tipo": tipo}
+    for _ in range(PAGINAS_MAX_BUSQUEDA):
+        datos = None
+        for intento in range(3):
+            try:
+                resp = requests.get(url, headers=headers_contifico(),
+                                    params=params, timeout=90)
+                if resp.status_code == 200:
+                    datos = resp.json()
+                    break
+                log(f"   [BUSQUEDA {resp.status_code}] {resp.text[:120]}")
+            except Exception as e:
+                log(f"   [BUSQUEDA intento {intento+1}] {type(e).__name__}")
+        if datos is None:
+            return None                      # no se pudo mirar
+        acumulado.extend(datos.get("results") or [])
+        fechas = [m.get("fecha") for m in (datos.get("results") or []) if m.get("fecha")]
+        if not datos.get("next") or (fechas and min(fechas) < objetivo):
+            break
+        url, params = datos["next"], None
+    _movimientos_recientes[tipo] = acumulado
+    return acumulado
+
+
+def movimiento_ya_existe(tipo, record_id, bodega_id, producto_id, cantidad, fecha):
+    """Dice si ese movimiento ya esta en Contifico y por que se cree que si.
+
+    Devuelve (codigo, motivo) o (None, None). Dos niveles:
+      - 'origen': el documento lleva la marca de ESTE registro de AirTable.
+        Certeza total, es el mismo.
+      - 'gemelo': coincide bodega + producto + cantidad + fecha y el documento
+        NO lleva marca de origen, o sea lo creo el otro programa. Se trata
+        como duplicado, pero avisando, porque en teoria podrian ser dos
+        registros legitimos identicos el mismo dia.
+    """
+    movs = movimientos_recientes(tipo, fecha)
+    if movs is None:
+        return None, None
+
+    marca = marca_origen(record_id)
+    objetivo = _fecha_iso(fecha)
+    try:
+        cant = float(cantidad)
+    except Exception:
+        cant = None
+
+    gemelo = None
+    for m in movs:
+        desc = m.get("descripcion") or ""
+        if marca in desc:
+            return m.get("codigo") or m.get("id"), "origen"
+        if gemelo is not None or cant is None:
+            continue
+        if m.get("fecha") != objetivo or m.get("bodega_id") != bodega_id:
+            continue
+        if "[AT:" in desc:
+            continue                     # es de otro registro nuestro: legitimo
+        for d in (m.get("detalles") or []):
+            try:
+                if d.get("producto_id") == producto_id and abs(float(d.get("cantidad") or 0) - cant) < 1e-6:
+                    gemelo = m.get("codigo") or m.get("id")
+                    break
+            except Exception:
+                continue
+    if gemelo:
+        return gemelo, "gemelo"
+    return None, None
+
 
 # ============================================================
 # CARGAR BODEGAS Y PRODUCTOS DESDE CONTIFICO API
@@ -410,7 +542,7 @@ def post_movimiento(tipo, bodega_id, detalles, fecha, descripcion, bodega_destin
             f"{CONTIFICO_API_URL}/movimiento-inventario/",
             headers=headers_contifico(),
             json=payload,
-            timeout=30
+            timeout=90
         )
         if resp.status_code in (200, 201):
             data = resp.json()
@@ -419,10 +551,33 @@ def post_movimiento(tipo, bodega_id, detalles, fecha, descripcion, bodega_destin
             return str(codigo) if codigo else "CREADO"
         else:
             log(f"   [API {resp.status_code}] {resp.text[:300]}")
-            return None
+            return _rescatar_si_se_creo(tipo, descripcion, fecha)
     except Exception as e:
         log(f"   [EXCEPTION] {e}")
+        return _rescatar_si_se_creo(tipo, descripcion, fecha)
+
+
+def _rescatar_si_se_creo(tipo, descripcion, fecha):
+    """Tras un POST que parecio fallar, mira si el movimiento se creo igual.
+
+    Un timeout de la API NO significa que Contifico no lo haya hecho: crea el
+    documento y tarda en contestar. Devolver None en ese caso dejaba el
+    registro pendiente en AirTable y la siguiente corrida lo duplicaba.
+
+    Solo funciona si la descripcion lleva la marca de origen "[AT:recXXX]",
+    que es lo que permite reconocerlo sin lugar a dudas.
+    """
+    marca = re.search(r"\[AT:[^\]]+\]", descripcion or "")
+    if not marca:
         return None
+    _movimientos_recientes.pop(tipo, None)      # hay que releer, acaba de pasar
+    movs = movimientos_recientes(tipo, fecha)
+    for m in (movs or []):
+        if marca.group(0) in (m.get("descripcion") or ""):
+            codigo = m.get("codigo") or m.get("id")
+            log(f"   [RESCATADO] el {tipo} SI se habia creado: {codigo}")
+            return str(codigo)
+    return None
 
 def marcar_hecho(api_obj, base_id, table_id, record_id, num_doc, campo_hecho="Hecho",
                  campo_doc="num_documento"):
@@ -547,8 +702,22 @@ def procesar_ingresos(bodegas):
             continue
 
         detalles = [{"producto_id": producto_id, "precio": "0.0", "cantidad": str(float(unidades))}]
-        descripcion = f"INGRESO EXTRAORDINARIO-BODEGA {nombre_bodega}"
+        descripcion = f"INGRESO EXTRAORDINARIO-BODEGA {nombre_bodega} {marca_origen(record_id)}"
         centro = MAPEO_CENTROS_A.get(local_id, nombre_bodega)
+
+        # Cerrojo: si ese ingreso ya esta en Contifico no se crea otro, se
+        # cierra el registro apuntando el documento que ya existe.
+        existe, motivo = movimiento_ya_existe(
+            "ING", record_id, bodega_id, producto_id, float(unidades), fecha)
+        if existe:
+            log(f"  [YA EXISTE] {existe} ({motivo}): no se crea de nuevo")
+            marcar_hecho(api, AIRTABLE_BASE_A, TABLE_INGRESOS, record_id, existe)
+            if motivo == "gemelo":
+                avisar_fallo("Ingreso Extraordinario", centro,
+                             f"📦 {nombre_producto(codigo)} ({codigo}) x {unidades}\n📅 {fecha}",
+                             f"NO se cargo: {existe} ya tenia ese ingreso (lo creo otro "
+                             f"programa). Verificar que no falte ninguno.")
+            continue
 
         num_doc = post_movimiento("ING", bodega_id, detalles, fecha, descripcion)
 

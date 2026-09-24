@@ -964,6 +964,49 @@ def procesar_tarea(tarea, driver):
 
 # ============ CARGA TOMA FISICA A CONTIFICO ============
 CONTIFICO_TOMA_URL = 'https://1793168604001.contifico.com/sistema/inventario/tomafisica/registrar/'
+CONTIFICO_TOMA_LISTA = 'https://1793168604001.contifico.com/sistema/inventario/tomafisica/'
+
+
+def tfi_existentes(driver, bodega_contifico, fecha_dmY):
+    """Los TFI que YA existen en Contifico para esa bodega y esa fecha.
+
+    Es la unica forma de saberlo: la API no expone las tomas fisicas
+    (/movimiento-inventario/?tipo=TFI devuelve 0 con la llave nuestra). El
+    listado web si filtra por fecha_inicio/fecha_fin y un dia trae como mucho
+    una decena de filas, asi que la consulta es barata.
+
+    Hace falta porque el inventario se estuvo ajustando dos y tres veces el
+    mismo dia: un timeout leyendo el numero TFI se marcaba como error, el
+    horario reencolaba, y el segundo intento creaba OTRO documento sobre el
+    que ya existia. Y ademas hay un segundo cargador fuera de Render que no
+    pasa por la cola del panel. Preguntar antes de crear es lo unico que
+    protege de los dos casos a la vez.
+
+    Devuelve [(numero, url, generado)] ordenado como lo da Contifico.
+    """
+    url = '%s?fecha_inicio=%s&fecha_fin=%s' % (CONTIFICO_TOMA_LISTA, fecha_dmY, fecha_dmY)
+    driver.get(url)
+    WebDriverWait(driver, 40).until(
+        EC.presence_of_element_located((By.TAG_NAME, 'table')))
+    objetivo = _norma_nombre(bodega_contifico)
+    encontrados = []
+    for fila in driver.find_elements(By.CSS_SELECTOR, 'table tr'):
+        celdas = fila.find_elements(By.TAG_NAME, 'td')
+        if len(celdas) < 3:
+            continue                      # cabecera o fila de adorno
+        texto_codigo = celdas[1].text.strip()
+        m = re.search(r'TFI\s+\d+', texto_codigo)
+        if not m or _norma_nombre(celdas[2].text) != objetivo:
+            continue
+        enlaces = fila.find_elements(By.TAG_NAME, 'a')
+        href = ''
+        for a in enlaces:
+            destino = a.get_attribute('href') or ''
+            if 'consultar' in destino:
+                href = destino
+                break
+        encontrados.append((m.group(0), href, 'Generado' in texto_codigo))
+    return encontrados
 
 BODEGAS_CARGA = {
     'bodega_principal': 'BODEGA PRINCIPAL',
@@ -1142,6 +1185,19 @@ def registrar_toma_por_archivo(driver, bodega_contifico, productos, fecha_form):
     import openpyxl
     wait = WebDriverWait(driver, 60)
 
+    # 0. Preguntar antes de crear: dos TFI del mismo dia ajustan el inventario
+    # dos veces. Si ya hay uno, se devuelve como hecho en vez de repetirlo.
+    ya = tfi_existentes(driver, bodega_contifico, fecha_form)
+    if ya:
+        num_doc, url_doc, generado = ya[0]
+        log(f'    YA EXISTE {num_doc} para {bodega_contifico} el {fecha_form}: '
+            f'no se crea otro', 'WARN')
+        if not generado:
+            raise Exception(f'{num_doc} ya existe para {bodega_contifico} el '
+                            f'{fecha_form} pero esta PENDIENTE (no ajusta). '
+                            f'Generarlo o anularlo a mano antes de reintentar.')
+        return len(productos), []
+
     # 1. Excel con el formato de la plantilla oficial
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     seguro = re.sub(r'[^A-Za-z0-9]+', '_', bodega_contifico).strip('_').lower()
@@ -1204,16 +1260,27 @@ def registrar_toma_por_archivo(driver, bodega_contifico, productos, fecha_form):
     log('    Archivo adjuntado, guardando...')
     driver.execute_script("registrarMovimiento();")
 
-    # 4. Sin numero TFI no hay documento
+    # 4. Sin numero TFI no hay documento. Pero que no aparezca el numero no
+    # prueba que no se creara: antes de fallar se mira el listado, que es lo
+    # que evita que el reintento cree un segundo documento.
     num_tfi, cuerpo = _esperar_tfi(driver)
-    if not num_tfi:
-        resumen = ' | '.join(l.strip() for l in cuerpo.splitlines()[:12] if l.strip())
-        raise Exception(
-            f'Contifico no devolvio numero TFI en 150s. REVISAR EN CONTIFICO '
-            f'ANTES DE VOLVER A CARGAR: la toma pudo quedar creada. '
-            f'Pantalla: {resumen[:250]}')
-    num_doc = num_tfi
     url_doc = driver.current_url
+    if not num_tfi:
+        log('    No llego el numero TFI en 150s; mirando el listado...', 'WARN')
+        recuperados = tfi_existentes(driver, bodega_contifico, fecha_form)
+        if recuperados:
+            num_tfi, url_doc, generado = recuperados[0]
+            log(f'    SI se habia creado: {num_tfi}', 'WARN')
+            if generado:
+                return len(productos), []
+            driver.get(url_doc)          # quedo Pendiente: falta Generar
+        else:
+            resumen = ' | '.join(l.strip() for l in cuerpo.splitlines()[:12] if l.strip())
+            raise Exception(
+                f'Contifico no devolvio numero TFI en 150s y el listado de '
+                f'{fecha_form} no muestra ninguna toma de {bodega_contifico}: '
+                f'no se creo. Pantalla: {resumen[:200]}')
+    num_doc = num_tfi
     log(f'    Registrado: {num_doc}  (Pendiente)')
 
     # 5. Generar: es el paso que ajusta el inventario
@@ -2059,12 +2126,22 @@ def procesar_toma_fisica_local(tarea, driver):
         # 1. Conteos de la BD
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
+        # Entra TODO lo contado, INCLUIDO lo contado en CERO. Si alguien miro
+        # el estante y escribio 0, Contifico tiene que bajar ese producto a
+        # cero: es la misma regla que ya seguian las bodegas operativas.
+        # El filtro '> 0' dejaba esos ceros fuera y el saldo fantasma se
+        # quedaba ahi para siempre -el cruce marcaba la diferencia y la carga
+        # no la corregia nunca-. Tambien arregla los negativos: subirlos en
+        # cero los endereza.
+        #
+        # Lo que NO entra es lo que nadie conto (NULL). Una toma fisica FIJA
+        # el saldo, asi que subir en cero un producto que nadie miro seria
+        # declararlo agotado.
         cur.execute("""
             SELECT codigo, COALESCE(cantidad_contada_2, cantidad_contada) AS cantidad
             FROM goti.inventario_ciego_conteos
             WHERE fecha = %s AND local = %s
               AND COALESCE(cantidad_contada_2, cantidad_contada) IS NOT NULL
-              AND COALESCE(cantidad_contada_2, cantidad_contada) > 0
             ORDER BY nombre
         """, (fecha_iso, bodega))
         productos = [(r[0], float(r[1])) for r in cur.fetchall()]
@@ -2073,6 +2150,25 @@ def procesar_toma_fisica_local(tarea, driver):
         if not productos:
             raise Exception(f'No hay conteos en BD para {bodega} fecha {fecha_iso}')
         log(f'  - Productos con conteo: {len(productos)}')
+
+        # 1.bis PREGUNTAR ANTES DE CREAR. Si ya hay una toma de esa bodega y
+        # ese dia, no se crea otra: un segundo TFI vuelve a ajustar el
+        # inventario sobre el ya ajustado y las diferencias se aplican dos
+        # veces. La tarea se cierra apuntando el documento que ya existia.
+        ya = tfi_existentes(driver, cfg['contifico'], fecha_dmY)
+        if ya:
+            num_doc, url_doc, generado = ya[0]
+            log(f'  - YA EXISTE {num_doc} para {bodega} el {fecha_dmY} '
+                f'({len(ya)} documento(s) en Contifico). NO se crea otro.', 'WARN')
+            post_resultado_inventario_locales({
+                'id': ejec_id,
+                'estado': 'completado',
+                'total_productos': len(productos),
+                'url_contifico': url_doc,
+                'num_documento': num_doc,
+                'error_msg': 'ya existia en Contifico, no se volvio a cargar',
+            })
+            return True, True
 
         # 2. Excel con el formato de la plantilla oficial
         import openpyxl
@@ -2130,14 +2226,35 @@ def procesar_toma_fisica_local(tarea, driver):
 
         # 5. VERIFICAR que se creo: sin numero TFI no hay documento
         num_tfi, cuerpo = _esperar_tfi(driver)
-        if not num_tfi:
-            resumen = ' | '.join(l.strip() for l in cuerpo.split('\n')[:12] if l.strip())
-            raise Exception(
-                f'Contifico no devolvio numero TFI en 150s. REVISAR EN CONTIFICO '
-                f'ANTES DE VOLVER A CARGAR: la toma pudo quedar creada. '
-                f'Pantalla: {resumen[:250]}')
-        num_doc = num_tfi
         url_doc = driver.current_url
+        if not num_tfi:
+            # Que no aparezca el numero no significa que no se haya creado:
+            # Contifico tarda lo que tarda y el documento suele estar ahi. Dar
+            # esto por fallido era justo lo que duplicaba las tomas, porque el
+            # horario reencolaba y el siguiente intento creaba otro documento.
+            # Antes de decir que fallo, se mira el listado.
+            log('  - No llego el numero TFI en 150s; mirando el listado...', 'WARN')
+            recuperados = tfi_existentes(driver, cfg['contifico'], fecha_dmY)
+            if recuperados:
+                num_tfi, url_doc, generado = recuperados[0]
+                log(f'  - SI se habia creado: {num_tfi}. Se continua con ese.', 'WARN')
+                if generado:
+                    log(f'  - {num_tfi} ya estaba Generado.')
+                    avisar_toma_fisica(bodega, fecha_dmY, num_tfi, len(productos), url_doc)
+                    post_resultado_inventario_locales({
+                        'id': ejec_id, 'estado': 'completado',
+                        'total_productos': len(productos),
+                        'url_contifico': url_doc, 'num_documento': num_tfi,
+                    })
+                    return True, True
+                driver.get(url_doc)      # quedo Pendiente: hay que Generarlo
+            else:
+                resumen = ' | '.join(l.strip() for l in cuerpo.split('\n')[:12] if l.strip())
+                raise Exception(
+                    f'Contifico no devolvio numero TFI en 150s y el listado de '
+                    f'{fecha_dmY} no muestra ninguna toma de {cfg["contifico"]}: '
+                    f'no se creo. Pantalla: {resumen[:200]}')
+        num_doc = num_tfi
         log(f'  - Registrado: {num_doc}  (Pendiente)')
 
         # 6. Generar: es el paso que ajusta el inventario
