@@ -2448,35 +2448,33 @@ function renderObservaciones() {
                         const justificado = prod.justificado || false;
                         const cantJustif = parseFloat(prod.cantidad_justificada) || 0;
                         const difAbs = Math.abs(diferencia);
-                        const yaGuardado = motivoActual || obsActual;
-                        const bloqueado = yaGuardado && !esAdmin;
+                        // Una observacion guardada ya NO cierra la fila. Antes, en
+                        // cuanto tenia motivo u observacion, al que no fuera admin o
+                        // supervisor se le convertia en texto fijo: bastaba con que
+                        // Jonathan justificara primero para que nadie mas pudiera
+                        // corregir ni completar lo escrito. Quien tiene el modulo
+                        // puede editar siempre.
 
                         return `
                             <tr class="${esDifCero ? 'fila-corregida' : ''}">
                                 <td class="obs-nombre">${prod.nombre}</td>
                                 <td class="obs-dif ${difClass}">${diferencia !== 0 ? (diferencia > 0 ? '+' : '') + diferencia.toFixed(3) : '<span style="color:#94A3B8">0.000</span>'}</td>
                                 <td class="obs-motivo-cell">
-                                    ${bloqueado
-                                        ? `<span class="obs-texto-fijo">${motivoActual || '-'}</span>`
-                                        : `<select class="select-motivo" data-id="${prod.id}" onchange="cachearCambioObs(this)">
-                                            <option value="">-- Seleccionar --</option>
-                                            ${OBSERVACIONES_PREESTABLECIDAS.map(op =>
-                                                `<option value="${op}" ${motivoActual === op ? 'selected' : ''}>${op}</option>`
-                                            ).join('')}
-                                        </select>`
-                                    }
+                                    <select class="select-motivo" data-id="${prod.id}" onchange="cachearCambioObs(this)">
+                                        <option value="">-- Seleccionar --</option>
+                                        ${OBSERVACIONES_PREESTABLECIDAS.map(op =>
+                                            `<option value="${op}" ${motivoActual === op ? 'selected' : ''}>${op}</option>`
+                                        ).join('')}
+                                    </select>
                                 </td>
                                 <td class="obs-input-cell">
-                                    ${bloqueado
-                                        ? `<span class="obs-texto-fijo">${obsActual || '-'}</span>`
-                                        : `<input type="text"
-                                               class="input-observacion"
-                                               value="${obsActual}"
-                                               placeholder="Escribir observación..."
-                                               data-id="${prod.id}"
-                                               onchange="cachearCambioObs(this)"
-                                               onkeypress="if(event.key==='Enter') this.blur()">`
-                                    }
+                                    <input type="text"
+                                           class="input-observacion"
+                                           value="${obsActual}"
+                                           placeholder="Escribir observación..."
+                                           data-id="${prod.id}"
+                                           onchange="cachearCambioObs(this)"
+                                           onkeypress="if(event.key==='Enter') this.blur()">
                                 </td>
                                 <td class="obs-corregido-cell" title="${corregido ? 'El conteo fue modificado manualmente' : 'Conteo original'}">
                                     <span class="badge-corregido ${corregido ? 'corregido-si' : 'corregido-no'}">${corregido ? 'Sí' : 'No'}</span>
@@ -2530,8 +2528,8 @@ function renderObservaciones() {
                         const motivoActual = m.motivo || '';
                         const corregido = m.corregido || false;
                         const justificado = m.justificado || false;
-                        const yaGuardadoM = motivoActual || obsActual;
-                        const bloqueadoM = yaGuardadoM && !esAdmin;
+                        // Igual que en la tabla de arriba: lo ya guardado se sigue
+                        // pudiendo editar.
                         return `
                             <tr class="fila-manual">
                                 <td class="obs-nombre">
@@ -2542,27 +2540,21 @@ function renderObservaciones() {
                                 </td>
                                 <td class="obs-dif ${difClass}">${dif !== 0 ? (dif > 0 ? '+' : '') + dif.toFixed(3) : '0.000'}</td>
                                 <td class="obs-motivo-cell">
-                                    ${bloqueadoM
-                                        ? `<span class="obs-texto-fijo">${motivoActual || '-'}</span>`
-                                        : `<select class="select-motivo" data-manual-id="${m.id}" onchange="cachearCambioObs(this)">
-                                            <option value="">-- Seleccionar --</option>
-                                            ${OBSERVACIONES_PREESTABLECIDAS.map(op =>
-                                                `<option value="${op}" ${motivoActual === op ? 'selected' : ''}>${op}</option>`
-                                            ).join('')}
-                                        </select>`
-                                    }
+                                    <select class="select-motivo" data-manual-id="${m.id}" onchange="cachearCambioObs(this)">
+                                        <option value="">-- Seleccionar --</option>
+                                        ${OBSERVACIONES_PREESTABLECIDAS.map(op =>
+                                            `<option value="${op}" ${motivoActual === op ? 'selected' : ''}>${op}</option>`
+                                        ).join('')}
+                                    </select>
                                 </td>
                                 <td class="obs-input-cell">
-                                    ${bloqueadoM
-                                        ? `<span class="obs-texto-fijo">${obsActual || '-'}</span>`
-                                        : `<input type="text"
-                                               class="input-observacion"
-                                               value="${obsActual}"
-                                               placeholder="Escribir observación..."
-                                               data-manual-id="${m.id}"
-                                               onchange="cachearCambioObs(this)"
-                                               onkeypress="if(event.key==='Enter') this.blur()">`
-                                    }
+                                    <input type="text"
+                                           class="input-observacion"
+                                           value="${obsActual}"
+                                           placeholder="Escribir observación..."
+                                           data-manual-id="${m.id}"
+                                           onchange="cachearCambioObs(this)"
+                                           onkeypress="if(event.key==='Enter') this.blur()">
                                 </td>
                                 <td class="obs-corregido-cell" title="${corregido ? 'El registro fue modificado' : 'Original'}">
                                     <span class="badge-corregido ${corregido ? 'corregido-si' : 'corregido-no'}">${corregido ? 'Sí' : 'No'}</span>
