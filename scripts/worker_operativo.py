@@ -500,18 +500,42 @@ def _descargar_saldos_una_vez(driver, nombre_bodega_contifico, fecha_iso):
         pass
     raise TimeoutError('No se descargo el archivo Excel de Contifico')
 
-def parsear_saldos(ruta_excel, nombre_bodega_esperado):
-    """Lee el Excel descargado y devuelve dict {codigo: {nombre, unidad, stock, costo}}"""
-    # Validar header bodega
+def parsear_saldos(ruta_excel, nombre_bodega_esperado, fecha_esperada=None):
+    """Lee el Excel descargado y devuelve dict {codigo: {nombre, unidad, stock, costo}}
+
+    Se comprueban las DOS cabeceras del reporte, 'Bodega:' y 'Fecha de Corte:'.
+    La de la bodega ya se miraba; la de la fecha no, y ese hueco costo caro:
+    _set_fecha_contifico empieza con un 'if (!el) return;', asi que si el campo
+    no esta donde deberia no escribe la fecha y se va en silencio. Contifico
+    entonces exporta el saldo de HOY y nadie se enteraba, porque el Excel viene
+    bien formado y con la bodega correcta.
+
+    Paso el 3-ago-2026 en Santo Cachon Real durante el reproceso: MADURO
+    PROCESADO se guardo con 221.538 g de sistema cuando el dia anterior tenia
+    16.098 y el siguiente 2.505. Era el stock de hoy metido en una fecha de
+    agosto, y convertia una diferencia de 2.000 en una de 215.538.
+
+    Con fecha_esperada la descarga falla en voz alta y se reintenta, en vez de
+    escribir un saldo que no corresponde al dia.
+    """
+    # Validar cabeceras: bodega y fecha de corte
     df_h = pd.read_excel(ruta_excel, header=None, nrows=5)
-    bod = ''
+    bod, fec = '', ''
     for _, row in df_h.iterrows():
         for v in row.values:
             s = str(v).strip()
             if s.lower().startswith('bodega:'):
                 bod = s.split(':', 1)[1].strip()
+            elif s.lower().startswith('fecha de corte'):
+                fec = s.split(':', 1)[1].strip()
     if bod and bod.upper() != nombre_bodega_esperado.upper():
         raise ValueError(f'Excel de bodega incorrecta: esperado "{nombre_bodega_esperado}", descargo "{bod}"')
+    if fecha_esperada and fec:
+        # La cabecera viene como 'Fecha de Corte: 2026-06-30'; puede traer hora.
+        if fec[:10] != str(fecha_esperada)[:10]:
+            raise ValueError(
+                f'Excel de OTRA FECHA: se pidio {fecha_esperada} y Contifico '
+                f'devolvio {fec[:10]}. No se guarda nada: ese saldo no es del dia.')
 
     df = pd.read_excel(ruta_excel, header=5)
     df.columns = [str(c).strip() for c in df.columns]
@@ -915,7 +939,7 @@ def procesar_tarea(tarea, driver):
         archivo = descargar_saldos(driver, cfg['contifico'], fecha_corte)
         log(f'    archivo: {os.path.basename(archivo)}')
 
-        contifico = parsear_saldos(archivo, cfg['contifico'])
+        contifico = parsear_saldos(archivo, cfg['contifico'], fecha_corte)
         log(f'    productos en Contifico: {len(contifico)}')
 
         log('  - Calculando cruce...')
@@ -1783,7 +1807,7 @@ def procesar_tarea_conteo_op(tarea, driver):
         archivo = descargar_saldos(driver, cfg['contifico'], fecha)
         log(f'    archivo: {os.path.basename(archivo)}')
 
-        contifico = parsear_saldos(archivo, cfg['contifico'])
+        contifico = parsear_saldos(archivo, cfg['contifico'], fecha)
         log(f'    productos en Contifico: {len(contifico)}')
 
         if not contifico:
@@ -3274,7 +3298,7 @@ def verificar_entorno():
         archivo = descargar_saldos(driver, cfg['contifico'], fecha)
         log(f'[OK] Excel descargado: {os.path.basename(archivo)}')
 
-        datos = parsear_saldos(archivo, cfg['contifico'])
+        datos = parsear_saldos(archivo, cfg['contifico'], fecha)
         con_costo = sum(1 for v in datos.values() if float(v.get('costo') or 0) > 0)
         log(f'[OK] Excel parseado: {len(datos)} productos, {con_costo} con costo')
         if datos:
