@@ -205,14 +205,20 @@ def main():
                     unidad   = EXCLUDED.unidad""", filas)
 
             # Productos que ya no vienen de Contifico: se quitan para que no
-            # queden colgados, pero solo si nadie los conto. Un conteo no se
-            # borra por una limpieza.
+            # queden colgados, pero solo si nadie los conto NI escribio nada en
+            # ellos. Ni un conteo ni una observacion se borran por una limpieza:
+            # lo que anoto el local se queda ahi aunque el producto deje de
+            # aparecer o deje de descuadrar.
             cur.execute("""
                 DELETE FROM goti.inventario_ciego_conteos
                 WHERE fecha = %s AND local = %s
                   AND codigo <> ALL(%s)
                   AND cantidad_contada   IS NULL
                   AND cantidad_contada_2 IS NULL
+                  AND COALESCE(motivo, '')        = ''
+                  AND COALESCE(observaciones, '') = ''
+                  AND COALESCE(justificado, FALSE) = FALSE
+                  AND COALESCE(cantidad_justificada, 0) = 0
             """, (FECHA, bod, [f[2] for f in filas]))
     if ESCRIBIR:
         con.commit()

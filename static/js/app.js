@@ -2382,14 +2382,16 @@ function renderObservaciones() {
         return cantidadFinal - prod.cantidad_sistema !== 0;
     });
 
-    // Productos sin diferencia pero que ya tienen motivo/obs/corregido en el conteo
+    // Todo lo que ya tiene algo escrito se sigue mostrando, aunque el producto
+    // haya dejado de descuadrar o se haya quedado sin conteo. Lo escrito no
+    // desaparece de la pantalla: si un local anoto el motivo de una diferencia
+    // y luego la diferencia se corrige, la nota tiene que seguir a la vista tal
+    // como la escribieron. Antes se exigia tener conteo y eso la ocultaba.
     const productosGestionados = _obsProductos.filter(prod => {
-        const conteo2 = prod.cantidad_contada_2 !== null && prod.cantidad_contada_2 !== undefined;
-        const cantidadFinal = conteo2 ? prod.cantidad_contada_2 : prod.cantidad_contada;
-        if (cantidadFinal === null || cantidadFinal === undefined) return false;
-        const tieneDif = cantidadFinal - prod.cantidad_sistema !== 0;
-        if (tieneDif) return false;
-        return prod.motivo || prod.observaciones || prod.corregido;
+        const tieneNota = prod.motivo || prod.observaciones || prod.corregido
+                          || prod.justificado || (parseFloat(prod.cantidad_justificada) || 0) > 0;
+        if (!tieneNota) return false;
+        return !productosConDif.includes(prod);   // sin repetir los de arriba
     });
 
     const todosConteo = [...productosConDif, ...productosGestionados];
